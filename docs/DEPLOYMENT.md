@@ -49,7 +49,9 @@ cd apps/api && PYTHONPATH=. uvicorn app.main:app --host 0.0.0.0 --port $PORT
 - `NEXON_OPEN_API_KEY=...`
 - `HABIT_LAB_ENABLE_DEBUG_ENDPOINTS=0`
 - `HABIT_LAB_AUTO_RANKER_SYNC=0`
+- `HABIT_LAB_ENABLE_ANALYTICS_SUMMARY=1`
 - `HABIT_LAB_DB_PATH=/var/data/habit_lab.sqlite3` (Persistent Disk 마운트 시)
+- (옵션) `POSTHOG_API_KEY=...`, `POSTHOG_HOST=https://us.i.posthog.com`
 
 ### 3-4) 스토리지
 - SQLite 파일 유지가 필요하면 Render Persistent Disk를 연결합니다.

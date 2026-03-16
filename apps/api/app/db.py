@@ -4,7 +4,7 @@ import json
 import os
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
@@ -139,6 +139,18 @@ def init_db() -> None:
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS analytics_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_name TEXT NOT NULL,
+      distinct_id TEXT,
+      session_id TEXT,
+      path TEXT,
+      screen TEXT,
+      referrer TEXT,
+      properties_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_matches_raw_ouid_type_date
       ON matches_raw (ouid, match_type, match_date DESC);
 
@@ -159,6 +171,12 @@ def init_db() -> None:
 
     CREATE INDEX IF NOT EXISTS idx_user_lookup_updated_at
       ON user_lookup_cache (updated_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_analytics_events_created_at
+      ON analytics_events (created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_analytics_events_event_name
+      ON analytics_events (event_name, created_at DESC);
     """
     with db_cursor() as cur:
         cur.executescript(schema)
@@ -234,3 +252,93 @@ def save_user_lookup(nickname: str, ouid: str, source: str = "nexon_open_api") -
             """,
             (target_nickname, target_ouid, source, utc_now_iso()),
         )
+
+
+def insert_analytics_event(
+    event_name: str,
+    distinct_id: str | None = None,
+    session_id: str | None = None,
+    path: str | None = None,
+    screen: str | None = None,
+    referrer: str | None = None,
+    properties: dict[str, Any] | None = None,
+) -> None:
+    payload = properties or {}
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO analytics_events (
+                event_name, distinct_id, session_id, path, screen, referrer, properties_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_name.strip()[:120],
+                (distinct_id or "").strip()[:120] or None,
+                (session_id or "").strip()[:120] or None,
+                (path or "").strip()[:255] or None,
+                (screen or "").strip()[:120] or None,
+                (referrer or "").strip()[:255] or None,
+                json.dumps(payload, ensure_ascii=True),
+                utc_now_iso(),
+            ),
+        )
+
+
+def get_analytics_summary(hours: int = 24, limit: int = 20) -> dict[str, Any]:
+    safe_hours = max(1, min(24 * 30, int(hours)))
+    safe_limit = max(1, min(100, int(limit)))
+    since = (datetime.now(timezone.utc) - timedelta(hours=safe_hours)).isoformat()
+    with db_cursor() as cur:
+        cur.execute(
+            """
+            SELECT event_name, COUNT(*) AS event_count
+            FROM analytics_events
+            WHERE created_at >= ?
+            GROUP BY event_name
+            ORDER BY event_count DESC
+            LIMIT ?
+            """,
+            (since, safe_limit),
+        )
+        event_rows = cur.fetchall()
+        cur.execute(
+            """
+            SELECT COUNT(*) AS total_events, COUNT(DISTINCT distinct_id) AS unique_users
+            FROM analytics_events
+            WHERE created_at >= ?
+            """,
+            (since,),
+        )
+        aggregate = cur.fetchone()
+        cur.execute(
+            """
+            SELECT path, COUNT(*) AS page_views
+            FROM analytics_events
+            WHERE created_at >= ? AND event_name = 'page_view'
+            GROUP BY path
+            ORDER BY page_views DESC
+            LIMIT ?
+            """,
+            (since, safe_limit),
+        )
+        page_rows = cur.fetchall()
+    return {
+        "hours": safe_hours,
+        "since": since,
+        "total_events": int(aggregate["total_events"]) if aggregate else 0,
+        "unique_users": int(aggregate["unique_users"]) if aggregate else 0,
+        "events": [
+            {
+                "event_name": str(row["event_name"]),
+                "count": int(row["event_count"]),
+            }
+            for row in event_rows
+        ],
+        "page_views": [
+            {
+                "path": str(row["path"] or "/"),
+                "count": int(row["page_views"]),
+            }
+            for row in page_rows
+        ],
+    }

@@ -9,8 +9,15 @@ import requests
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.db import get_user_lookup, init_db, save_user_lookup, upsert_matches
-from app.models import AnalysisRunRequest, ExperimentCreateRequest, UserSearchResponse
+from app.db import (
+    get_analytics_summary,
+    get_user_lookup,
+    init_db,
+    insert_analytics_event,
+    save_user_lookup,
+    upsert_matches,
+)
+from app.models import AnalysisRunRequest, EventTrackRequest, ExperimentCreateRequest, UserSearchResponse
 from app.services.analysis import (
     create_experiment,
     evaluate_latest_experiment,
@@ -91,6 +98,38 @@ def _allowed_origins() -> list[str]:
         if origins:
             return origins
     return ["http://127.0.0.1:3000", "http://localhost:3000"]
+
+
+def _is_analytics_summary_enabled() -> bool:
+    return _is_truthy(os.getenv("HABIT_LAB_ENABLE_ANALYTICS_SUMMARY", "1"))
+
+
+def _forward_event_to_posthog(payload: EventTrackRequest) -> None:
+    api_key = os.getenv("POSTHOG_API_KEY", "").strip()
+    if not api_key:
+        return
+    host = os.getenv("POSTHOG_HOST", "https://us.i.posthog.com").strip().rstrip("/")
+    distinct_id = (payload.distinct_id or payload.session_id or "anonymous").strip() or "anonymous"
+    properties = dict(payload.properties or {})
+    if payload.path:
+        properties.setdefault("$current_url", payload.path)
+    if payload.referrer:
+        properties.setdefault("$referrer", payload.referrer)
+    if payload.screen:
+        properties.setdefault("screen", payload.screen)
+    try:
+        requests.post(
+            f"{host}/capture/",
+            json={
+                "api_key": api_key,
+                "event": payload.event_name,
+                "distinct_id": distinct_id,
+                "properties": properties,
+            },
+            timeout=1.2,
+        )
+    except Exception:
+        return
 
 
 app.add_middleware(
@@ -214,6 +253,31 @@ def experiments_evaluation(
     if payload is None:
         raise HTTPException(status_code=404, detail="No experiment found")
     return payload
+
+
+@app.post("/events/track")
+def events_track(req: EventTrackRequest) -> dict[str, Any]:
+    event_name = req.event_name.strip()
+    if not event_name:
+        raise HTTPException(status_code=400, detail="event_name is required")
+    insert_analytics_event(
+        event_name=event_name,
+        distinct_id=req.distinct_id,
+        session_id=req.session_id,
+        path=req.path,
+        screen=req.screen,
+        referrer=req.referrer,
+        properties=req.properties,
+    )
+    _forward_event_to_posthog(req)
+    return {"ok": True}
+
+
+@app.get("/events/summary")
+def events_summary(hours: int = Query(24, ge=1, le=24 * 30), limit: int = Query(20, ge=1, le=100)) -> dict[str, Any]:
+    if not _is_analytics_summary_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
+    return get_analytics_summary(hours=hours, limit=limit)
 
 
 @app.post("/debug/ingest")

@@ -235,6 +235,15 @@ type RankersLatestPayload = {
   rankers: OfficialRanker[];
 };
 
+type AnalyticsSummaryPayload = {
+  hours: number;
+  since: string;
+  total_events: number;
+  unique_users: number;
+  events: Array<{ event_name: string; count: number }>;
+  page_views: Array<{ path: string; count: number }>;
+};
+
 const ISSUE_LABELS: Record<string, string> = {
   HIGH_LATE_CONCEDE: "후반 실점 리스크",
   LOW_FINISHING: "마무리 효율 저하",
@@ -301,10 +310,65 @@ const FC_TACTIC_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 const SET_PIECE_OPTIONS = [1, 2, 3, 4, 5];
 const DEFENSE_STYLE_OPTIONS = ["후퇴", "밸런스", "볼터치 실수시 압박", "공 뺏긴 직후 압박", "지속적인 압박"];
 const BUILDUP_STYLE_OPTIONS = ["느린 빌드업", "밸런스", "긴 패스", "빠른 빌드업"];
+const DISTINCT_ID_KEY = "fcoach_distinct_id";
+const SESSION_ID_KEY = "fcoach_session_id";
 
 type RequestApiOptions = {
   timeoutMs?: number;
 };
+
+function ensureStorageId(storage: Storage, key: string): string {
+  const existing = storage.getItem(key);
+  if (existing) return existing;
+  const generated = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  storage.setItem(key, generated);
+  return generated;
+}
+
+function maskOuid(ouid: string): string {
+  const value = ouid.trim();
+  if (value.length < 10) return value;
+  return `${value.slice(0, 6)}...${value.slice(-4)}`;
+}
+
+function trackEvent(
+  eventName: string,
+  payload: {
+    screen?: string;
+    matchType?: number;
+    windowSize?: number;
+    ouid?: string;
+    properties?: Record<string, unknown>;
+  },
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    const distinctId = ensureStorageId(window.localStorage, DISTINCT_ID_KEY);
+    const sessionId = ensureStorageId(window.sessionStorage, SESSION_ID_KEY);
+    const body = {
+      event_name: eventName,
+      distinct_id: distinctId,
+      session_id: sessionId,
+      path: window.location.pathname,
+      screen: payload.screen ?? null,
+      referrer: document.referrer || null,
+      properties: {
+        match_type: payload.matchType ?? null,
+        window_size: payload.windowSize ?? null,
+        ouid_masked: payload.ouid ? maskOuid(payload.ouid) : null,
+        ...(payload.properties ?? {}),
+      },
+    };
+    void fetch(`${API_BASE_URL}/events/track`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      keepalive: true,
+    });
+  } catch {
+    return;
+  }
+}
 
 async function requestApi<T>(path: string, init?: RequestInit, options?: RequestApiOptions): Promise<T> {
   const timeoutMs = options?.timeoutMs ?? 30_000;
@@ -1176,6 +1240,7 @@ export function HabitLabWireframe() {
   const [evaluation, setEvaluation] = useState<EvaluationPayload | null>(null);
   const [officialRankers, setOfficialRankers] = useState<OfficialRanker[]>([]);
   const [rankerMeta, setRankerMeta] = useState<{ mode: string; count: number; mapped: number } | null>(null);
+  const [analyticsSummary, setAnalyticsSummary] = useState<AnalyticsSummaryPayload | null>(null);
 
   const [defenseStyle, setDefenseStyle] = useState("밸런스");
   const [buildupStyle, setBuildupStyle] = useState("밸런스");
@@ -1367,6 +1432,15 @@ export function HabitLabWireframe() {
     return completed;
   }, [actions.length, analysis, evaluation, officialRankers.length, ouidInput, playerRows.length, similarRankersForView.length]);
 
+  useEffect(() => {
+    trackEvent("page_view", {
+      screen,
+      matchType,
+      windowSize,
+      ouid: ouidInput,
+    });
+  }, [screen, matchType, windowSize, ouidInput]);
+
   async function loadOfficialRankers(limit = 30, silent = true) {
     try {
       const payload = await requestApi<RankersLatestPayload>(`/rankers/latest?mode=1vs1&limit=${limit}`, undefined, { timeoutMs: 30_000 });
@@ -1408,7 +1482,30 @@ export function HabitLabWireframe() {
     const found = await requestApi<UserSearchResponse>(`/users/search?nickname=${encodeURIComponent(targetNickname)}`);
     setResolvedUser(found);
     setOuidInput(found.ouid);
+    trackEvent("search_user", {
+      screen: "search",
+      matchType,
+      windowSize,
+      ouid: found.ouid,
+      properties: { source: found.source },
+    });
     return found.ouid;
+  }
+
+  async function onLoadAnalyticsSummary() {
+    try {
+      const payload = await requestApi<AnalyticsSummaryPayload>("/events/summary?hours=24&limit=10");
+      setAnalyticsSummary(payload);
+      setNotice(`최근 24시간 로그: 이벤트 ${payload.total_events}건 / 방문자 ${payload.unique_users}명`);
+      trackEvent("view_analytics_summary", {
+        screen: "guide",
+        matchType,
+        windowSize,
+        ouid: ouidInput,
+      });
+    } catch (summaryError) {
+      setError(normalizeErrorMessage(summaryError, "로그 요약 조회 실패"));
+    }
   }
 
   async function onRunAnalysis() {
@@ -1453,8 +1550,25 @@ export function HabitLabWireframe() {
         : "분석이 완료되었습니다.";
       setNotice(syncNotice);
       setScreen("diagnosis");
+      trackEvent("run_analysis", {
+        screen: "search",
+        matchType,
+        windowSize,
+        ouid: targetOuid,
+        properties: {
+          mode: "advanced",
+          has_tactic_input: true,
+          action_count: latestActions.length,
+        },
+      });
     } catch (analysisError) {
       setError(normalizeErrorMessage(analysisError, "분석 실행 실패"));
+      trackEvent("run_analysis_failed", {
+        screen: "search",
+        matchType,
+        windowSize,
+        ouid: ouidInput,
+      });
     } finally {
       setLoading(false);
     }
@@ -1493,8 +1607,25 @@ export function HabitLabWireframe() {
         : "완료: 진단 실행";
       setNotice(syncNotice);
       setScreen("diagnosis");
+      trackEvent("run_analysis", {
+        screen: "search",
+        matchType,
+        windowSize,
+        ouid: targetOuid,
+        properties: {
+          mode: "quick",
+          has_tactic_input: false,
+          action_count: payload.actions?.length ?? 0,
+        },
+      });
     } catch (quickRunError) {
       setError(normalizeErrorMessage(quickRunError, "빠른 실행 실패"));
+      trackEvent("run_analysis_failed", {
+        screen: "search",
+        matchType,
+        windowSize,
+        ouid: ouidInput,
+      });
     } finally {
       setLoading(false);
     }
@@ -1524,8 +1655,25 @@ export function HabitLabWireframe() {
       });
       setNotice(`실험 생성 완료: ${payload.experiment_id}`);
       setScreen("tracking");
+      trackEvent("adopt_action", {
+        screen: "actions",
+        matchType,
+        windowSize,
+        ouid: targetOuid,
+        properties: {
+          action_code: action.actionCode,
+          action_rank: action.rank,
+          confidence: action.confidence,
+        },
+      });
     } catch (experimentError) {
       setError(experimentError instanceof Error ? experimentError.message : "실험 생성 실패");
+      trackEvent("adopt_action_failed", {
+        screen: "actions",
+        matchType,
+        windowSize,
+        ouid: targetOuid,
+      });
     } finally {
       setLoading(false);
     }
@@ -1545,6 +1693,12 @@ export function HabitLabWireframe() {
       const payload = await requestApi<EvaluationPayload>(`/experiments/evaluation?ouid=${targetOuid}&match_type=${matchType}`);
       setEvaluation(payload);
       setNotice("실험 평가를 갱신했습니다.");
+      trackEvent("view_evaluation", {
+        screen: "tracking",
+        matchType,
+        windowSize,
+        ouid: targetOuid,
+      });
     } catch (evaluationError) {
       setError(evaluationError instanceof Error ? evaluationError.message : "실험 평가 실패");
       setEvaluation(null);
@@ -1565,7 +1719,16 @@ export function HabitLabWireframe() {
             <button
               key={item.key}
               className={`flow-step ${screen === item.key ? "active" : ""} ${completedScreenSet.has(item.key) ? "done" : ""}`}
-              onClick={() => setScreen(item.key)}
+              onClick={() => {
+                setScreen(item.key);
+                trackEvent("tab_click", {
+                  screen: item.key,
+                  matchType,
+                  windowSize,
+                  ouid: ouidInput,
+                  properties: { from_screen: screen },
+                });
+              }}
             >
               <span className="flow-icon">{item.icon}</span>
               <span className="flow-title">{SCREEN_LABELS[item.key]}</span>
@@ -1592,7 +1755,15 @@ export function HabitLabWireframe() {
                   <button
                     key={typeValue}
                     className={`tab ${matchType === typeValue ? "active" : ""}`}
-                    onClick={() => setMatchType(typeValue)}
+                    onClick={() => {
+                      setMatchType(typeValue);
+                      trackEvent("change_match_type", {
+                        screen: "search",
+                        matchType: typeValue,
+                        windowSize,
+                        ouid: ouidInput,
+                      });
+                    }}
                   >
                     {MATCH_LABELS[typeValue]}
                   </button>
@@ -1606,7 +1777,15 @@ export function HabitLabWireframe() {
                   <button
                     key={windowValue}
                     className={`tab ${windowSize === windowValue ? "active" : ""}`}
-                    onClick={() => setWindowSize(windowValue)}
+                    onClick={() => {
+                      setWindowSize(windowValue);
+                      trackEvent("change_window_size", {
+                        screen: "search",
+                        matchType,
+                        windowSize: windowValue,
+                        ouid: ouidInput,
+                      });
+                    }}
                   >
                     {windowValue}경기
                   </button>
@@ -2370,6 +2549,9 @@ export function HabitLabWireframe() {
               <button className="btn" onClick={() => setScreen("search")}>
                 지금 분석 시작하기
               </button>
+              <button className="btn secondary" onClick={onLoadAnalyticsSummary}>
+                최근 24시간 사용 로그 보기
+              </button>
             </div>
           </article>
 
@@ -2417,6 +2599,36 @@ export function HabitLabWireframe() {
               </div>
             </div>
           </article>
+          {analyticsSummary && (
+            <article className="panel">
+              <h3 className="section-title">서비스 사용 로그 요약 (최근 {analyticsSummary.hours}시간)</h3>
+              <p className="muted">
+                총 이벤트 {analyticsSummary.total_events}건 · 방문자(고유 ID) {analyticsSummary.unique_users}명
+              </p>
+              <div className="grid grid-2">
+                <div className="guide-card">
+                  <div className="guide-title">이벤트 TOP</div>
+                  <ul className="list compact">
+                    {analyticsSummary.events.map((item) => (
+                      <li key={item.event_name}>
+                        {item.event_name}: {item.count}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="guide-card">
+                  <div className="guide-title">페이지 조회 TOP</div>
+                  <ul className="list compact">
+                    {analyticsSummary.page_views.map((item) => (
+                      <li key={`${item.path}-${item.count}`}>
+                        {item.path}: {item.count}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </article>
+          )}
         </section>
       )}
 

@@ -30,3 +30,13 @@ class UserSearchResponse(BaseModel):
     ouid: str
     nickname: str
     source: str = "nexon_open_api"
+
+
+class EventTrackRequest(BaseModel):
+    event_name: str = Field(min_length=2, max_length=120)
+    distinct_id: str | None = Field(default=None, max_length=120)
+    session_id: str | None = Field(default=None, max_length=120)
+    path: str | None = Field(default=None, max_length=255)
+    screen: str | None = Field(default=None, max_length=120)
+    referrer: str | None = Field(default=None, max_length=255)
+    properties: dict[str, Any] = Field(default_factory=dict)

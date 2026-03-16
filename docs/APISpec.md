@@ -10,7 +10,7 @@
 ## `POST /analysis/run`
 - Body:
   - `ouid: string`
-  - `match_type: 50|52`
+  - `match_type: 50|60|52`
   - `window: 5|10|30`
   - `current_tactic?: object`
 - Response:
@@ -44,3 +44,24 @@
   - `post`
   - `delta`
 
+## `POST /events/track`
+- Body:
+  - `event_name: string`
+  - `distinct_id?: string`
+  - `session_id?: string`
+  - `path?: string`
+  - `screen?: string`
+  - `referrer?: string`
+  - `properties?: object`
+- Response:
+  - `ok: true`
+
+## `GET /events/summary`
+- Query:
+  - `hours: 1~720` (default 24)
+  - `limit: 1~100` (default 20)
+- Response:
+  - `total_events`
+  - `unique_users`
+  - `events[]`
+  - `page_views[]`

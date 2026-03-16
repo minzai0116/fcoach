@@ -54,6 +54,8 @@ cd apps/web && npm install && npm run dev
 - `GET /experiments/evaluation?ouid=...&match_type=50`
 - `GET /rankers/latest?mode=1vs1&limit=20`
 - `POST /rankers/refresh?...` (관리 목적)
+- `POST /events/track` (사용자 클릭/방문 이벤트 수집)
+- `GET /events/summary?hours=24&limit=10` (최근 사용 로그 요약)
 
 ## 5) 랭커 동기화 운영 권장 방식
 
@@ -73,6 +75,15 @@ make sync-rankers MODE=1vs1 MATCH_TYPE=50 PAGES=2 MAX_RANKERS=30 PER_RANKER_MATC
   2. 수집/랭커 동기화는 배치/큐로 분리
   3. SQLite WAL/timeout 적용, 이후 Postgres 전환 검토
   4. API rate limit + 캐시 TTL 튜닝
+
+## 6-1) 클릭/방문 로그(분석 이벤트)
+
+- Web에서 주요 이벤트(`page_view`, `run_analysis`, `adopt_action`, `tab_click`)를 자동 수집합니다.
+- 기본 저장소: SQLite `analytics_events`
+- 선택 연동: `POSTHOG_API_KEY` 설정 시 PostHog로도 이벤트 포워딩
+- 대시보드 확인:
+  - Web `이용 가이드` 탭의 `최근 24시간 사용 로그 보기`
+  - 또는 API `GET /events/summary?hours=24`
 
 ## 7) 배포 전 체크리스트
 
