@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+.env
+.env.local
+apps/api/.env
+apps/api/.env.local
+apps/web/.env.local
+apps/web/.next/
+apps/web/node_modules/
+data/habit_lab.sqlite3
+data/*.db
+.DS_Store
