@@ -235,15 +235,6 @@ type RankersLatestPayload = {
   rankers: OfficialRanker[];
 };
 
-type AnalyticsSummaryPayload = {
-  hours: number;
-  since: string;
-  total_events: number;
-  unique_users: number;
-  events: Array<{ event_name: string; count: number }>;
-  page_views: Array<{ path: string; count: number }>;
-};
-
 const ISSUE_LABELS: Record<string, string> = {
   HIGH_LATE_CONCEDE: "후반 실점 리스크",
   LOW_FINISHING: "마무리 효율 저하",
@@ -1240,7 +1231,6 @@ export function HabitLabWireframe() {
   const [evaluation, setEvaluation] = useState<EvaluationPayload | null>(null);
   const [officialRankers, setOfficialRankers] = useState<OfficialRanker[]>([]);
   const [rankerMeta, setRankerMeta] = useState<{ mode: string; count: number; mapped: number } | null>(null);
-  const [analyticsSummary, setAnalyticsSummary] = useState<AnalyticsSummaryPayload | null>(null);
 
   const [defenseStyle, setDefenseStyle] = useState("밸런스");
   const [buildupStyle, setBuildupStyle] = useState("밸런스");
@@ -1490,22 +1480,6 @@ export function HabitLabWireframe() {
       properties: { source: found.source },
     });
     return found.ouid;
-  }
-
-  async function onLoadAnalyticsSummary() {
-    try {
-      const payload = await requestApi<AnalyticsSummaryPayload>("/events/summary?hours=24&limit=10");
-      setAnalyticsSummary(payload);
-      setNotice(`최근 24시간 로그: 이벤트 ${payload.total_events}건 / 방문자 ${payload.unique_users}명`);
-      trackEvent("view_analytics_summary", {
-        screen: "guide",
-        matchType,
-        windowSize,
-        ouid: ouidInput,
-      });
-    } catch (summaryError) {
-      setError(normalizeErrorMessage(summaryError, "로그 요약 조회 실패"));
-    }
   }
 
   async function onRunAnalysis() {
@@ -2172,39 +2146,41 @@ export function HabitLabWireframe() {
               <article className="panel">
                 <h4 className="section-title">주전 후보 Top 11 (포메이션 배치)</h4>
                 <p className="muted compact">선수 포지션을 기준으로 자동 배치합니다. 동일 포지션 중복 시 좌우로 분산 표시됩니다.</p>
-                <div className="formation-board">
-                  <div className="formation-lines">
-                    <div className="formation-midline" />
-                    <div className="formation-center-circle" />
-                    <div className="formation-box top" />
-                    <div className="formation-box bottom" />
-                    <div className="formation-goal top" />
-                    <div className="formation-goal bottom" />
-                  </div>
-                  {formationNodes.map((player) => (
-                    <div
-                      key={`${player.sp_id}-${player.sp_position}`}
-                      className="formation-player"
-                      style={{ left: `${player.slot_left}%`, top: `${player.slot_top}%` }}
-                    >
-                      <div className="formation-player-head">
-                        <PlayerPortrait player={player} alt={`${player.player_name} 미니페이스온`} className="player-face formation" />
-                        <div className="formation-player-meta">
-                          <strong>{player.player_name}</strong>
-                          <span>{player.position_name}</span>
+                <div className="formation-scroll">
+                  <div className="formation-board">
+                    <div className="formation-lines">
+                      <div className="formation-midline" />
+                      <div className="formation-center-circle" />
+                      <div className="formation-box top" />
+                      <div className="formation-box bottom" />
+                      <div className="formation-goal top" />
+                      <div className="formation-goal bottom" />
+                    </div>
+                    {formationNodes.map((player) => (
+                      <div
+                        key={`${player.sp_id}-${player.sp_position}`}
+                        className="formation-player"
+                        style={{ left: `${player.slot_left}%`, top: `${player.slot_top}%` }}
+                      >
+                        <div className="formation-player-head">
+                          <PlayerPortrait player={player} alt={`${player.player_name} 미니페이스온`} className="player-face formation" />
+                          <div className="formation-player-meta">
+                            <strong>{player.player_name}</strong>
+                            <span>{player.position_name}</span>
+                          </div>
+                        </div>
+                        <div className="formation-player-top">
+                          <span className={`enhance-badge ${enhanceLevelClass(player.sp_grade)}`}>+{normalizedGrade(player.sp_grade)}</span>
+                          {player.season_img ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img className="season-badge tiny" src={player.season_img} alt={`${player.season_name} 배지`} />
+                          ) : (
+                            <span className="season-badge tiny fallback">SE</span>
+                          )}
                         </div>
                       </div>
-                      <div className="formation-player-top">
-                        <span className={`enhance-badge ${enhanceLevelClass(player.sp_grade)}`}>+{normalizedGrade(player.sp_grade)}</span>
-                        {player.season_img ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img className="season-badge tiny" src={player.season_img} alt={`${player.season_name} 배지`} />
-                        ) : (
-                          <span className="season-badge tiny fallback">SE</span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
               </article>
 
@@ -2549,9 +2525,6 @@ export function HabitLabWireframe() {
               <button className="btn" onClick={() => setScreen("search")}>
                 지금 분석 시작하기
               </button>
-              <button className="btn secondary" onClick={onLoadAnalyticsSummary}>
-                최근 24시간 사용 로그 보기
-              </button>
             </div>
           </article>
 
@@ -2599,36 +2572,6 @@ export function HabitLabWireframe() {
               </div>
             </div>
           </article>
-          {analyticsSummary && (
-            <article className="panel">
-              <h3 className="section-title">서비스 사용 로그 요약 (최근 {analyticsSummary.hours}시간)</h3>
-              <p className="muted">
-                총 이벤트 {analyticsSummary.total_events}건 · 방문자(고유 ID) {analyticsSummary.unique_users}명
-              </p>
-              <div className="grid grid-2">
-                <div className="guide-card">
-                  <div className="guide-title">이벤트 TOP</div>
-                  <ul className="list compact">
-                    {analyticsSummary.events.map((item) => (
-                      <li key={item.event_name}>
-                        {item.event_name}: {item.count}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div className="guide-card">
-                  <div className="guide-title">페이지 조회 TOP</div>
-                  <ul className="list compact">
-                    {analyticsSummary.page_views.map((item) => (
-                      <li key={`${item.path}-${item.count}`}>
-                        {item.path}: {item.count}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            </article>
-          )}
         </section>
       )}
 

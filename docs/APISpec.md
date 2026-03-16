@@ -60,6 +60,8 @@
 - Query:
   - `hours: 1~720` (default 24)
   - `limit: 1~100` (default 20)
+- Header:
+  - `x-admin-key: <HABIT_LAB_ANALYTICS_ADMIN_KEY>`
 - Response:
   - `total_events`
   - `unique_users`

@@ -750,6 +750,11 @@ code {
   overflow: hidden;
 }
 
+.formation-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+
 .formation-lines {
   position: absolute;
   inset: 10px;
@@ -1157,6 +1162,20 @@ code {
   padding: 10px 12px;
 }
 
+@media (max-width: 1024px) {
+  .container {
+    padding: 18px;
+  }
+
+  .title {
+    font-size: 30px;
+  }
+
+  .flow-rail {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 900px) {
   .grid-3,
   .grid-2,
@@ -1168,7 +1187,6 @@ code {
     grid-template-columns: 1fr;
   }
 
-  .flow-rail,
   .option-strip,
   .usage-flow,
   .action-grid,
@@ -1176,6 +1194,10 @@ code {
   .player-chip-list,
   .guide-tips {
     grid-template-columns: 1fr;
+  }
+
+  .flow-rail {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .formation-board {
@@ -1211,5 +1233,68 @@ code {
   .span-3,
   .span-2 {
     grid-column: span 1;
+  }
+}
+
+@media (max-width: 640px) {
+  .container {
+    padding: 12px;
+  }
+
+  .panel {
+    padding: 14px;
+    border-radius: 12px;
+  }
+
+  .title {
+    font-size: 24px;
+  }
+
+  .section-title {
+    font-size: 18px;
+    margin-bottom: 10px;
+  }
+
+  .tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    padding-bottom: 2px;
+  }
+
+  .tab {
+    flex: 0 0 auto;
+  }
+
+  .flow-rail {
+    display: flex;
+    overflow-x: auto;
+    gap: 8px;
+    padding-bottom: 4px;
+    scroll-snap-type: x mandatory;
+  }
+
+  .flow-step {
+    min-width: 170px;
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+  }
+
+  .button-row .btn,
+  .button-row .btn.secondary {
+    width: 100%;
+  }
+
+  .pitch-board {
+    height: 360px;
+  }
+
+  .pitch-board.half {
+    height: 440px;
+  }
+
+  .formation-board {
+    min-width: 760px;
+    height: 520px;
   }
 }

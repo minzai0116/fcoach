@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import requests
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import (
@@ -101,7 +101,16 @@ def _allowed_origins() -> list[str]:
 
 
 def _is_analytics_summary_enabled() -> bool:
-    return _is_truthy(os.getenv("HABIT_LAB_ENABLE_ANALYTICS_SUMMARY", "1"))
+    return _is_truthy(os.getenv("HABIT_LAB_ENABLE_ANALYTICS_SUMMARY", "0"))
+
+
+def _require_analytics_admin_key(header_value: str | None) -> None:
+    expected = os.getenv("HABIT_LAB_ANALYTICS_ADMIN_KEY", "").strip()
+    if not expected:
+        raise HTTPException(status_code=404, detail="Not Found")
+    candidate = (header_value or "").strip()
+    if not candidate or candidate != expected:
+        raise HTTPException(status_code=403, detail="forbidden")
 
 
 def _forward_event_to_posthog(payload: EventTrackRequest) -> None:
@@ -274,9 +283,14 @@ def events_track(req: EventTrackRequest) -> dict[str, Any]:
 
 
 @app.get("/events/summary")
-def events_summary(hours: int = Query(24, ge=1, le=24 * 30), limit: int = Query(20, ge=1, le=100)) -> dict[str, Any]:
+def events_summary(
+    hours: int = Query(24, ge=1, le=24 * 30),
+    limit: int = Query(20, ge=1, le=100),
+    x_admin_key: str | None = Header(default=None, alias="x-admin-key"),
+) -> dict[str, Any]:
     if not _is_analytics_summary_enabled():
         raise HTTPException(status_code=404, detail="Not Found")
+    _require_analytics_admin_key(x_admin_key)
     return get_analytics_summary(hours=hours, limit=limit)
 
 

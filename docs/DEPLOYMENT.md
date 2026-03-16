@@ -50,6 +50,7 @@ cd apps/api && PYTHONPATH=. uvicorn app.main:app --host 0.0.0.0 --port $PORT
 - `HABIT_LAB_ENABLE_DEBUG_ENDPOINTS=0`
 - `HABIT_LAB_AUTO_RANKER_SYNC=0`
 - `HABIT_LAB_ENABLE_ANALYTICS_SUMMARY=1`
+- `HABIT_LAB_ANALYTICS_ADMIN_KEY=<LONG_RANDOM_SECRET>`
 - `HABIT_LAB_DB_PATH=/var/data/habit_lab.sqlite3` (Persistent Disk 마운트 시)
 - (옵션) `POSTHOG_API_KEY=...`, `POSTHOG_HOST=https://us.i.posthog.com`
 

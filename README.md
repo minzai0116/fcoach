@@ -81,14 +81,18 @@ make sync-rankers MODE=1vs1 MATCH_TYPE=50 PAGES=2 MAX_RANKERS=30 PER_RANKER_MATC
 - Web에서 주요 이벤트(`page_view`, `run_analysis`, `adopt_action`, `tab_click`)를 자동 수집합니다.
 - 기본 저장소: SQLite `analytics_events`
 - 선택 연동: `POSTHOG_API_KEY` 설정 시 PostHog로도 이벤트 포워딩
-- 대시보드 확인:
-  - Web `이용 가이드` 탭의 `최근 24시간 사용 로그 보기`
-  - 또는 API `GET /events/summary?hours=24`
+- 요약 조회는 공개 노출 방지를 위해 운영자 키가 필요합니다.
+  - API 호출 예시:
+  ```bash
+  curl -H "x-admin-key: $HABIT_LAB_ANALYTICS_ADMIN_KEY" \
+    "https://<API_HOST>/events/summary?hours=24&limit=10"
+  ```
 
 ## 7) 배포 전 체크리스트
 
 - [ ] `.env`, API 키, DB 파일 미노출 확인
 - [ ] `HABIT_LAB_ENABLE_DEBUG_ENDPOINTS=0` 확인
+- [ ] `HABIT_LAB_ENABLE_ANALYTICS_SUMMARY=1`, `HABIT_LAB_ANALYTICS_ADMIN_KEY` 설정
 - [ ] `npm run build` / API 테스트 통과
 - [ ] `개인정보처리방침`, `이용약관`, `라이선스 고지` 페이지 링크 점검
 - [ ] 문의 이메일/운영자 정보 최신화

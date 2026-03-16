@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: fcoach-api
+    env: python
+    plan: starter
+    rootDir: .
+    buildCommand: pip install -r apps/api/requirements.txt
+    startCommand: cd apps/api && PYTHONPATH=. uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: HABIT_LAB_ENABLE_DEBUG_ENDPOINTS
+        value: "0"
+      - key: HABIT_LAB_AUTO_RANKER_SYNC
+        value: "0"
+      - key: HABIT_LAB_ENABLE_ANALYTICS_SUMMARY
+        value: "1"
+      - key: HABIT_LAB_DB_PATH
+        value: /var/data/habit_lab.sqlite3
