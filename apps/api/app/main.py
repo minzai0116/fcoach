@@ -205,6 +205,7 @@ def users_search(nickname: str = Query(..., min_length=2)) -> UserSearchResponse
 
 @app.post("/analysis/run")
 def analysis_run(req: AnalysisRunRequest) -> dict[str, Any]:
+    _trigger_ranker_sync_async(force=False)
     result = run_analysis(
         ouid=req.ouid,
         match_type=int(req.match_type),
@@ -330,6 +331,22 @@ def rankers_refresh(
 def rankers_latest(mode: str = Query("1vs1"), limit: int = Query(20, ge=1, le=100)) -> dict[str, Any]:
     _trigger_ranker_sync_async(force=False)
     rows = list_official_rankers(mode=mode, limit=limit)
+    if not rows and bool(os.getenv("NEXON_OPEN_API_KEY", "").strip()):
+        try:
+            ensure_official_rankers(
+                mode=mode,
+                match_type=50,
+                pages=1,
+                max_rankers=max(20, limit),
+                per_ranker_matches=5,
+                max_age_hours=24,
+                force_refresh=False,
+            )
+            rows = list_official_rankers(mode=mode, limit=limit)
+        except Exception as exc:
+            global _LAST_AUTO_RANKER_SYNC_ERROR, _LAST_AUTO_RANKER_SYNC_AT
+            _LAST_AUTO_RANKER_SYNC_ERROR = str(exc)
+            _LAST_AUTO_RANKER_SYNC_AT = datetime.now(timezone.utc)
     mapped_count = sum(
         1
         for row in rows

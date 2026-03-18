@@ -140,7 +140,8 @@ class NexonOpenApiClient:
 
     def collect_match_rows(self, ouid: str, match_type: int, limit: int = 100) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
-        for match_id in self.fetch_match_ids(ouid, match_type, limit=limit):
+        match_ids = self.fetch_match_ids(ouid, match_type, limit=limit)
+        for idx, match_id in enumerate(match_ids):
             payload = self.fetch_match_detail(match_id)
             match_date = payload.get("matchDate")
             digest = hashlib.sha256(
@@ -154,4 +155,6 @@ class NexonOpenApiClient:
                     "payload": payload,
                 }
             )
+            if idx + 1 < len(match_ids):
+                time.sleep(0.08)
         return rows

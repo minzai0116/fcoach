@@ -14,7 +14,7 @@ import requests
 from app.db import connect, upsert_matches, utc_now_iso
 from app.services.action_explainer import build_action_explanation
 from app.services.openapi_client import NexonOpenApiClient
-from app.services.ranker_source import list_official_rankers
+from app.services.ranker_source import ensure_official_rankers, list_official_rankers
 
 
 BENCHMARKS = {
@@ -68,10 +68,15 @@ BENCHMARKS = {
 STATIC_BENCHMARK_SOURCE = "ranker_proxy_v1"
 OFFICIAL_BENCHMARK_SOURCE = "official_rank_1vs1"
 ISSUE_MIN_ACTION_SCORE = 5.0
+CONFIDENCE_BASE = 0.35
+CONFIDENCE_SAMPLE_WEIGHT = 0.40
+CONFIDENCE_SEVERITY_WEIGHT = 0.25
+CONFIDENCE_TACTIC_MISSING_PENALTY = 0.90
+CONFIDENCE_SAMPLE_FULL_MATCHES = 15.0
 SPID_META_URL = "https://open.api.nexon.com/static/fconline/meta/spid.json"
 SPPOSITION_META_URL = "https://open.api.nexon.com/static/fconline/meta/spposition.json"
 SEASON_META_URL = "https://open.api.nexon.com/static/fconline/meta/seasonid.json"
-MATCH_REFRESH_THRESHOLD = timedelta(minutes=2)
+MATCH_REFRESH_THRESHOLD = timedelta(minutes=15)
 
 
 @dataclass
@@ -106,6 +111,14 @@ class MatchStats:
     goals_out_penalty: float = 0.0
     controller: str = ""
     player_stats: list[dict[str, float | int]] = field(default_factory=list)
+
+
+def _sync_fetch_limits(window_size: int, has_cached_rows: bool) -> list[int]:
+    if has_cached_rows:
+        return [max(window_size, 12)]
+    # Cold-start 환경(예: 서버리스 새 인스턴스)에서는 작은 배치부터 시도해 429 가능성을 낮춘다.
+    primary = min(12, max(5, window_size))
+    return [primary, 5]
 
 
 def _safe_get_json(url: str) -> Any:
@@ -516,18 +529,22 @@ def _issue_label(issue_code: str) -> str:
 
 
 def _confidence_detail(match_count: float, issue_score: float, tactic_input_known: bool = True) -> dict[str, float]:
-    sample_score = max(0.0, min(1.0, match_count / 30.0))
+    sample_score = max(0.0, min(1.0, match_count / CONFIDENCE_SAMPLE_FULL_MATCHES))
     severity_score = max(0.0, min(1.0, issue_score / 100.0))
-    confidence = 0.25 + 0.50 * sample_score + 0.25 * severity_score
+    confidence = CONFIDENCE_BASE + CONFIDENCE_SAMPLE_WEIGHT * sample_score + CONFIDENCE_SEVERITY_WEIGHT * severity_score
     if issue_score < 10:
-        confidence *= 0.65
+        confidence *= 0.90
     if issue_score < 1:
-        confidence *= 0.55
+        confidence *= 0.85
     if not tactic_input_known:
-        confidence *= 0.82
-        confidence = min(confidence, 0.78)
+        confidence *= CONFIDENCE_TACTIC_MISSING_PENALTY
+        confidence = min(confidence, 0.88)
     confidence = max(0.0, min(0.95, confidence))
     return {
+        "base_score": CONFIDENCE_BASE,
+        "sample_weight": CONFIDENCE_SAMPLE_WEIGHT,
+        "severity_weight": CONFIDENCE_SEVERITY_WEIGHT,
+        "tactic_missing_penalty": CONFIDENCE_TACTIC_MISSING_PENALTY,
         "sample_score": round(sample_score, 2),
         "severity_score": round(severity_score, 2),
         "tactic_input_known": 1.0 if tactic_input_known else 0.0,
@@ -640,7 +657,11 @@ def _maintain_action(metrics: dict[str, float], benchmark_source: str, metric_ga
                 "source": benchmark_source,
             },
             "confidence_detail": {
-                "sample_score": round(max(0.0, min(1.0, metrics["match_count"] / 30.0)), 2),
+                "base_score": CONFIDENCE_BASE,
+                "sample_weight": CONFIDENCE_SAMPLE_WEIGHT,
+                "severity_weight": CONFIDENCE_SEVERITY_WEIGHT,
+                "tactic_missing_penalty": CONFIDENCE_TACTIC_MISSING_PENALTY,
+                "sample_score": round(max(0.0, min(1.0, metrics["match_count"] / CONFIDENCE_SAMPLE_FULL_MATCHES)), 2),
                 "severity_score": 0.0,
                 "final_confidence": 0.45,
             },
@@ -1531,23 +1552,66 @@ def run_analysis(
         should_refresh = datetime.now(timezone.utc) - latest_before_dt >= MATCH_REFRESH_THRESHOLD
     if rows and latest_before_dt is None:
         should_refresh = True
-    if len(rows) < max(window_size * 2, 12):
+    if len(rows) < max(window_size, 12):
         should_refresh = True
 
     if should_refresh:
         try:
             api = NexonOpenApiClient(timeout_sec=15, retries=2)
-            fetch_limit = max(30, min(120, window_size * 6))
-            match_rows = api.collect_match_rows(ouid=ouid, match_type=match_type, limit=fetch_limit)
-            if match_rows:
-                refreshed_match_rows = upsert_matches(ouid=ouid, match_type=match_type, rows=match_rows)
-                rows = list_match_stats(ouid, match_type)
+            sync_error: Exception | None = None
+            for fetch_limit in _sync_fetch_limits(window_size=window_size, has_cached_rows=bool(rows)):
+                try:
+                    match_rows = api.collect_match_rows(ouid=ouid, match_type=match_type, limit=fetch_limit)
+                    if match_rows:
+                        refreshed_match_rows = upsert_matches(ouid=ouid, match_type=match_type, rows=match_rows)
+                        rows = list_match_stats(ouid, match_type)
+                    sync_error = None
+                    break
+                except requests.HTTPError as exc:
+                    sync_error = exc
+                    status_code = exc.response.status_code if exc.response is not None else None
+                    # 429에서만 더 작은 배치로 재시도한다.
+                    if status_code == 429:
+                        continue
+                    raise
+            if sync_error is not None:
+                raise sync_error
+        except requests.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            api_error_name = ""
+            api_error_message = ""
+            if exc.response is not None:
+                try:
+                    payload = exc.response.json()
+                    if isinstance(payload, dict):
+                        err = payload.get("error")
+                        if isinstance(err, dict):
+                            api_error_name = str(err.get("name", "")).strip()
+                            api_error_message = str(err.get("message", "")).strip()
+                except Exception:
+                    pass
+            if status_code == 429:
+                refresh_warning = "Nexon Open API 호출 제한(429)으로 최신 동기화에 실패했습니다. 잠시 후 재시도해주세요."
+            elif status_code is not None and status_code >= 500:
+                refresh_warning = f"Nexon Open API 서버 응답 오류({status_code})로 최신 동기화에 실패했습니다."
+            elif status_code is not None:
+                refresh_warning = f"Nexon Open API 요청 오류({status_code})로 최신 동기화에 실패했습니다."
+            else:
+                refresh_warning = "Nexon Open API 통신 오류로 최신 동기화에 실패했습니다."
+            if api_error_name or api_error_message:
+                detail_parts = [part for part in (api_error_name, api_error_message) if part]
+                refresh_warning = f"{refresh_warning} [{' / '.join(detail_parts)}]"
+            rows = list_match_stats(ouid, match_type)
         except Exception as exc:
             refresh_warning = (
                 "최신 경기 동기화에 실패해 저장된 데이터로 분석했습니다."
                 f" ({type(exc).__name__})"
             )
             rows = list_match_stats(ouid, match_type)
+    if not rows and refresh_warning:
+        refresh_warning = f"{refresh_warning} 해당 모드에서 저장된 경기 데이터가 없습니다."
+    if not rows and not refresh_warning:
+        refresh_warning = "해당 모드에서 조회 가능한 경기 데이터가 없습니다."
     playable_controllers = {"keyboard", "gamepad"}
     playable_rows = [row for row in rows if row.controller.strip().lower() in playable_controllers]
     use_playable_only = len(playable_rows) >= min(5, window_size)
@@ -1559,6 +1623,20 @@ def run_analysis(
         official_rankers = list_official_rankers(mode="1vs1", limit=80)
     except Exception:
         official_rankers = []
+    if not official_rankers:
+        try:
+            ensure_official_rankers(
+                mode="1vs1",
+                match_type=50,
+                pages=1,
+                max_rankers=20,
+                per_ranker_matches=5,
+                max_age_hours=24,
+                force_refresh=False,
+            )
+            official_rankers = list_official_rankers(mode="1vs1", limit=80)
+        except Exception:
+            official_rankers = []
     official_ranker_ouids = {str(row["ouid"]) for row in official_rankers if row.get("ouid")}
     ranker_profiles: list[dict[str, Any]] = []
     if official_ranker_ouids:
@@ -1714,7 +1792,11 @@ def run_analysis(
         "sample_scope": "playable_only" if use_playable_only else "all_controllers",
         "sample_count": len(selected),
         "tactic_input_mode": "provided" if tactic_input_known else "missing",
-        "latest_match_date": selected[0].match_date if selected else None,
+        "latest_match_date": (
+            selected[0].match_date
+            if selected
+            else (base_rows[0].match_date if base_rows else (rows[0].match_date if rows else None))
+        ),
         "sync_attempted": should_refresh,
         "sync_new_rows": refreshed_match_rows,
         "sync_warning": refresh_warning,
@@ -1849,8 +1931,87 @@ def evaluate_latest_experiment(ouid: str, match_type: int) -> dict[str, Any] | N
         window_size = int(run["window_size"])
         started_at = str(run["started_at"])
         rows = list_match_stats(ouid, match_type)
-        pre_rows = [row for row in rows if row.match_date < started_at][:window_size]
-        post_rows = [row for row in rows if row.match_date >= started_at][:window_size]
+        refreshed_match_rows = 0
+        refresh_warning: str | None = None
+        latest_before = rows[0].match_date if rows else None
+        latest_before_dt = _parse_iso_datetime(latest_before) if latest_before else None
+        should_refresh = not rows
+        if rows and latest_before_dt is not None:
+            should_refresh = datetime.now(timezone.utc) - latest_before_dt >= MATCH_REFRESH_THRESHOLD
+        if rows and latest_before_dt is None:
+            should_refresh = True
+        if len(rows) < max(window_size, 12):
+            should_refresh = True
+
+        if should_refresh:
+            try:
+                api = NexonOpenApiClient(timeout_sec=15, retries=2)
+                sync_error: Exception | None = None
+                for fetch_limit in _sync_fetch_limits(window_size=window_size, has_cached_rows=bool(rows)):
+                    try:
+                        match_rows = api.collect_match_rows(ouid=ouid, match_type=match_type, limit=fetch_limit)
+                        if match_rows:
+                            refreshed_match_rows = upsert_matches(ouid=ouid, match_type=match_type, rows=match_rows)
+                            rows = list_match_stats(ouid, match_type)
+                        sync_error = None
+                        break
+                    except requests.HTTPError as exc:
+                        sync_error = exc
+                        status_code = exc.response.status_code if exc.response is not None else None
+                        if status_code == 429:
+                            continue
+                        raise
+                if sync_error is not None:
+                    raise sync_error
+            except requests.HTTPError as exc:
+                status_code = exc.response.status_code if exc.response is not None else None
+                if status_code == 429:
+                    refresh_warning = "Nexon Open API 호출 제한(429)으로 최신 동기화에 실패했습니다. 잠시 후 재시도해주세요."
+                elif status_code is not None and status_code >= 500:
+                    refresh_warning = f"Nexon Open API 서버 응답 오류({status_code})로 최신 동기화에 실패했습니다."
+                elif status_code is not None:
+                    refresh_warning = f"Nexon Open API 요청 오류({status_code})로 최신 동기화에 실패했습니다."
+                else:
+                    refresh_warning = "Nexon Open API 통신 오류로 최신 동기화에 실패했습니다."
+                rows = list_match_stats(ouid, match_type)
+            except Exception as exc:
+                refresh_warning = (
+                    "최신 경기 동기화에 실패해 저장된 데이터로 평가했습니다."
+                    f" ({type(exc).__name__})"
+                )
+                rows = list_match_stats(ouid, match_type)
+        if not rows and refresh_warning:
+            refresh_warning = f"{refresh_warning} 해당 모드에서 저장된 경기 데이터가 없습니다."
+        if not rows and not refresh_warning:
+            refresh_warning = "해당 모드에서 조회 가능한 경기 데이터가 없습니다."
+
+        playable_controllers = {"keyboard", "gamepad"}
+        playable_rows = [row for row in rows if row.controller.strip().lower() in playable_controllers]
+        use_playable_only = len(playable_rows) >= min(5, window_size)
+        base_rows = playable_rows if use_playable_only else rows
+
+        started_at_dt = _parse_iso_datetime(started_at)
+        if started_at_dt is None:
+            pre_rows = [row for row in base_rows if row.match_date < started_at][:window_size]
+            post_rows = [row for row in base_rows if row.match_date >= started_at][:window_size]
+        else:
+            pre_rows = []
+            post_rows = []
+            for row in base_rows:
+                row_dt = _parse_iso_datetime(row.match_date)
+                if row_dt is None:
+                    continue
+                if row_dt < started_at_dt:
+                    pre_rows.append(row)
+                else:
+                    post_rows.append(row)
+            pre_rows = pre_rows[:window_size]
+            post_rows = post_rows[:window_size]
+
+        if not post_rows:
+            missing_post_message = "실험 시작 이후 수집된 경기가 아직 없어 POST 구간 지표가 0으로 표시됩니다."
+            refresh_warning = f"{refresh_warning} {missing_post_message}".strip() if refresh_warning else missing_post_message
+
         pre = _compute_metrics(pre_rows)
         post = _compute_metrics(post_rows)
         delta = {
@@ -1880,6 +2041,12 @@ def evaluate_latest_experiment(ouid: str, match_type: int) -> dict[str, Any] | N
             "experiment_id": run["id"],
             "window_size": window_size,
             "started_at": started_at,
+            "sample_scope": "playable_only" if use_playable_only else "all_controllers",
+            "pre_match_count": len(pre_rows),
+            "post_match_count": len(post_rows),
+            "sync_attempted": should_refresh,
+            "sync_new_rows": refreshed_match_rows,
+            "sync_warning": refresh_warning,
             "pre": pre,
             "post": post,
             "delta": delta,

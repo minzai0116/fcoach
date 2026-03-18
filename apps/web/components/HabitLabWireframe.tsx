@@ -172,6 +172,12 @@ type EvaluationPayload = {
   experiment_id: string;
   window_size: number;
   started_at: string;
+  sample_scope?: string;
+  pre_match_count?: number;
+  post_match_count?: number;
+  sync_attempted?: boolean;
+  sync_new_rows?: number;
+  sync_warning?: string | null;
   pre: MetricMap;
   post: MetricMap;
   delta: MetricMap;
@@ -842,6 +848,10 @@ type MetricGapEntry = {
 };
 
 type ConfidenceDetail = {
+  base_score?: number;
+  sample_weight?: number;
+  severity_weight?: number;
+  tactic_missing_penalty?: number;
   sample_score: number;
   severity_score: number;
   tactic_input_known: number;
@@ -945,6 +955,10 @@ function getConfidenceDetail(evidence: Record<string, unknown> | undefined): Con
   if (!raw || typeof raw !== "object") return null;
   const value = raw as Record<string, unknown>;
   return {
+    base_score: Number(value.base_score ?? 0.35),
+    sample_weight: Number(value.sample_weight ?? 0.4),
+    severity_weight: Number(value.severity_weight ?? 0.25),
+    tactic_missing_penalty: Number(value.tactic_missing_penalty ?? 0.9),
     sample_score: Number(value.sample_score ?? 0),
     severity_score: Number(value.severity_score ?? 0),
     tactic_input_known: Number(value.tactic_input_known ?? 1),
@@ -953,9 +967,17 @@ function getConfidenceDetail(evidence: Record<string, unknown> | undefined): Con
 }
 
 function confidenceBand(value: number): { label: string; className: string } {
-  if (value >= 0.75) return { label: "높음", className: "issue-low" };
-  if (value >= 0.55) return { label: "보통", className: "issue-mid" };
+  if (value >= 0.78) return { label: "높음", className: "issue-low" };
+  if (value >= 0.52) return { label: "보통", className: "issue-mid" };
+  if (value >= 0.35) return { label: "초기", className: "issue-mid" };
   return { label: "낮음", className: "issue-high" };
+}
+
+function syncNoticeText(payload: AnalysisPayload, fallback: string): string {
+  const warning = String(payload.sync_warning ?? "").trim();
+  if (!warning) return fallback;
+  const latest = String(payload.latest_match_date ?? "").trim();
+  return latest ? `${warning} (최근 경기 시각: ${latest})` : warning;
 }
 
 function similarRankerTarget(metricName: string, similarRankers: SimilarRanker[]): { value: number; count: number } | null {
@@ -1224,6 +1246,7 @@ export function HabitLabWireframe() {
   const [resolvedUser, setResolvedUser] = useState<UserSearchResponse | null>(null);
   const [ouidInput, setOuidInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [analysisLoadingMode, setAnalysisLoadingMode] = useState<"quick" | "advanced" | null>(null);
   const [notice, setNotice] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [analysis, setAnalysis] = useState<AnalysisPayload | null>(null);
@@ -1483,6 +1506,7 @@ export function HabitLabWireframe() {
   }
 
   async function onRunAnalysis() {
+    setAnalysisLoadingMode("advanced");
     setLoading(true);
     setError("");
     setNotice("");
@@ -1519,10 +1543,7 @@ export function HabitLabWireframe() {
         boxPlayers: Number(boxPlayers),
       });
       void loadOfficialRankers(30, true);
-      const syncNotice = payload.sync_warning
-        ? `${payload.sync_warning} (최근 경기 시각: ${payload.latest_match_date ?? "확인 불가"})`
-        : "분석이 완료되었습니다.";
-      setNotice(syncNotice);
+      setNotice(syncNoticeText(payload, "분석이 완료되었습니다."));
       setScreen("diagnosis");
       trackEvent("run_analysis", {
         screen: "search",
@@ -1545,6 +1566,7 @@ export function HabitLabWireframe() {
       });
     } finally {
       setLoading(false);
+      setAnalysisLoadingMode(null);
     }
   }
 
@@ -1555,6 +1577,7 @@ export function HabitLabWireframe() {
       return;
     }
 
+    setAnalysisLoadingMode("quick");
     setLoading(true);
     setError("");
     setNotice("");
@@ -1576,10 +1599,7 @@ export function HabitLabWireframe() {
       setAnalysis(payload);
       setActions(payload.actions ? toActionCards(payload.actions) : []);
       void loadOfficialRankers(30, true);
-      const syncNotice = payload.sync_warning
-        ? `${payload.sync_warning} (최근 경기 시각: ${payload.latest_match_date ?? "확인 불가"})`
-        : "완료: 진단 실행";
-      setNotice(syncNotice);
+      setNotice(syncNoticeText(payload, "완료: 진단 실행"));
       setScreen("diagnosis");
       trackEvent("run_analysis", {
         screen: "search",
@@ -1602,6 +1622,7 @@ export function HabitLabWireframe() {
       });
     } finally {
       setLoading(false);
+      setAnalysisLoadingMode(null);
     }
   }
 
@@ -1782,7 +1803,14 @@ export function HabitLabWireframe() {
           </div>
           <div className="button-row">
             <button className="btn" onClick={onQuickRun} disabled={loading}>
-              {loading ? "처리 중..." : "빠른 시작 (닉네임→진단)"}
+              {loading && analysisLoadingMode === "quick" ? (
+                <span className="btn-loading">
+                  <span className="spinner" />
+                  분석 중...
+                </span>
+              ) : (
+                "빠른 시작 (닉네임→진단)"
+              )}
             </button>
           </div>
 
@@ -1880,7 +1908,14 @@ export function HabitLabWireframe() {
               </div>
               <div className="button-row">
                 <button className="btn" onClick={onRunAnalysis} disabled={loading}>
-                  {loading ? "처리 중..." : "고급 전술 기준으로 재분석"}
+                  {loading && analysisLoadingMode === "advanced" ? (
+                    <span className="btn-loading">
+                      <span className="spinner" />
+                      분석 중...
+                    </span>
+                  ) : (
+                    "고급 전술 기준으로 재분석"
+                  )}
                 </button>
               </div>
             </>
@@ -2297,9 +2332,12 @@ export function HabitLabWireframe() {
                     <p className="muted compact">{coachExplanation?.coach_message || guide.why}</p>
                     {confidenceDetail && (
                       <p className="muted compact">
-                        신뢰도 근거: 기본 0.25 + 표본({formatFixed(confidenceDetail.sample_score)}×0.50) + 이슈강도(
-                        {formatFixed(confidenceDetail.severity_score)}×0.25)
-                        {confidenceDetail.tactic_input_known < 0.5 ? " + 전술 미입력 보정 적용" : ""}
+                        신뢰도 근거: 기본 {formatFixed(confidenceDetail.base_score ?? 0.35)} + 표본(
+                        {formatFixed(confidenceDetail.sample_score)}×{formatFixed(confidenceDetail.sample_weight ?? 0.4)}) + 이슈강도(
+                        {formatFixed(confidenceDetail.severity_score)}×{formatFixed(confidenceDetail.severity_weight ?? 0.25)})
+                        {confidenceDetail.tactic_input_known < 0.5
+                          ? ` × 전술 미입력 보정(${formatFixed(confidenceDetail.tactic_missing_penalty ?? 0.9)})`
+                          : ""}
                       </p>
                     )}
                     <p className="muted compact">
@@ -2457,6 +2495,13 @@ export function HabitLabWireframe() {
               {loading ? "평가 중..." : "최신 실험 평가 갱신"}
             </button>
             <p className="muted">평가 시각: {formatDate(evaluation?.evaluated_at)}</p>
+            {evaluation && (
+              <p className="muted">
+                비교 표본: PRE {Number(evaluation.pre_match_count ?? 0)}경기 / POST {Number(evaluation.post_match_count ?? 0)}경기
+                {evaluation.sample_scope === "playable_only" ? " (키보드/패드 기준)" : ""}
+              </p>
+            )}
+            {evaluation?.sync_warning && <div className="notice warn">{evaluation.sync_warning}</div>}
           </article>
           <article className="panel">
             <h3 className="section-title">적용 전 (PRE)</h3>
