@@ -1,6 +1,8 @@
 # FCOACH 배포 가이드
 
-## 1. 배포 전 체크
+이 문서는 `Web(Next.js)` + `API(FastAPI)`를 Vercel 기준으로 배포하는 최소 절차를 정리합니다.
+
+## 1. 사전 검증
 
 ```bash
 cd /Users/kmj/Desktop/fc-habit-lab
@@ -8,79 +10,74 @@ make test
 cd apps/web && npm run build
 ```
 
-- `.env` 파일은 커밋하지 않습니다.
-- `HABIT_LAB_ENABLE_DEBUG_ENDPOINTS=0` 유지
-- Open API 키는 배포 플랫폼 환경변수로만 주입
-
----
+검증 포인트:
+- `.env`/키 파일이 커밋되지 않았는지 확인
+- Open API 키가 로컬 파일이 아닌 플랫폼 환경변수로 주입되는지 확인
 
 ## 2. GitHub 업로드
 
 ```bash
 cd /Users/kmj/Desktop/fc-habit-lab
-git init
 git add .
-git commit -m "feat: initial FCOACH release"
-git branch -M main
-git remote add origin https://github.com/<YOUR_ID>/<YOUR_REPO>.git
-git push -u origin main
+git commit -m "chore: release prep"
+git push origin main
 ```
 
----
+## 3. API 배포 (Vercel)
 
-## 3. API 배포 (Render)
+프로젝트: `fcoach-api`
 
-### 3-1) 서비스 생성
-- Render → New + → Web Service
-- GitHub repo 연결
-- Root Directory: `/` (저장소 루트)
-
-### 3-2) Build / Start 명령
-- Build Command
-```bash
-pip install -r apps/api/requirements.txt
-```
-- Start Command
-```bash
-cd apps/api && PYTHONPATH=. uvicorn app.main:app --host 0.0.0.0 --port $PORT
-```
-
-### 3-3) 환경변수
-- `NEXON_OPEN_API_KEY=...`
+필수 환경변수:
+- `NEXON_OPEN_API_KEY`
 - `HABIT_LAB_ENABLE_DEBUG_ENDPOINTS=0`
 - `HABIT_LAB_AUTO_RANKER_SYNC=0`
-- `HABIT_LAB_ENABLE_ANALYTICS_SUMMARY=1`
+- `HABIT_LAB_ENABLE_ANALYTICS_SUMMARY=0`
 - `HABIT_LAB_ANALYTICS_ADMIN_KEY=<LONG_RANDOM_SECRET>`
-- `HABIT_LAB_DB_PATH=/var/data/habit_lab.sqlite3` (Persistent Disk 마운트 시)
-- (옵션) `POSTHOG_API_KEY=...`, `POSTHOG_HOST=https://us.i.posthog.com`
 
-### 3-4) 스토리지
-- SQLite 파일 유지가 필요하면 Render Persistent Disk를 연결합니다.
-- 디스크 미연결 시 재배포/재시작에 따라 데이터가 유실될 수 있습니다.
+권장:
+- `HABIT_LAB_DB_PATH=/tmp/habit_lab.sqlite3`
+- `POSTHOG_API_KEY` (선택)
 
----
+헬스체크:
+- `GET https://fcoach-api.vercel.app/health`
 
 ## 4. Web 배포 (Vercel)
 
-### 4-1) 프로젝트 생성
-- Vercel → New Project → GitHub repo 선택
-- Root Directory: `apps/web`
+프로젝트: `web`
 
-### 4-2) 환경변수
-- `NEXT_PUBLIC_API_BASE_URL=https://<RENDER_API_URL>`
+필수 환경변수:
+- `NEXT_PUBLIC_API_BASE_URL=https://fcoach-api.vercel.app`
 
-### 4-3) 배포
-- Framework Preset은 Next.js 자동 인식
-- Deploy 후 `/privacy`, `/terms`, `/license` 링크까지 확인
+주의:
+- 웹 전역 Basic Auth는 제거된 상태입니다.
+- 운영 로그는 API 관리자 키로만 조회됩니다.
 
----
+## 5. 도메인 연결 (`fcoach.fun`)
 
-## 5. 운영 권장
+- 메인: `fcoach.fun`
+- 서브: `www.fcoach.fun`
 
-- 랭커 동기화는 API 요청 경로에서 동기 실행하지 말고 배치로 실행:
+현재 정책:
+- `www.fcoach.fun` 요청은 `https://fcoach.fun`으로 308 영구 리다이렉트
+
+검증 명령:
+
 ```bash
-cd /Users/kmj/Desktop/fc-habit-lab
-make sync-rankers MODE=1vs1 MATCH_TYPE=50 PAGES=2 MAX_RANKERS=30 PER_RANKER_MATCHES=8
+curl -I https://www.fcoach.fun
+curl -I https://fcoach.fun
 ```
-- 하루 1회 스케줄링 권장
-- 429 보호를 위해 닉네임 조회 캐시를 유지(현재 SQLite cache 적용)
+
+## 6. 운영 체크리스트
+
+- [ ] `events/summary` 보호 키 주기적 교체
+- [ ] 429 급증 시 `users/search` 캐시 TTL 상향
+- [ ] 랭커 동기화 배치 주기 점검(일 1회 권장)
+- [ ] 장애 대응용 상태 점검: `/health`
+- [ ] 배포 직후 모바일 동작(검색/탭/선수 리포트) 확인
+
+## 7. 롤백 전략
+
+- Web: Vercel에서 이전 배포로 즉시 롤백
+- API: Vercel에서 직전 배포 Promote
+- 데이터: SQLite 파일 백업본 기준 복구
+
