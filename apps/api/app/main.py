@@ -26,7 +26,7 @@ from app.services.analysis import (
     run_analysis,
 )
 from app.services.cache import CacheClient
-from app.services.openapi_client import NexonOpenApiClient
+from app.services.openapi_client import NexonOpenApiClient, OpenApiRateLimitError
 from app.services.ranker_source import ensure_official_rankers, list_official_rankers
 
 
@@ -35,6 +35,9 @@ cache = CacheClient()
 _LAST_AUTO_RANKER_SYNC_AT: datetime | None = None
 _LAST_AUTO_RANKER_SYNC_ERROR: str | None = None
 _RANKER_SYNC_LOCK = threading.Lock()
+_MATCH_SYNC_INFLIGHT: set[tuple[str, int]] = set()
+_MATCH_SYNC_LAST_ATTEMPT: dict[tuple[str, int], datetime] = {}
+_MATCH_SYNC_GUARD_LOCK = threading.Lock()
 
 
 def _is_truthy(value: str | None) -> bool:
@@ -87,6 +90,51 @@ def _trigger_ranker_sync_async(force: bool = False) -> bool:
             _RANKER_SYNC_LOCK.release()
 
     thread = threading.Thread(target=_worker, name="ranker-sync-worker", daemon=True)
+    thread.start()
+    return True
+
+
+def _match_sync_cooldown_seconds() -> int:
+    raw = os.getenv("HABIT_LAB_MATCH_SYNC_COOLDOWN_SEC", "180").strip()
+    try:
+        return max(30, min(3600, int(raw)))
+    except Exception:
+        return 180
+
+
+def _trigger_match_sync_async(ouid: str, match_type: int, desired_matches: int) -> bool:
+    if not bool(os.getenv("NEXON_OPEN_API_KEY", "").strip()):
+        return False
+    if desired_matches <= 0:
+        return False
+    key = (ouid.strip(), int(match_type))
+    if not key[0]:
+        return False
+    now = datetime.now(timezone.utc)
+    with _MATCH_SYNC_GUARD_LOCK:
+        if key in _MATCH_SYNC_INFLIGHT:
+            return False
+        last_attempt = _MATCH_SYNC_LAST_ATTEMPT.get(key)
+        cooldown = timedelta(seconds=_match_sync_cooldown_seconds())
+        if last_attempt and now - last_attempt < cooldown:
+            return False
+        _MATCH_SYNC_INFLIGHT.add(key)
+        _MATCH_SYNC_LAST_ATTEMPT[key] = now
+
+    def _worker() -> None:
+        try:
+            client = NexonOpenApiClient(timeout_sec=15, retries=2)
+            safe_limit = max(10, min(60, int(desired_matches)))
+            rows = client.collect_match_rows(ouid=key[0], match_type=key[1], limit=safe_limit)
+            if rows:
+                upsert_matches(ouid=key[0], match_type=key[1], rows=rows)
+        except Exception:
+            pass
+        finally:
+            with _MATCH_SYNC_GUARD_LOCK:
+                _MATCH_SYNC_INFLIGHT.discard(key)
+
+    thread = threading.Thread(target=_worker, name=f"match-sync-{key[1]}", daemon=True)
     thread.start()
     return True
 
@@ -182,6 +230,22 @@ def users_search(nickname: str = Query(..., min_length=2)) -> UserSearchResponse
     try:
         client = NexonOpenApiClient()
         payload = client.find_user_by_nickname(target_nickname)
+    except OpenApiRateLimitError as exc:
+        if cached_lookup and cached_lookup.get("ouid", "").strip():
+            payload = {
+                "ouid": str(cached_lookup["ouid"]),
+                "nickname": target_nickname,
+                "source": "sqlite_user_lookup_cache_stale",
+            }
+            cache.set_json(cache_key, payload, ttl_sec=21600)
+            return UserSearchResponse(**payload)
+        wait_seconds = int(round(exc.wait_seconds or 0))
+        if wait_seconds > 0:
+            raise HTTPException(
+                status_code=429,
+                detail=f"닉네임 조회 호출이 많아 잠시 제한되었습니다. 약 {wait_seconds}초 후 다시 시도해주세요.",
+            ) from exc
+        raise HTTPException(status_code=429, detail="닉네임 조회 호출이 많아 잠시 제한되었습니다. 1~2분 후 다시 시도해주세요.") from exc
     except requests.HTTPError as exc:
         status_code = exc.response.status_code if exc.response is not None else 502
         if status_code == 429:
@@ -205,17 +269,21 @@ def users_search(nickname: str = Query(..., min_length=2)) -> UserSearchResponse
 
 @app.post("/analysis/run")
 def analysis_run(req: AnalysisRunRequest) -> dict[str, Any]:
-    _trigger_ranker_sync_async(force=False)
     result = run_analysis(
         ouid=req.ouid,
         match_type=int(req.match_type),
         window_size=int(req.window),
         current_tactic=req.current_tactic,
     )
+    _trigger_match_sync_async(
+        ouid=req.ouid,
+        match_type=int(req.match_type),
+        desired_matches=max(int(req.window), 12),
+    )
     cache.set_json(
         f"latest_analysis:{req.ouid}:{req.match_type}:{req.window}",
         result,
-        ttl_sec=120,
+        ttl_sec=600,
     )
     return result
 
@@ -331,22 +399,6 @@ def rankers_refresh(
 def rankers_latest(mode: str = Query("1vs1"), limit: int = Query(20, ge=1, le=100)) -> dict[str, Any]:
     _trigger_ranker_sync_async(force=False)
     rows = list_official_rankers(mode=mode, limit=limit)
-    if not rows and bool(os.getenv("NEXON_OPEN_API_KEY", "").strip()):
-        try:
-            ensure_official_rankers(
-                mode=mode,
-                match_type=50,
-                pages=1,
-                max_rankers=max(20, limit),
-                per_ranker_matches=5,
-                max_age_hours=24,
-                force_refresh=False,
-            )
-            rows = list_official_rankers(mode=mode, limit=limit)
-        except Exception as exc:
-            global _LAST_AUTO_RANKER_SYNC_ERROR, _LAST_AUTO_RANKER_SYNC_AT
-            _LAST_AUTO_RANKER_SYNC_ERROR = str(exc)
-            _LAST_AUTO_RANKER_SYNC_AT = datetime.now(timezone.utc)
     mapped_count = sum(
         1
         for row in rows

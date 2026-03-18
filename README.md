@@ -73,6 +73,8 @@ make init-db
 ```bash
 NEXON_OPEN_API_KEY=YOUR_NEXON_OPEN_API_KEY
 HABIT_LAB_AUTO_RANKER_SYNC=0
+HABIT_LAB_ENABLE_LIVE_MATCH_SYNC=0
+HABIT_LAB_MATCH_SYNC_COOLDOWN_SEC=180
 HABIT_LAB_ENABLE_DEBUG_ENDPOINTS=0
 HABIT_LAB_ENABLE_ANALYTICS_SUMMARY=0
 HABIT_LAB_ANALYTICS_ADMIN_KEY=CHANGE_ME_LONG_RANDOM_STRING
@@ -105,7 +107,8 @@ cd apps/web && npm install && npm run dev
 - [ ] `HABIT_LAB_ENABLE_ANALYTICS_SUMMARY=0` 기본 유지
 - [ ] `events/summary`는 운영자 키(`HABIT_LAB_ANALYTICS_ADMIN_KEY`)로만 접근
 - [ ] 랭커 동기화는 배치 실행(요청 경로에서 동기 실행 금지)
-- [ ] Open API 429 대응(캐시 TTL, 재시도 백오프) 점검
+- [ ] `HABIT_LAB_ENABLE_LIVE_MATCH_SYNC=0` 유지(실시간 동기 호출 최소화)
+- [ ] Open API 429 대응(캐시 TTL, 재시도 백오프, 쿨다운) 점검
 - [ ] 모바일(iOS Safari/Android Chrome) QA 수행
 
 ## 9. 성능 관점

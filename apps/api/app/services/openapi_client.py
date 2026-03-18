@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +12,12 @@ import requests
 
 
 BASE_URL = "https://open.api.nexon.com"
+
+
+class OpenApiRateLimitError(RuntimeError):
+    def __init__(self, message: str, wait_seconds: float | None = None) -> None:
+        super().__init__(message)
+        self.wait_seconds = wait_seconds
 
 
 def _utc_now() -> str:
@@ -88,6 +95,9 @@ def _load_local_env() -> None:
 
 
 class NexonOpenApiClient:
+    _rate_limited_until: float = 0.0
+    _state_lock = threading.Lock()
+
     def __init__(self, timeout_sec: int = 20, retries: int = 3) -> None:
         _load_local_env()
         api_key = os.getenv("NEXON_OPEN_API_KEY", "").strip()
@@ -98,17 +108,51 @@ class NexonOpenApiClient:
         self._timeout = timeout_sec
         self._retries = retries
 
+    @classmethod
+    def _set_rate_limit_window(cls, wait_seconds: float) -> None:
+        with cls._state_lock:
+            cls._rate_limited_until = max(cls._rate_limited_until, time.time() + max(1.0, wait_seconds))
+
+    @classmethod
+    def cooldown_remaining_sec(cls) -> float:
+        with cls._state_lock:
+            remaining = cls._rate_limited_until - time.time()
+        return max(0.0, remaining)
+
     def _get(self, path: str, params: dict[str, Any]) -> Any:
+        cooldown = self.cooldown_remaining_sec()
+        if cooldown > 0:
+            raise OpenApiRateLimitError(
+                f"Nexon Open API 호출 제한 대기 중입니다. {int(cooldown)}초 후 재시도해주세요.",
+                wait_seconds=cooldown,
+            )
         url = f"{BASE_URL}{path}"
+        response: requests.Response | None = None
         for idx in range(self._retries):
             response = self._session.get(url, params=params, timeout=self._timeout)
             if response.status_code == 200:
                 return response.json()
-            if response.status_code in (429, 500, 502, 503, 504):
+            if response.status_code == 429:
+                retry_after = 0.0
+                try:
+                    retry_after = float(response.headers.get("Retry-After", "0"))
+                except Exception:
+                    retry_after = 0.0
+                wait_seconds = max(retry_after, (idx + 1) * 2.0)
+                self._set_rate_limit_window(wait_seconds)
+                if idx + 1 >= self._retries:
+                    raise OpenApiRateLimitError(
+                        "Nexon Open API 429 제한으로 요청을 완료하지 못했습니다.",
+                        wait_seconds=wait_seconds,
+                    )
+                time.sleep(wait_seconds)
+                continue
+            if response.status_code in (500, 502, 503, 504):
                 time.sleep((idx + 1) * 1.5)
                 continue
             response.raise_for_status()
-        response.raise_for_status()
+        if response is not None:
+            response.raise_for_status()
         return None
 
     def find_user_by_nickname(self, nickname: str) -> dict[str, str]:

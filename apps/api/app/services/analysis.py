@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -13,8 +14,8 @@ import requests
 
 from app.db import connect, upsert_matches, utc_now_iso
 from app.services.action_explainer import build_action_explanation
-from app.services.openapi_client import NexonOpenApiClient
-from app.services.ranker_source import ensure_official_rankers, list_official_rankers
+from app.services.openapi_client import NexonOpenApiClient, OpenApiRateLimitError
+from app.services.ranker_source import list_official_rankers
 
 
 BENCHMARKS = {
@@ -77,6 +78,12 @@ SPID_META_URL = "https://open.api.nexon.com/static/fconline/meta/spid.json"
 SPPOSITION_META_URL = "https://open.api.nexon.com/static/fconline/meta/spposition.json"
 SEASON_META_URL = "https://open.api.nexon.com/static/fconline/meta/seasonid.json"
 MATCH_REFRESH_THRESHOLD = timedelta(minutes=15)
+
+
+def _is_truthy(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass
@@ -1542,6 +1549,7 @@ def run_analysis(
     current_tactic: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     tactic_input_known = isinstance(current_tactic, dict) and len(current_tactic) > 0
+    live_sync_enabled = _is_truthy(os.getenv("HABIT_LAB_ENABLE_LIVE_MATCH_SYNC", "0"))
     rows = list_match_stats(ouid, match_type)
     refreshed_match_rows = 0
     refresh_warning: str | None = None
@@ -1555,7 +1563,7 @@ def run_analysis(
     if len(rows) < max(window_size, 12):
         should_refresh = True
 
-    if should_refresh:
+    if should_refresh and live_sync_enabled:
         try:
             api = NexonOpenApiClient(timeout_sec=15, retries=2)
             sync_error: Exception | None = None
@@ -1576,6 +1584,15 @@ def run_analysis(
                     raise
             if sync_error is not None:
                 raise sync_error
+        except OpenApiRateLimitError as exc:
+            wait_seconds = int(round(exc.wait_seconds or 0))
+            refresh_warning = (
+                f"Nexon Open API 호출 제한으로 최신 동기화에 실패했습니다. "
+                f"{wait_seconds}초 후 다시 시도해주세요."
+                if wait_seconds > 0
+                else "Nexon Open API 호출 제한으로 최신 동기화에 실패했습니다. 잠시 후 다시 시도해주세요."
+            )
+            rows = list_match_stats(ouid, match_type)
         except requests.HTTPError as exc:
             status_code = exc.response.status_code if exc.response is not None else None
             api_error_name = ""
@@ -1608,6 +1625,8 @@ def run_analysis(
                 f" ({type(exc).__name__})"
             )
             rows = list_match_stats(ouid, match_type)
+    elif should_refresh and not rows:
+        refresh_warning = "저장된 경기 데이터가 없어 최신 동기화가 필요합니다. 잠시 후 다시 시도해주세요."
     if not rows and refresh_warning:
         refresh_warning = f"{refresh_warning} 해당 모드에서 저장된 경기 데이터가 없습니다."
     if not rows and not refresh_warning:
@@ -1623,20 +1642,6 @@ def run_analysis(
         official_rankers = list_official_rankers(mode="1vs1", limit=80)
     except Exception:
         official_rankers = []
-    if not official_rankers:
-        try:
-            ensure_official_rankers(
-                mode="1vs1",
-                match_type=50,
-                pages=1,
-                max_rankers=20,
-                per_ranker_matches=5,
-                max_age_hours=24,
-                force_refresh=False,
-            )
-            official_rankers = list_official_rankers(mode="1vs1", limit=80)
-        except Exception:
-            official_rankers = []
     official_ranker_ouids = {str(row["ouid"]) for row in official_rankers if row.get("ouid")}
     ranker_profiles: list[dict[str, Any]] = []
     if official_ranker_ouids:
@@ -1930,6 +1935,7 @@ def evaluate_latest_experiment(ouid: str, match_type: int) -> dict[str, Any] | N
             return None
         window_size = int(run["window_size"])
         started_at = str(run["started_at"])
+        live_sync_enabled = _is_truthy(os.getenv("HABIT_LAB_ENABLE_LIVE_MATCH_SYNC", "0"))
         rows = list_match_stats(ouid, match_type)
         refreshed_match_rows = 0
         refresh_warning: str | None = None
@@ -1943,7 +1949,7 @@ def evaluate_latest_experiment(ouid: str, match_type: int) -> dict[str, Any] | N
         if len(rows) < max(window_size, 12):
             should_refresh = True
 
-        if should_refresh:
+        if should_refresh and live_sync_enabled:
             try:
                 api = NexonOpenApiClient(timeout_sec=15, retries=2)
                 sync_error: Exception | None = None
@@ -1963,6 +1969,15 @@ def evaluate_latest_experiment(ouid: str, match_type: int) -> dict[str, Any] | N
                         raise
                 if sync_error is not None:
                     raise sync_error
+            except OpenApiRateLimitError as exc:
+                wait_seconds = int(round(exc.wait_seconds or 0))
+                refresh_warning = (
+                    f"Nexon Open API 호출 제한으로 최신 동기화에 실패했습니다. "
+                    f"{wait_seconds}초 후 다시 시도해주세요."
+                    if wait_seconds > 0
+                    else "Nexon Open API 호출 제한으로 최신 동기화에 실패했습니다. 잠시 후 다시 시도해주세요."
+                )
+                rows = list_match_stats(ouid, match_type)
             except requests.HTTPError as exc:
                 status_code = exc.response.status_code if exc.response is not None else None
                 if status_code == 429:
@@ -1980,6 +1995,8 @@ def evaluate_latest_experiment(ouid: str, match_type: int) -> dict[str, Any] | N
                     f" ({type(exc).__name__})"
                 )
                 rows = list_match_stats(ouid, match_type)
+        elif should_refresh and not rows:
+            refresh_warning = "저장된 경기 데이터가 없어 최신 동기화가 필요합니다. 잠시 후 다시 시도해주세요."
         if not rows and refresh_warning:
             refresh_warning = f"{refresh_warning} 해당 모드에서 저장된 경기 데이터가 없습니다."
         if not rows and not refresh_warning:
