@@ -79,6 +79,10 @@ HABIT_LAB_MATCH_CACHE_TTL_SEC=1800
 HABIT_LAB_ENABLE_DEBUG_ENDPOINTS=0
 HABIT_LAB_ENABLE_ANALYTICS_SUMMARY=0
 HABIT_LAB_ANALYTICS_ADMIN_KEY=CHANGE_ME_LONG_RANDOM_STRING
+HABIT_LAB_SYNC_ADMIN_KEY=CHANGE_ME_LONG_RANDOM_STRING
+HABIT_LAB_CORS_ORIGINS=http://127.0.0.1:3000,http://localhost:3000,https://fcoach.fun,https://www.fcoach.fun
+HABIT_LAB_ALLOW_VERCEL_PREVIEW_ORIGIN=1
+HABIT_LAB_CORS_ORIGIN_REGEX=^https://.*\\.vercel\\.app$
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 ```
 
@@ -98,6 +102,7 @@ cd apps/web && npm install && npm run dev
 - `POST /experiments`
 - `GET /experiments/evaluation?ouid=...&match_type=52`
 - `GET /rankers/latest?mode=1vs1&limit=20`
+- `POST /rankers/refresh` (`x-admin-key`, `HABIT_LAB_SYNC_ADMIN_KEY` 필요)
 - `POST /events/track`
 - `GET /events/summary?hours=24&limit=10` (`x-admin-key` 필요)
 
@@ -107,6 +112,7 @@ cd apps/web && npm install && npm run dev
 - [ ] `HABIT_LAB_ENABLE_DEBUG_ENDPOINTS=0` 유지
 - [ ] `HABIT_LAB_ENABLE_ANALYTICS_SUMMARY=0` 기본 유지
 - [ ] `events/summary`는 운영자 키(`HABIT_LAB_ANALYTICS_ADMIN_KEY`)로만 접근
+- [ ] `rankers/refresh`는 운영자 키(`HABIT_LAB_SYNC_ADMIN_KEY`)로만 접근
 - [ ] 랭커 동기화는 배치 실행(요청 경로에서 동기 실행 금지)
 - [ ] `HABIT_LAB_ENABLE_LIVE_MATCH_SYNC=0` 유지(실시간 동기 호출 최소화)
 - [ ] Open API 429 대응(캐시 TTL, 재시도 백오프, 쿨다운) 점검

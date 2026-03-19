@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from datetime import datetime, timedelta, timezone
+from collections import defaultdict, deque
 from typing import Any
 
 import requests
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import (
@@ -38,6 +40,8 @@ _RANKER_SYNC_LOCK = threading.Lock()
 _MATCH_SYNC_INFLIGHT: set[tuple[str, int]] = set()
 _MATCH_SYNC_LAST_ATTEMPT: dict[tuple[str, int], datetime] = {}
 _MATCH_SYNC_GUARD_LOCK = threading.Lock()
+_RATE_LIMIT_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
+_RATE_LIMIT_LOCK = threading.Lock()
 
 
 def _is_truthy(value: str | None) -> bool:
@@ -141,11 +145,60 @@ def _trigger_match_sync_async(ouid: str, match_type: int, desired_matches: int) 
 
 def _allowed_origins() -> list[str]:
     raw = os.getenv("HABIT_LAB_CORS_ORIGINS", "").strip()
+    default_origins = [
+        "http://127.0.0.1:3000",
+        "http://localhost:3000",
+        "https://fcoach.fun",
+        "https://www.fcoach.fun",
+        "https://fcoach.com",
+        "https://www.fcoach.com",
+        "https://fcoach.org",
+        "https://www.fcoach.org",
+    ]
     if raw:
-        origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+        origins = [origin.strip() for origin in raw.split(",") if origin.strip().lower() != "null"]
         if origins:
             return origins
-    return ["http://127.0.0.1:3000", "http://localhost:3000"]
+    return default_origins
+
+
+def _allowed_origin_regex() -> str | None:
+    raw = os.getenv("HABIT_LAB_CORS_ORIGIN_REGEX", "").strip()
+    if raw:
+        return raw
+    if _is_truthy(os.getenv("HABIT_LAB_ALLOW_VERCEL_PREVIEW_ORIGIN", "1")):
+        return r"^https://.*\.vercel\.app$"
+    return None
+
+
+def _client_ip(request: Request) -> str:
+    forwarded_for = (request.headers.get("x-forwarded-for") or "").strip()
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip() or "unknown"
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _enforce_rate_limit(request: Request, scope: str, max_requests: int, window_sec: int) -> None:
+    now = time.time()
+    key = f"{scope}:{_client_ip(request)}"
+    with _RATE_LIMIT_LOCK:
+        bucket = _RATE_LIMIT_BUCKETS[key]
+        cutoff = now - window_sec
+        while bucket and bucket[0] <= cutoff:
+            bucket.popleft()
+        if len(bucket) >= max_requests:
+            retry_after = max(1, int(window_sec - (now - bucket[0])) + 1)
+            raise HTTPException(
+                status_code=429,
+                detail=f"요청이 너무 많습니다. 약 {retry_after}초 후 다시 시도해주세요.",
+            )
+        bucket.append(now)
+        if len(_RATE_LIMIT_BUCKETS) > 5000:
+            stale_keys = [name for name, entries in _RATE_LIMIT_BUCKETS.items() if not entries]
+            for stale_key in stale_keys[:1000]:
+                _RATE_LIMIT_BUCKETS.pop(stale_key, None)
 
 
 def _is_analytics_summary_enabled() -> bool:
@@ -154,6 +207,15 @@ def _is_analytics_summary_enabled() -> bool:
 
 def _require_analytics_admin_key(header_value: str | None) -> None:
     expected = os.getenv("HABIT_LAB_ANALYTICS_ADMIN_KEY", "").strip()
+    if not expected:
+        raise HTTPException(status_code=404, detail="Not Found")
+    candidate = (header_value or "").strip()
+    if not candidate or candidate != expected:
+        raise HTTPException(status_code=403, detail="forbidden")
+
+
+def _require_sync_admin_key(header_value: str | None) -> None:
+    expected = os.getenv("HABIT_LAB_SYNC_ADMIN_KEY", "").strip()
     if not expected:
         raise HTTPException(status_code=404, detail="Not Found")
     candidate = (header_value or "").strip()
@@ -189,13 +251,29 @@ def _forward_event_to_posthog(payload: EventTrackRequest) -> None:
         return
 
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_allowed_origins(),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+_cors_kwargs: dict[str, Any] = {
+    "allow_origins": _allowed_origins(),
+    "allow_credentials": False,
+    "allow_methods": ["GET", "POST", "OPTIONS"],
+    "allow_headers": ["Content-Type", "x-admin-key"],
+}
+_origin_regex = _allowed_origin_regex()
+if _origin_regex:
+    _cors_kwargs["allow_origin_regex"] = _origin_regex
+app.add_middleware(CORSMiddleware, **_cors_kwargs)
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    headers = response.headers
+    headers.setdefault("X-Content-Type-Options", "nosniff")
+    headers.setdefault("X-Frame-Options", "DENY")
+    headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if request.url.scheme == "https":
+        headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
+    return response
 
 
 @app.on_event("startup")
@@ -210,7 +288,8 @@ def health() -> dict[str, str]:
 
 
 @app.get("/users/search", response_model=UserSearchResponse)
-def users_search(nickname: str = Query(..., min_length=2)) -> UserSearchResponse:
+def users_search(request: Request, nickname: str = Query(..., min_length=2)) -> UserSearchResponse:
+    _enforce_rate_limit(request, scope="users_search", max_requests=12, window_sec=60)
     target_nickname = nickname.strip()
     cache_key = f"user_search:{target_nickname}"
     cached = cache.get_json(cache_key)
@@ -268,7 +347,8 @@ def users_search(nickname: str = Query(..., min_length=2)) -> UserSearchResponse
 
 
 @app.post("/analysis/run")
-def analysis_run(req: AnalysisRunRequest) -> dict[str, Any]:
+def analysis_run(request: Request, req: AnalysisRunRequest) -> dict[str, Any]:
+    _enforce_rate_limit(request, scope="analysis_run", max_requests=8, window_sec=60)
     result = run_analysis(
         ouid=req.ouid,
         match_type=int(req.match_type),
@@ -345,7 +425,8 @@ def experiments_evaluation(
 
 
 @app.post("/events/track")
-def events_track(req: EventTrackRequest) -> dict[str, Any]:
+def events_track(request: Request, req: EventTrackRequest) -> dict[str, Any]:
+    _enforce_rate_limit(request, scope="events_track", max_requests=120, window_sec=60)
     event_name = req.event_name.strip()
     if not event_name:
         raise HTTPException(status_code=400, detail="event_name is required")
@@ -390,11 +471,15 @@ def debug_ingest(ouid: str, match_type: int = Query(...), max_matches: int = Que
 
 @app.post("/rankers/refresh")
 def rankers_refresh(
+    request: Request,
     mode: str = Query("1vs1"),
     pages: int = Query(2, ge=1, le=5),
     max_rankers: int = Query(30, ge=5, le=80),
     per_ranker_matches: int = Query(8, ge=1, le=20),
+    x_admin_key: str | None = Header(default=None, alias="x-admin-key"),
 ) -> dict[str, Any]:
+    _enforce_rate_limit(request, scope="rankers_refresh", max_requests=3, window_sec=300)
+    _require_sync_admin_key(x_admin_key)
     return ensure_official_rankers(
         mode=mode,
         match_type=50,
@@ -407,7 +492,8 @@ def rankers_refresh(
 
 
 @app.get("/rankers/latest")
-def rankers_latest(mode: str = Query("1vs1"), limit: int = Query(20, ge=1, le=100)) -> dict[str, Any]:
+def rankers_latest(request: Request, mode: str = Query("1vs1"), limit: int = Query(20, ge=1, le=100)) -> dict[str, Any]:
+    _enforce_rate_limit(request, scope="rankers_latest", max_requests=30, window_sec=60)
     _trigger_ranker_sync_async(force=False)
     rows = list_official_rankers(mode=mode, limit=limit)
     if not rows:

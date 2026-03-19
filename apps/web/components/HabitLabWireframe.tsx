@@ -2276,7 +2276,40 @@ export function HabitLabWireframe() {
 
               <article className="panel">
                 <h4 className="section-title">선수 상세 성과표</h4>
-                <div className="player-table-wrap">
+                <div className="player-mobile-list">
+                  {playerRowsForTable.map((player) => (
+                    <article key={`${player.sp_id}-${player.sp_position}`} className="player-mobile-card">
+                      <div className="player-mobile-head">
+                        <div className="season-cell">
+                          <PlayerPortrait player={player} alt={`${player.player_name} 미니페이스온`} className="player-face table" />
+                          <strong>{player.player_name}</strong>
+                        </div>
+                        <span className={`enhance-badge ${enhanceLevelClass(player.sp_grade)}`}>+{normalizedGrade(player.sp_grade)}</span>
+                      </div>
+                      <div className="player-mobile-meta">
+                        {player.season_img ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img className="season-badge tiny" src={player.season_img} alt={`${player.season_name} 배지`} />
+                        ) : (
+                          <span className="season-badge tiny fallback">SE</span>
+                        )}
+                        <span>{player.season_name}</span>
+                        <span className="pill">{player.position_name}</span>
+                      </div>
+                      <div className="player-mobile-stats">
+                        <span>출전 {player.appearances}</span>
+                        <span>골 {formatFixed(player.goals, 0)}</span>
+                        <span>도움 {formatFixed(player.assists, 0)}</span>
+                        <span>유효슛 {formatFixed(player.effective_shots, 0)}</span>
+                        <span>패스 {formatPercent(player.pass_success_rate)}</span>
+                        <span>태클 {formatPercent(player.tackle_success_rate)}</span>
+                        <span>평점 {formatFixed(player.avg_rating, 2)}</span>
+                        <span>영향 {formatFixed(player.impact_score, 2)}</span>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+                <div className="player-table-wrap player-table-desktop">
                   <table className="player-table">
                     <thead>
                       <tr>
@@ -2552,6 +2585,9 @@ export function HabitLabWireframe() {
           <article className="panel">
             <h3 className="section-title">평가 실행</h3>
             <p className="muted">최근 채택한 액션 실험의 전/후 지표를 계산합니다.</p>
+            <p className="muted compact">
+              실험 시작 시각 기준으로 PRE/POST를 자동 분리합니다. 실험 시작 기록은 SQLite에 저장되므로 새로고침/재접속 후에도 유지됩니다.
+            </p>
             <button className="btn" onClick={onEvaluateExperiment} disabled={loading}>
               {loading ? "평가 중..." : "최신 실험 평가 갱신"}
             </button>
