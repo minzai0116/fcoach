@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import unicodedata
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -16,7 +17,7 @@ from app.db import connect, upsert_matches, utc_now_iso
 from app.services.action_explainer import build_action_explanation
 from app.services.cache import CacheClient
 from app.services.openapi_client import NexonOpenApiClient, OpenApiRateLimitError
-from app.services.ranker_source import list_official_rankers
+from app.services.ranker_source import fetch_official_rankers, list_official_rankers
 
 
 BENCHMARKS = {
@@ -81,6 +82,9 @@ SEASON_META_URL = "https://open.api.nexon.com/static/fconline/meta/seasonid.json
 MATCH_REFRESH_THRESHOLD = timedelta(minutes=15)
 MATCH_CACHE_TTL_SEC_DEFAULT = 1800
 _MATCH_CACHE = CacheClient()
+_OFFICIAL_RANKER_FALLBACK_CACHE_AT: datetime | None = None
+_OFFICIAL_RANKER_FALLBACK_CACHE_ROWS: list[dict[str, Any]] = []
+_OFFICIAL_RANKER_FALLBACK_CACHE_TTL = timedelta(minutes=5)
 
 
 def _is_truthy(value: str | None) -> bool:
@@ -99,6 +103,58 @@ def _match_cache_ttl_sec() -> int:
 
 def _match_cache_key(ouid: str, match_type: int) -> str:
     return f"matches_raw:{ouid}:{int(match_type)}"
+
+
+def _normalize_nickname(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value or "")
+    return normalized.replace("\u200b", "").replace("\ufeff", "").strip().lower()
+
+
+def _load_official_rankers(limit: int = 80) -> list[dict[str, Any]]:
+    global _OFFICIAL_RANKER_FALLBACK_CACHE_AT, _OFFICIAL_RANKER_FALLBACK_CACHE_ROWS
+    safe_limit = max(1, min(100, int(limit)))
+    try:
+        rows = list_official_rankers(mode="1vs1", limit=safe_limit)
+    except Exception:
+        rows = []
+    if rows:
+        return rows
+
+    now = datetime.now(timezone.utc)
+    if (
+        _OFFICIAL_RANKER_FALLBACK_CACHE_AT is not None
+        and now - _OFFICIAL_RANKER_FALLBACK_CACHE_AT <= _OFFICIAL_RANKER_FALLBACK_CACHE_TTL
+        and _OFFICIAL_RANKER_FALLBACK_CACHE_ROWS
+    ):
+        return _OFFICIAL_RANKER_FALLBACK_CACHE_ROWS[:safe_limit]
+
+    try:
+        fetched = fetch_official_rankers(mode="1vs1", pages=1, timeout_sec=12)[:safe_limit]
+    except Exception:
+        return []
+
+    fetched_at = now.isoformat()
+    fallback_rows = [
+        {
+            "mode": "1vs1",
+            "rank_no": int(row.get("rank_no", 0)),
+            "nickname": str(row.get("nickname", "")),
+            "ouid": None,
+            "elo": float(row.get("elo", 0.0)),
+            "win_rate": float(row.get("win_rate", 0.0)),
+            "win_count": int(row.get("win_count", 0)),
+            "draw_count": int(row.get("draw_count", 0)),
+            "loss_count": int(row.get("loss_count", 0)),
+            "formation": str(row.get("formation", "")),
+            "team_color": str(row.get("team_color", "")),
+            "fetched_at": fetched_at,
+            "source": "fconline_datacenter_live",
+        }
+        for row in fetched
+    ]
+    _OFFICIAL_RANKER_FALLBACK_CACHE_AT = now
+    _OFFICIAL_RANKER_FALLBACK_CACHE_ROWS = fallback_rows
+    return fallback_rows[:safe_limit]
 
 
 @dataclass
@@ -1235,25 +1291,49 @@ def _resolve_benchmark(
     ranker_profiles: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, float], dict[str, Any]]:
     if official_rankers is None:
-        try:
-            official_rankers = list_official_rankers(mode="1vs1", limit=50)
-        except Exception:
-            official_rankers = []
+        official_rankers = _load_official_rankers(limit=50)
     rank_map = {str(row["ouid"]): int(row["rank_no"]) for row in official_rankers if row.get("ouid")}
+    rank_map_by_nickname: dict[str, int] = {}
+    for row in official_rankers:
+        normalized_nickname = _normalize_nickname(str(row.get("nickname", "")))
+        if not normalized_nickname:
+            continue
+        rank_map_by_nickname[normalized_nickname] = int(row["rank_no"])
     total_rankers = len(official_rankers)
     mapped_ouid_count = len(rank_map)
-    if not rank_map:
+    mapped_nickname_count = len(rank_map_by_nickname)
+    if not rank_map and not rank_map_by_nickname:
         return BENCHMARKS.get(match_type, BENCHMARKS[50]), {
             "source": STATIC_BENCHMARK_SOURCE,
             "cohort_size": 0,
             "note": "fallback_static_benchmark_sync_rankers_first",
             "total_rankers": total_rankers,
             "mapped_ouid_count": mapped_ouid_count,
+            "mapped_nickname_count": mapped_nickname_count,
         }
 
     if ranker_profiles is None:
-        ranker_profiles = [profile for profile in _collect_user_profiles(match_type=50) if str(profile["ouid"]) in rank_map]
-    stable_profiles = [profile for profile in ranker_profiles if float(profile["match_count"]) >= 3.0]
+        ranker_profiles = [
+            profile
+            for profile in _collect_user_profiles(match_type=50)
+            if str(profile["ouid"]) in rank_map
+            or _normalize_nickname(str(profile.get("nickname", ""))) in rank_map_by_nickname
+        ]
+    else:
+        ranker_profiles = [
+            profile
+            for profile in ranker_profiles
+            if str(profile["ouid"]) in rank_map
+            or _normalize_nickname(str(profile.get("nickname", ""))) in rank_map_by_nickname
+        ]
+
+    def rank_no(profile: dict[str, Any]) -> int:
+        by_ouid = rank_map.get(str(profile["ouid"]))
+        if by_ouid is not None:
+            return by_ouid
+        return rank_map_by_nickname.get(_normalize_nickname(str(profile.get("nickname", ""))), 999999)
+
+    stable_profiles = [profile for profile in ranker_profiles if float(profile["match_count"]) >= 3.0 and rank_no(profile) < 999999]
     if len(stable_profiles) < 5:
         return BENCHMARKS.get(match_type, BENCHMARKS[50]), {
             "source": STATIC_BENCHMARK_SOURCE,
@@ -1261,9 +1341,10 @@ def _resolve_benchmark(
             "note": "fallback_static_benchmark_insufficient_ranker_profile",
             "total_rankers": total_rankers,
             "mapped_ouid_count": mapped_ouid_count,
+            "mapped_nickname_count": mapped_nickname_count,
         }
 
-    stable_profiles.sort(key=lambda row: rank_map.get(str(row["ouid"]), 999999))
+    stable_profiles.sort(key=rank_no)
     selected = stable_profiles[: min(30, len(stable_profiles))]
     total_matches = sum(float(row["match_count"]) for row in selected)
     shot_numerator = sum(float(row["shot_on_target_rate"]) * float(row["match_count"]) for row in selected)
@@ -1327,6 +1408,7 @@ def _resolve_benchmark(
         "note": "official_rankers_top_1vs1_based_benchmark",
         "total_rankers": total_rankers,
         "mapped_ouid_count": mapped_ouid_count,
+        "mapped_nickname_count": mapped_nickname_count,
     }
 
 
@@ -1337,21 +1419,77 @@ def _similar_rankers(
     ranker_profiles: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     if official_rankers is None:
-        try:
-            official_rankers = list_official_rankers(mode="1vs1", limit=80)
-        except Exception:
-            official_rankers = []
+        official_rankers = _load_official_rankers(limit=80)
     official_by_ouid = {str(row["ouid"]): row for row in official_rankers if row.get("ouid")}
-    if not official_by_ouid:
+    official_by_nickname: dict[str, dict[str, Any]] = {}
+    for row in official_rankers:
+        normalized_nickname = _normalize_nickname(str(row.get("nickname", "")))
+        if not normalized_nickname:
+            continue
+        official_by_nickname[normalized_nickname] = row
+    if not official_by_ouid and not official_by_nickname:
         return []
 
     if ranker_profiles is None:
-        ranker_profiles = [profile for profile in _collect_user_profiles(match_type=50) if str(profile["ouid"]) in official_by_ouid]
+        ranker_profiles = [
+            profile
+            for profile in _collect_user_profiles(match_type=50, limit_rows=3000)
+            if str(profile["ouid"]) in official_by_ouid
+            or _normalize_nickname(str(profile.get("nickname", ""))) in official_by_nickname
+        ]
+    else:
+        ranker_profiles = [
+            profile
+            for profile in ranker_profiles
+            if str(profile["ouid"]) in official_by_ouid
+            or _normalize_nickname(str(profile.get("nickname", ""))) in official_by_nickname
+        ]
     pool = [profile for profile in ranker_profiles if float(profile["match_count"]) >= 3.0]
     if len(pool) < 5:
         pool = [profile for profile in ranker_profiles if float(profile["match_count"]) >= 1.0]
     if not pool:
-        return []
+        fallback_candidates: list[dict[str, Any]] = []
+        target_win_rate = float(target_metrics.get("win_rate", 0.0))
+        for row in official_rankers:
+            nickname = str(row.get("nickname", "")).strip()
+            if not nickname:
+                continue
+            rank_no = int(row.get("rank_no", 999999))
+            candidate_win_rate = float(row.get("win_rate", 0.0))
+            win_gap = round(target_win_rate - candidate_win_rate, 4)
+            sample_matches = int(row.get("win_count", 0)) + int(row.get("draw_count", 0)) + int(row.get("loss_count", 0))
+            sample_matches = max(1, sample_matches)
+            distance = abs(target_win_rate - candidate_win_rate)
+            similarity = 1.0 / (1.0 + distance * 4.0)
+            fallback_candidates.append(
+                {
+                    "ranker_proxy_rank": rank_no,
+                    "ouid": str(row.get("ouid") or f"nickname:{_normalize_nickname(nickname)}"),
+                    "nickname": nickname,
+                    "similarity": round(similarity, 4),
+                    "match_count": sample_matches,
+                    "win_rate": round(candidate_win_rate, 4),
+                    "reliability": round(min(0.45, sample_matches / 40.0), 2),
+                    "source": f"{OFFICIAL_BENCHMARK_SOURCE}_meta_only",
+                    "formation": str(row.get("formation", "")),
+                    "team_color": str(row.get("team_color", "")),
+                    "gaps": {
+                        "win_rate": win_gap,
+                    },
+                    "metric_comparisons": [
+                        {
+                            "metric_name": "win_rate",
+                            "metric_label": "승률",
+                            "higher_is_better": True,
+                            "user_value": round(target_win_rate, 4),
+                            "candidate_value": round(candidate_win_rate, 4),
+                            "gap_value": win_gap,
+                        }
+                    ],
+                }
+            )
+        fallback_candidates.sort(key=lambda row: (-row["similarity"], row["ranker_proxy_rank"]))
+        return fallback_candidates[:top_k]
 
     def feature_vector(profile: dict[str, Any]) -> list[float]:
         return [
@@ -1387,19 +1525,20 @@ def _similar_rankers(
         candidate_vector = feature_vector(candidate)
         distance = sum((left - right) ** 2 for left, right in zip(target_vector, candidate_vector)) ** 0.5
         similarity = 1.0 / (1.0 + distance)
-        meta = official_by_ouid.get(str(candidate["ouid"]), {})
+        normalized_nickname = _normalize_nickname(str(candidate.get("nickname", "")))
+        meta = official_by_ouid.get(str(candidate["ouid"])) or official_by_nickname.get(normalized_nickname, {})
         rank_no = int(meta.get("rank_no", 999999))
         target_xg_per_match = target_metrics.get("xg_for", 0.0) / max(1.0, target_metrics.get("match_count", 1.0))
         similar.append(
             {
                 "ranker_proxy_rank": rank_no,
-                "ouid": str(candidate["ouid"]),
+                "ouid": str(meta.get("ouid") or candidate["ouid"] or f"nickname:{normalized_nickname}"),
                 "nickname": str(meta.get("nickname", candidate.get("nickname", ""))),
                 "similarity": round(similarity, 4),
                 "match_count": int(candidate["match_count"]),
                 "win_rate": round(float(candidate["win_rate"]), 4),
                 "reliability": round(min(1.0, float(candidate["match_count"]) / 15.0), 2),
-                "source": OFFICIAL_BENCHMARK_SOURCE,
+                "source": OFFICIAL_BENCHMARK_SOURCE if meta.get("ouid") else f"{OFFICIAL_BENCHMARK_SOURCE}_nickname_proxy",
                 "formation": str(meta.get("formation", "")),
                 "team_color": str(meta.get("team_color", "")),
                 "gaps": {
@@ -1688,15 +1827,22 @@ def run_analysis(
     selected = base_rows[:window_size]
     metrics = _compute_metrics(selected)
     visuals = _build_visual_summary(selected)
-    try:
-        official_rankers = list_official_rankers(mode="1vs1", limit=80)
-    except Exception:
-        official_rankers = []
+    official_rankers = _load_official_rankers(limit=80)
     official_ranker_ouids = {str(row["ouid"]) for row in official_rankers if row.get("ouid")}
+    official_ranker_nicknames = set()
+    for row in official_rankers:
+        normalized_nickname = _normalize_nickname(str(row.get("nickname", "")))
+        if normalized_nickname:
+            official_ranker_nicknames.add(normalized_nickname)
     ranker_profiles: list[dict[str, Any]] = []
-    if official_ranker_ouids:
+    if official_ranker_ouids or official_ranker_nicknames:
         profiles = _collect_user_profiles(match_type=50, limit_rows=3000)
-        ranker_profiles = [profile for profile in profiles if str(profile["ouid"]) in official_ranker_ouids]
+        ranker_profiles = [
+            profile
+            for profile in profiles
+            if str(profile["ouid"]) in official_ranker_ouids
+            or _normalize_nickname(str(profile.get("nickname", ""))) in official_ranker_nicknames
+        ]
 
     benchmark, benchmark_meta = _resolve_benchmark(
         match_type=match_type,

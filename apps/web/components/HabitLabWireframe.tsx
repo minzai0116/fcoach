@@ -505,6 +505,56 @@ function getSimilarRankers(evidence: Record<string, unknown> | undefined): Simil
   return parsed;
 }
 
+function buildFallbackSimilarRankers(officialRankers: OfficialRanker[], metrics: MetricMap, topK = 3): SimilarRanker[] {
+  if (officialRankers.length === 0) return [];
+  const userWinRate = Number(metrics.win_rate ?? 0);
+  const candidates = officialRankers
+    .filter((ranker) => Number.isFinite(Number(ranker.win_rate)))
+    .map((ranker) => {
+      const candidateWinRate = Number(ranker.win_rate ?? 0);
+      const gapValue = Number((userWinRate - candidateWinRate).toFixed(4));
+      const rankGames = Math.max(1, Number(ranker.win_count ?? 0) + Number(ranker.draw_count ?? 0) + Number(ranker.loss_count ?? 0));
+      const distance = Math.abs(userWinRate - candidateWinRate);
+      const similarity = 1 / (1 + distance * 4);
+      return {
+        ranker_proxy_rank: Number(ranker.rank_no ?? 999999),
+        ouid: String(ranker.ouid ?? `ranker:${ranker.rank_no}`),
+        nickname: String(ranker.nickname ?? ""),
+        similarity: Number(similarity.toFixed(4)),
+        match_count: rankGames,
+        win_rate: Number(candidateWinRate.toFixed(4)),
+        reliability: Number(Math.min(0.45, rankGames / 40).toFixed(2)),
+        source: "client_winrate_proxy",
+        formation: String(ranker.formation ?? ""),
+        team_color: String(ranker.team_color ?? ""),
+        gaps: { win_rate: gapValue },
+        metric_comparisons: [
+          {
+            metric_name: "win_rate",
+            metric_label: "승률",
+            higher_is_better: true,
+            user_value: Number(userWinRate.toFixed(4)),
+            candidate_value: Number(candidateWinRate.toFixed(4)),
+            gap_value: gapValue,
+          },
+        ],
+      } as SimilarRanker;
+    })
+    .sort((left, right) => {
+      if (right.similarity !== left.similarity) return right.similarity - left.similarity;
+      return left.ranker_proxy_rank - right.ranker_proxy_rank;
+    });
+  return candidates.slice(0, Math.max(1, topK));
+}
+
+function similarRankerSourceLabel(source: string): string {
+  if (source.includes("nickname_proxy")) return "닉네임 매핑 기반";
+  if (source.includes("meta_only")) return "랭커 메타 기반";
+  if (source.includes("client_winrate_proxy")) return "승률 근접 임시 계산";
+  if (source.includes("official_rank_1vs1")) return "공식 랭커 프로필 기반";
+  return "기준 정보";
+}
+
 function toModelScale(fcValue: number): number {
   return Math.max(1, Math.min(10, Math.round(fcValue)));
 }
@@ -1293,13 +1343,18 @@ export function HabitLabWireframe() {
 
   const similarRankersForView = useMemo(() => {
     if (analysis && Array.isArray(analysis.similar_rankers)) {
-      return getSimilarRankers({ similar_rankers: analysis.similar_rankers });
+      const parsed = getSimilarRankers({ similar_rankers: analysis.similar_rankers });
+      if (parsed.length > 0) return parsed;
     }
     if (actions.length > 0) {
-      return getSimilarRankers(actions[0].evidence);
+      const parsed = getSimilarRankers(actions[0].evidence);
+      if (parsed.length > 0) return parsed;
+    }
+    if (analysis && officialRankers.length > 0) {
+      return buildFallbackSimilarRankers(officialRankers, metrics, 3);
     }
     return [];
-  }, [analysis, actions]);
+  }, [analysis, actions, officialRankers, metrics]);
 
   const sortedIssues = useMemo(
     () => Object.entries(issues).sort((left, right) => right[1] - left[1]),
@@ -2462,7 +2517,13 @@ export function HabitLabWireframe() {
           </article>
           <article className="panel">
             <h3 className="section-title">나와 성향이 비슷한 공식 랭커</h3>
-            {similarRankersForView.length === 0 && <p className="muted">먼저 진단을 실행하면 유사 랭커 후보가 표시됩니다.</p>}
+            {similarRankersForView.length === 0 && (
+              <p className="muted">
+                {analysis
+                  ? "유사 랭커 계산에 필요한 랭커 경기 프로필이 부족합니다. 랭커 데이터 재로딩 후 다시 진단해주세요."
+                  : "먼저 진단을 실행하면 유사 랭커 후보가 표시됩니다."}
+              </p>
+            )}
             {similarRankersForView.map((ranker) => (
               <div key={ranker.ouid} className="similar-item">
                 <p>
@@ -2470,7 +2531,7 @@ export function HabitLabWireframe() {
                   {formatPercent(ranker.win_rate)}
                 </p>
                 <p className="muted">
-                  포메이션 {ranker.formation || "-"} / 팀컬러 {ranker.team_color || "-"} / 신뢰도 {formatFixed(ranker.reliability, 2)}
+                  포메이션 {ranker.formation || "-"} / 팀컬러 {ranker.team_color || "-"} / 신뢰도 {formatFixed(ranker.reliability, 2)} / {similarRankerSourceLabel(ranker.source)}
                 </p>
                 <ul className="list compact muted">
                   {ranker.metric_comparisons.slice(0, 5).map((comparison) => (
