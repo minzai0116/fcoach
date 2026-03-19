@@ -27,7 +27,7 @@ from app.services.analysis import (
 )
 from app.services.cache import CacheClient
 from app.services.openapi_client import NexonOpenApiClient, OpenApiRateLimitError
-from app.services.ranker_source import ensure_official_rankers, list_official_rankers
+from app.services.ranker_source import ensure_official_rankers, fetch_official_rankers, list_official_rankers
 
 
 app = FastAPI(title="FC Habit Lab API", version="0.1.0")
@@ -95,11 +95,11 @@ def _trigger_ranker_sync_async(force: bool = False) -> bool:
 
 
 def _match_sync_cooldown_seconds() -> int:
-    raw = os.getenv("HABIT_LAB_MATCH_SYNC_COOLDOWN_SEC", "180").strip()
+    raw = os.getenv("HABIT_LAB_MATCH_SYNC_COOLDOWN_SEC", "60").strip()
     try:
         return max(30, min(3600, int(raw)))
     except Exception:
-        return 180
+        return 60
 
 
 def _trigger_match_sync_async(ouid: str, match_type: int, desired_matches: int) -> bool:
@@ -275,11 +275,22 @@ def analysis_run(req: AnalysisRunRequest) -> dict[str, Any]:
         window_size=int(req.window),
         current_tactic=req.current_tactic,
     )
-    _trigger_match_sync_async(
-        ouid=req.ouid,
-        match_type=int(req.match_type),
-        desired_matches=max(int(req.window), 12),
-    )
+    if int(result.get("sample_count", 0)) <= 0:
+        retry = run_analysis(
+            ouid=req.ouid,
+            match_type=int(req.match_type),
+            window_size=int(req.window),
+            current_tactic=req.current_tactic,
+            force_bootstrap_sync=True,
+        )
+        if int(retry.get("sample_count", 0)) > 0:
+            result = retry
+    else:
+        _trigger_match_sync_async(
+            ouid=req.ouid,
+            match_type=int(req.match_type),
+            desired_matches=max(int(req.window), 12),
+        )
     cache.set_json(
         f"latest_analysis:{req.ouid}:{req.match_type}:{req.window}",
         result,
@@ -399,6 +410,32 @@ def rankers_refresh(
 def rankers_latest(mode: str = Query("1vs1"), limit: int = Query(20, ge=1, le=100)) -> dict[str, Any]:
     _trigger_ranker_sync_async(force=False)
     rows = list_official_rankers(mode=mode, limit=limit)
+    if not rows:
+        try:
+            fetched = fetch_official_rankers(mode=mode, pages=1, timeout_sec=12)[: max(1, limit)]
+            fetched_at = datetime.now(timezone.utc).isoformat()
+            rows = [
+                {
+                    "mode": mode,
+                    "rank_no": int(row.get("rank_no", 0)),
+                    "nickname": str(row.get("nickname", "")),
+                    "ouid": None,
+                    "elo": float(row.get("elo", 0.0)),
+                    "win_rate": float(row.get("win_rate", 0.0)),
+                    "win_count": int(row.get("win_count", 0)),
+                    "draw_count": int(row.get("draw_count", 0)),
+                    "loss_count": int(row.get("loss_count", 0)),
+                    "formation": str(row.get("formation", "")),
+                    "team_color": str(row.get("team_color", "")),
+                    "fetched_at": fetched_at,
+                    "source": "fconline_datacenter_live",
+                }
+                for row in fetched
+            ]
+        except Exception as exc:
+            global _LAST_AUTO_RANKER_SYNC_ERROR, _LAST_AUTO_RANKER_SYNC_AT
+            _LAST_AUTO_RANKER_SYNC_ERROR = str(exc)
+            _LAST_AUTO_RANKER_SYNC_AT = datetime.now(timezone.utc)
     mapped_count = sum(
         1
         for row in rows
