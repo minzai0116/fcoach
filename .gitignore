@@ -12,3 +12,5 @@ apps/web/node_modules/
 data/habit_lab.sqlite3
 data/*.db
 .DS_Store
+.vercel
+.env*.local
