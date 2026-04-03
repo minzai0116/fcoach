@@ -81,6 +81,7 @@ SPPOSITION_META_URL = "https://open.api.nexon.com/static/fconline/meta/sppositio
 SEASON_META_URL = "https://open.api.nexon.com/static/fconline/meta/seasonid.json"
 MATCH_REFRESH_THRESHOLD = timedelta(minutes=15)
 MATCH_CACHE_TTL_SEC_DEFAULT = 1800
+MATCH_HEAD_PROBE_TTL_SEC = 45
 _MATCH_CACHE = CacheClient()
 _OFFICIAL_RANKER_FALLBACK_CACHE_AT: datetime | None = None
 _OFFICIAL_RANKER_FALLBACK_CACHE_ROWS: list[dict[str, Any]] = []
@@ -161,6 +162,7 @@ def _load_official_rankers(limit: int = 80) -> list[dict[str, Any]]:
 class MatchStats:
     match_date: str
     result: str
+    opponent_nickname: str
     goals_for: float
     goals_against: float
     shots: float
@@ -449,6 +451,7 @@ def _extract_user_match(payload: dict[str, Any], ouid: str) -> MatchStats | None
     return MatchStats(
         match_date=str(payload.get("matchDate", utc_now_iso())),
         result=result,
+        opponent_nickname=str(opp.get("nickname", "")).strip(),
         goals_for=goals_for,
         goals_against=goals_against,
         shots=shots,
@@ -971,6 +974,22 @@ def _goal_profile_summary(rows: list[MatchStats]) -> dict[str, Any]:
 
 
 def _player_report_summary(rows: list[MatchStats]) -> dict[str, Any]:
+    def participated_in_match(player: dict[str, float | int]) -> bool:
+        rating = _to_float(player.get("rating"), default=0.0)
+        if rating > 0:
+            return True
+        activity_keys = (
+            "goals",
+            "assists",
+            "shots",
+            "effective_shots",
+            "pass_try",
+            "pass_success",
+            "tackle_try",
+            "tackle_success",
+        )
+        return any(_to_float(player.get(key)) > 0 for key in activity_keys)
+
     aggregates: dict[tuple[int, int, int], dict[str, float]] = {}
     controller_breakdown: dict[str, int] = defaultdict(int)
     for row in rows:
@@ -1011,7 +1030,7 @@ def _player_report_summary(rows: list[MatchStats]) -> dict[str, Any]:
             if rating >= 0:
                 target["rating_sum"] += rating
                 target["rating_count"] += 1
-            if key not in seen_keys:
+            if key not in seen_keys and participated_in_match(player):
                 target["appearances"] += 1
                 seen_keys.add(key)
 
@@ -1099,6 +1118,20 @@ def _build_visual_summary(rows: list[MatchStats]) -> dict[str, Any]:
         "goal_type_for": _goal_type_summary(goals_for_types),
         "goal_type_note": "공식 Open API shootDetail.type 코드(1~12) 기준으로 라벨링하며, 문서에 없는 코드는 미정의 타입으로 표시합니다. 왼발/오른발 직접 필드는 제공되지 않습니다.",
     }
+
+
+def _recent_match_summary(rows: list[MatchStats], limit: int = 5) -> list[dict[str, Any]]:
+    return [
+        {
+            "match_date": row.match_date,
+            "opponent_nickname": row.opponent_nickname or "알 수 없음",
+            "result": row.result or "-",
+            "score_for": round(row.goals_for, 2),
+            "score_against": round(row.goals_against, 2),
+            "controller": row.controller or "unknown",
+        }
+        for row in rows[:limit]
+    ]
 
 
 def _participant_row(user: dict[str, Any], opp: dict[str, Any]) -> dict[str, Any] | None:
@@ -1719,54 +1752,131 @@ def _save_match_rows_to_cache(ouid: str, match_type: int, match_rows: list[dict[
     _MATCH_CACHE.set_json(_match_cache_key(ouid, match_type), match_rows[:120], ttl_sec=_match_cache_ttl_sec())
 
 
-def run_analysis(
+def _latest_known_match_ids(ouid: str, match_type: int, limit: int) -> list[str]:
+    conn = connect()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT match_id
+            FROM matches_raw
+            WHERE ouid = ? AND match_type = ?
+            ORDER BY match_date DESC, id DESC
+            LIMIT ?
+            """,
+            (ouid, match_type, limit),
+        )
+        return [str(row["match_id"]) for row in cur.fetchall() if row["match_id"]]
+    finally:
+        conn.close()
+
+
+def _detect_new_match_head(ouid: str, match_type: int, known_match_ids: set[str]) -> bool:
+    if not known_match_ids:
+        return True
+    cache_key = f"match_head_probe:{ouid}:{match_type}"
+    cached = _MATCH_CACHE.get_json(cache_key)
+    if isinstance(cached, dict):
+        latest_match_id = str(cached.get("latest_match_id", "")).strip()
+        if latest_match_id:
+            return latest_match_id not in known_match_ids
+    api = NexonOpenApiClient(timeout_sec=8, retries=1)
+    latest_ids = api.fetch_match_ids(ouid=ouid, match_type=match_type, limit=min(max(len(known_match_ids) + 1, 3), 10))
+    latest_match_id = latest_ids[0] if latest_ids else ""
+    _MATCH_CACHE.set_json(
+        cache_key,
+        {"latest_match_id": latest_match_id, "checked_at": utc_now_iso()},
+        ttl_sec=MATCH_HEAD_PROBE_TTL_SEC,
+    )
+    return bool(latest_match_id and latest_match_id not in known_match_ids)
+
+
+def _refresh_match_rows(
     ouid: str,
     match_type: int,
     window_size: int,
-    current_tactic: dict[str, Any] | None = None,
-    force_bootstrap_sync: bool = False,
-) -> dict[str, Any]:
-    tactic_input_known = isinstance(current_tactic, dict) and len(current_tactic) > 0
-    live_sync_enabled = force_bootstrap_sync or _is_truthy(os.getenv("HABIT_LAB_ENABLE_LIVE_MATCH_SYNC", "0"))
-    rows = list_match_stats(ouid, match_type)
-    if not rows:
-        rows = _list_match_stats_from_cache(ouid, match_type)
+    existing_rows: list[MatchStats],
+) -> tuple[list[MatchStats], int]:
+    api = NexonOpenApiClient(timeout_sec=15, retries=2)
+    has_enough_rows = len(existing_rows) >= max(window_size, 12)
+    known_match_ids = set(_latest_known_match_ids(ouid, match_type, limit=max(window_size, 12))) if existing_rows else set()
+    refreshed_match_rows = 0
+    sync_error: Exception | None = None
+    for fetch_limit in _sync_fetch_limits(window_size=window_size, has_cached_rows=bool(existing_rows)):
+        try:
+            if known_match_ids and has_enough_rows:
+                match_rows = api.collect_incremental_match_rows(
+                    ouid=ouid,
+                    match_type=match_type,
+                    known_match_ids=known_match_ids,
+                    limit=fetch_limit,
+                )
+            else:
+                match_rows = api.collect_match_rows(ouid=ouid, match_type=match_type, limit=fetch_limit)
+            if match_rows:
+                refreshed_match_rows = upsert_matches(ouid=ouid, match_type=match_type, rows=match_rows)
+                _save_match_rows_to_cache(ouid, match_type, match_rows)
+            rows = list_match_stats(ouid, match_type)
+            if not rows:
+                rows = _list_match_stats_from_cache(ouid, match_type)
+            sync_error = None
+            return rows, refreshed_match_rows
+        except requests.HTTPError as exc:
+            sync_error = exc
+            status_code = exc.response.status_code if exc.response is not None else None
+            if status_code == 429:
+                continue
+            raise
+    if sync_error is not None:
+        raise sync_error
+    return existing_rows, refreshed_match_rows
+
+
+def _load_rows_for_analysis(
+    ouid: str,
+    match_type: int,
+    window_size: int,
+    live_sync_enabled: bool,
+    manual_refresh_probe: bool = False,
+) -> tuple[list[MatchStats], int, str | None, bool]:
+    db_rows = list_match_stats(ouid, match_type)
+    cache_rows = _list_match_stats_from_cache(ouid, match_type) if not db_rows else []
+    rows = db_rows or cache_rows
     refreshed_match_rows = 0
     refresh_warning: str | None = None
+    using_cache_only = not db_rows and bool(cache_rows)
     latest_before = rows[0].match_date if rows else None
     latest_before_dt = _parse_iso_datetime(latest_before) if latest_before else None
-    should_refresh = not rows
+    should_refresh = not rows or using_cache_only
     if rows and latest_before_dt is not None:
-        should_refresh = datetime.now(timezone.utc) - latest_before_dt >= MATCH_REFRESH_THRESHOLD
+        should_refresh = should_refresh or (datetime.now(timezone.utc) - latest_before_dt >= MATCH_REFRESH_THRESHOLD)
     if rows and latest_before_dt is None:
         should_refresh = True
     if len(rows) < max(window_size, 12):
         should_refresh = True
+    if manual_refresh_probe and rows and live_sync_enabled and not should_refresh:
+        try:
+            known_match_ids = set(_latest_known_match_ids(ouid, match_type, limit=max(window_size, 12)))
+            should_refresh = _detect_new_match_head(ouid=ouid, match_type=match_type, known_match_ids=known_match_ids)
+        except OpenApiRateLimitError as exc:
+            wait_seconds = int(round(exc.wait_seconds or 0))
+            refresh_warning = (
+                f"Nexon Open API 호출 제한으로 최신 동기화 여부를 확인하지 못했습니다. "
+                f"{wait_seconds}초 후 다시 시도해주세요."
+                if wait_seconds > 0
+                else "Nexon Open API 호출 제한으로 최신 동기화 여부를 확인하지 못했습니다. 잠시 후 다시 시도해주세요."
+            )
+        except Exception:
+            pass
 
     if should_refresh and live_sync_enabled:
         try:
-            api = NexonOpenApiClient(timeout_sec=15, retries=2)
-            sync_error: Exception | None = None
-            for fetch_limit in _sync_fetch_limits(window_size=window_size, has_cached_rows=bool(rows)):
-                try:
-                    match_rows = api.collect_match_rows(ouid=ouid, match_type=match_type, limit=fetch_limit)
-                    if match_rows:
-                        refreshed_match_rows = upsert_matches(ouid=ouid, match_type=match_type, rows=match_rows)
-                        _save_match_rows_to_cache(ouid, match_type, match_rows)
-                        rows = list_match_stats(ouid, match_type)
-                        if not rows:
-                            rows = _list_match_stats_from_cache(ouid, match_type)
-                    sync_error = None
-                    break
-                except requests.HTTPError as exc:
-                    sync_error = exc
-                    status_code = exc.response.status_code if exc.response is not None else None
-                    # 429에서만 더 작은 배치로 재시도한다.
-                    if status_code == 429:
-                        continue
-                    raise
-            if sync_error is not None:
-                raise sync_error
+            rows, refreshed_match_rows = _refresh_match_rows(
+                ouid=ouid,
+                match_type=match_type,
+                window_size=window_size,
+                existing_rows=rows,
+            )
         except OpenApiRateLimitError as exc:
             wait_seconds = int(round(exc.wait_seconds or 0))
             refresh_warning = (
@@ -1816,10 +1926,35 @@ def run_analysis(
                 rows = _list_match_stats_from_cache(ouid, match_type)
     elif should_refresh and not rows:
         refresh_warning = "저장된 경기 데이터가 없어 최신 동기화가 필요합니다. 잠시 후 다시 시도해주세요."
+
     if not rows and refresh_warning:
         refresh_warning = f"{refresh_warning} 해당 모드에서 저장된 경기 데이터가 없습니다."
     if not rows and not refresh_warning:
         refresh_warning = "해당 모드에서 조회 가능한 경기 데이터가 없습니다."
+    return rows, refreshed_match_rows, refresh_warning, should_refresh
+
+
+def run_analysis(
+    ouid: str,
+    match_type: int,
+    window_size: int,
+    current_tactic: dict[str, Any] | None = None,
+    force_bootstrap_sync: bool = False,
+    manual_refresh_probe: bool = False,
+) -> dict[str, Any]:
+    tactic_input_known = isinstance(current_tactic, dict) and len(current_tactic) > 0
+    live_sync_enabled = (
+        force_bootstrap_sync
+        or manual_refresh_probe
+        or _is_truthy(os.getenv("HABIT_LAB_ENABLE_LIVE_MATCH_SYNC", "0"))
+    )
+    rows, refreshed_match_rows, refresh_warning, should_refresh = _load_rows_for_analysis(
+        ouid=ouid,
+        match_type=match_type,
+        window_size=window_size,
+        live_sync_enabled=live_sync_enabled,
+        manual_refresh_probe=manual_refresh_probe,
+    )
     playable_controllers = {"keyboard", "gamepad"}
     playable_rows = [row for row in rows if row.controller.strip().lower() in playable_controllers]
     use_playable_only = len(playable_rows) >= min(5, window_size)
@@ -1998,6 +2133,7 @@ def run_analysis(
             if selected
             else (base_rows[0].match_date if base_rows else (rows[0].match_date if rows else None))
         ),
+        "recent_matches": _recent_match_summary(selected if selected else base_rows),
         "sync_attempted": should_refresh,
         "sync_new_rows": refreshed_match_rows,
         "sync_warning": refresh_warning,
@@ -2030,6 +2166,13 @@ def get_latest_analysis(ouid: str, match_type: int, window_size: int) -> dict[st
         row = cur.fetchone()
         if row is None:
             return None
+        rows = list_match_stats(ouid, match_type)
+        if not rows:
+            rows = _list_match_stats_from_cache(ouid, match_type)
+        playable_controllers = {"keyboard", "gamepad"}
+        playable_rows = [item for item in rows if item.controller.strip().lower() in playable_controllers]
+        base_rows = playable_rows if len(playable_rows) >= min(5, window_size) else rows
+        selected = base_rows[:window_size]
         return {
             "ouid": row["ouid"],
             "match_type": row["match_type"],
@@ -2043,6 +2186,12 @@ def get_latest_analysis(ouid: str, match_type: int, window_size: int) -> dict[st
             "issue_scores": json.loads(row["issue_scores_json"]),
             "kpis": json.loads(row["kpis_json"]),
             "created_at": row["created_at"],
+            "latest_match_date": (
+                selected[0].match_date
+                if selected
+                else (base_rows[0].match_date if base_rows else (rows[0].match_date if rows else None))
+            ),
+            "recent_matches": _recent_match_summary(selected if selected else base_rows),
         }
     finally:
         conn.close()

@@ -37,6 +37,15 @@ const MATCH_LABELS: Record<MatchType, string> = {
 
 const MATCH_TYPE_OPTIONS: MatchType[] = [50, 60];
 const WINDOW_OPTIONS: WindowSize[] = [5, 10, 30];
+const PLAYER_SORT_OPTIONS: Array<{ value: PlayerSortMetric; label: string }> = [
+  { value: "goals", label: "골" },
+  { value: "assists", label: "도움" },
+  { value: "effective_shots", label: "유효슛" },
+  { value: "pass_success_rate", label: "패스성공률" },
+  { value: "tackle_success_rate", label: "태클성공률" },
+  { value: "avg_rating", label: "평균평점" },
+  { value: "impact_score", label: "영향점수" },
+];
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
@@ -72,6 +81,7 @@ type AnalysisPayload = {
   sync_new_rows?: number;
   sync_warning?: string | null;
   created_at: string;
+  recent_matches?: RecentMatchSummary[];
   benchmark?: MetricMap;
   benchmark_meta?: Record<string, unknown>;
   similar_rankers?: unknown[];
@@ -103,6 +113,14 @@ type VisualSummary = {
 type ShotPoint = { x: number; y: number; is_goal: boolean };
 type TimingBucket = { label: string; count: number };
 type GoalTypeBucket = { type_code: number; label: string; count: number; ratio: number };
+type RecentMatchSummary = {
+  match_date: string;
+  opponent_nickname: string;
+  result: string;
+  score_for: number;
+  score_against: number;
+  controller?: string;
+};
 type PlayerReportEntry = {
   sp_id: number;
   player_name: string;
@@ -142,6 +160,15 @@ type PlayerReportSummary = {
   most_used?: PlayerReportEntry | null;
 };
 type PlayerReport = PlayerReportSummary;
+type PlayerSortMetric =
+  | "goals"
+  | "assists"
+  | "effective_shots"
+  | "pass_success_rate"
+  | "tackle_success_rate"
+  | "avg_rating"
+  | "impact_score";
+type PlayerSortDirection = "desc" | "asc";
 
 type RawActionCard = {
   rank?: number;
@@ -1025,9 +1052,13 @@ function confidenceBand(value: number): { label: string; className: string } {
 
 function syncNoticeText(payload: AnalysisPayload, fallback: string): string {
   const warning = String(payload.sync_warning ?? "").trim();
-  if (!warning) return fallback;
-  const latest = String(payload.latest_match_date ?? "").trim();
-  return latest ? `${warning} (최근 경기 시각: ${latest})` : warning;
+  const details = [
+    payload.created_at ? `분석 시각 ${formatDate(payload.created_at)}` : "",
+    payload.latest_match_date ? `최근 경기 ${formatDate(payload.latest_match_date)}` : "",
+  ].filter(Boolean);
+  const summary = details.length > 0 ? `${fallback} · ${details.join(" · ")}` : fallback;
+  if (!warning) return summary;
+  return details.length > 0 ? `${warning} (${details.join(" · ")})` : warning;
 }
 
 function similarRankerTarget(metricName: string, similarRankers: SimilarRanker[]): { value: number; count: number } | null {
@@ -1315,6 +1346,8 @@ export function HabitLabWireframe() {
   const [freeKick, setFreeKick] = useState(3);
   const [appliedTactic, setAppliedTactic] = useState<CurrentTactic | null>(null);
   const [showAdvancedTactic, setShowAdvancedTactic] = useState(false);
+  const [playerSortMetric, setPlayerSortMetric] = useState<PlayerSortMetric>("impact_score");
+  const [playerSortDirection, setPlayerSortDirection] = useState<PlayerSortDirection>("desc");
   const analysisMatchType = useMemo(() => normalizeMatchType(analysis?.match_type, matchType), [analysis?.match_type, matchType]);
   const analysisWindowSize = useMemo(
     () => normalizeWindowSize(analysis?.window_size, windowSize),
@@ -1390,6 +1423,10 @@ export function HabitLabWireframe() {
     () => (Array.isArray(analysis?.visuals?.goal_type_for) ? analysis?.visuals?.goal_type_for : []),
     [analysis?.visuals],
   );
+  const recentMatches = useMemo(
+    () => (Array.isArray(analysis?.recent_matches) ? analysis?.recent_matches : [] as RecentMatchSummary[]),
+    [analysis?.recent_matches],
+  );
   const goalTypeNote = String(analysis?.visuals?.goal_type_note ?? "");
   const playerReport = analysis?.visuals?.player_report;
   const playerRows = useMemo(() => {
@@ -1456,6 +1493,10 @@ export function HabitLabWireframe() {
   const playerRowsForTable = useMemo(
     () =>
       [...playerRows].sort((left, right) => {
+        const metricGap = Number(left[playerSortMetric]) - Number(right[playerSortMetric]);
+        if (metricGap !== 0) {
+          return playerSortDirection === "desc" ? -metricGap : metricGap;
+        }
         const leftGroup = tablePositionGroup(left.position_name);
         const rightGroup = tablePositionGroup(right.position_name);
         if (leftGroup !== rightGroup) return leftGroup - rightGroup;
@@ -1468,7 +1509,7 @@ export function HabitLabWireframe() {
         if (left.impact_score !== right.impact_score) return right.impact_score - left.impact_score;
         return left.player_name.localeCompare(right.player_name, "ko");
       }),
-    [playerRows],
+    [playerRows, playerSortDirection, playerSortMetric],
   );
   const formationNodes = useMemo(() => buildFormationNodes(topPlayerRows), [topPlayerRows]);
   const shotZone = analysis?.visuals?.shot_zone ?? {};
@@ -2020,6 +2061,31 @@ export function HabitLabWireframe() {
             </div>
           </article>
           <article className="panel span-3">
+            <h3 className="section-title">최근 경기 요약</h3>
+            <div className="muted compact">
+              분석 생성 {formatDate(analysis?.created_at)} · 최신 경기 반영 시각 {formatDate(analysis?.latest_match_date ?? undefined)}
+            </div>
+            {recentMatches.length === 0 ? (
+              <p className="muted">최근 경기 요약을 불러오지 못했습니다.</p>
+            ) : (
+              <div className="recent-match-list">
+                {recentMatches.map((match, index) => (
+                  <div key={`${match.match_date}-${match.opponent_nickname}-${index}`} className="recent-match-card">
+                    <div className="recent-match-head">
+                      <strong>{match.result || "-"}</strong>
+                      <span>{formatDate(match.match_date)}</span>
+                    </div>
+                    <div className="recent-match-score">
+                      {formatFixed(Number(match.score_for ?? 0), 0)} : {formatFixed(Number(match.score_against ?? 0), 0)}
+                    </div>
+                    <div className="muted compact">상대: {match.opponent_nickname || "알 수 없음"}</div>
+                    <div className="muted compact">입력: {String(match.controller ?? "unknown").toLowerCase()}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </article>
+          <article className="panel span-3">
             <h3 className="section-title">핵심 지표 한눈에 보기</h3>
             <div className="visual-metric-list">
               {visualMetricItems.map((item) => {
@@ -2276,6 +2342,28 @@ export function HabitLabWireframe() {
 
               <article className="panel">
                 <h4 className="section-title">선수 상세 성과표</h4>
+                <div className="player-sort-controls">
+                  <label className="select-label">
+                    정렬 기준
+                    <select
+                      value={playerSortMetric}
+                      onChange={(event) => setPlayerSortMetric(event.target.value as PlayerSortMetric)}
+                    >
+                      {PLAYER_SORT_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    className="subtle-button"
+                    onClick={() => setPlayerSortDirection((current) => (current === "desc" ? "asc" : "desc"))}
+                  >
+                    정렬 순서: {playerSortDirection === "desc" ? "내림차순" : "오름차순"}
+                  </button>
+                </div>
                 <div className="player-mobile-list">
                   {playerRowsForTable.map((player) => (
                     <article key={`${player.sp_id}-${player.sp_position}`} className="player-mobile-card">

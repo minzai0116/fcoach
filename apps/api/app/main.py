@@ -354,6 +354,7 @@ def analysis_run(request: Request, req: AnalysisRunRequest) -> dict[str, Any]:
         match_type=int(req.match_type),
         window_size=int(req.window),
         current_tactic=req.current_tactic,
+        manual_refresh_probe=True,
     )
     if int(result.get("sample_count", 0)) <= 0:
         retry = run_analysis(
@@ -362,6 +363,7 @@ def analysis_run(request: Request, req: AnalysisRunRequest) -> dict[str, Any]:
             window_size=int(req.window),
             current_tactic=req.current_tactic,
             force_bootstrap_sync=True,
+            manual_refresh_probe=True,
         )
         if int(retry.get("sample_count", 0)) > 0:
             result = retry

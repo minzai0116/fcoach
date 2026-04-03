@@ -182,23 +182,42 @@ class NexonOpenApiClient:
             raise RuntimeError("Unexpected match detail payload")
         return payload
 
+    def _build_match_row(self, match_id: str, ouid: str, match_type: int, payload: dict[str, Any]) -> dict[str, Any]:
+        match_date = payload.get("matchDate")
+        digest = hashlib.sha256(
+            f"{match_id}|{ouid}|{match_type}|{payload}".encode("utf-8")
+        ).hexdigest()
+        return {
+            "match_id": match_id,
+            "match_date": str(match_date) if match_date else _utc_now(),
+            "payload_hash": digest,
+            "payload": payload,
+        }
+
     def collect_match_rows(self, ouid: str, match_type: int, limit: int = 100) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         match_ids = self.fetch_match_ids(ouid, match_type, limit=limit)
         for idx, match_id in enumerate(match_ids):
             payload = self.fetch_match_detail(match_id)
-            match_date = payload.get("matchDate")
-            digest = hashlib.sha256(
-                f"{match_id}|{ouid}|{match_type}|{payload}".encode("utf-8")
-            ).hexdigest()
-            rows.append(
-                {
-                    "match_id": match_id,
-                    "match_date": str(match_date) if match_date else _utc_now(),
-                    "payload_hash": digest,
-                    "payload": payload,
-                }
-            )
+            rows.append(self._build_match_row(match_id=match_id, ouid=ouid, match_type=match_type, payload=payload))
+            if idx + 1 < len(match_ids):
+                time.sleep(0.08)
+        return rows
+
+    def collect_incremental_match_rows(
+        self,
+        ouid: str,
+        match_type: int,
+        known_match_ids: set[str],
+        limit: int = 30,
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        match_ids = self.fetch_match_ids(ouid, match_type, limit=limit)
+        for idx, match_id in enumerate(match_ids):
+            if match_id in known_match_ids:
+                break
+            payload = self.fetch_match_detail(match_id)
+            rows.append(self._build_match_row(match_id=match_id, ouid=ouid, match_type=match_type, payload=payload))
             if idx + 1 < len(match_ids):
                 time.sleep(0.08)
         return rows
