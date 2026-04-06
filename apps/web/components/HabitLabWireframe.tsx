@@ -37,16 +37,6 @@ const MATCH_LABELS: Record<MatchType, string> = {
 
 const MATCH_TYPE_OPTIONS: MatchType[] = [50, 60];
 const WINDOW_OPTIONS: WindowSize[] = [5, 10, 30];
-const PLAYER_SORT_OPTIONS: Array<{ value: PlayerSortMetric; label: string }> = [
-  { value: "goals", label: "골" },
-  { value: "assists", label: "도움" },
-  { value: "effective_shots", label: "유효슛" },
-  { value: "pass_success_rate", label: "패스성공률" },
-  { value: "tackle_success_rate", label: "태클성공률" },
-  { value: "avg_rating", label: "평균평점" },
-  { value: "impact_score", label: "영향점수" },
-];
-
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 type IssueCode =
@@ -161,6 +151,7 @@ type PlayerReportSummary = {
 };
 type PlayerReport = PlayerReportSummary;
 type PlayerSortMetric =
+  | "position_name"
   | "goals"
   | "assists"
   | "effective_shots"
@@ -815,6 +806,11 @@ function tablePositionOrder(positionName: string): number {
   return POSITION_TABLE_INDEX.get(upper) ?? 900;
 }
 
+function sortArrow(metric: PlayerSortMetric, currentMetric: PlayerSortMetric, direction: PlayerSortDirection): string {
+  if (metric !== currentMetric) return "↕";
+  return direction === "desc" ? "↓" : "↑";
+}
+
 function buildFormationNodes(players: PlayerReportEntry[]): FormationNode[] {
   if (!players.length) return [];
   const capped = players.slice(0, 11);
@@ -1348,6 +1344,14 @@ export function HabitLabWireframe() {
   const [showAdvancedTactic, setShowAdvancedTactic] = useState(false);
   const [playerSortMetric, setPlayerSortMetric] = useState<PlayerSortMetric>("impact_score");
   const [playerSortDirection, setPlayerSortDirection] = useState<PlayerSortDirection>("desc");
+  const togglePlayerSort = (metric: PlayerSortMetric) => {
+    if (playerSortMetric === metric) {
+      setPlayerSortDirection((current) => (current === "desc" ? "asc" : "desc"));
+      return;
+    }
+    setPlayerSortMetric(metric);
+    setPlayerSortDirection("desc");
+  };
   const analysisMatchType = useMemo(() => normalizeMatchType(analysis?.match_type, matchType), [analysis?.match_type, matchType]);
   const analysisWindowSize = useMemo(
     () => normalizeWindowSize(analysis?.window_size, windowSize),
@@ -1493,17 +1497,25 @@ export function HabitLabWireframe() {
   const playerRowsForTable = useMemo(
     () =>
       [...playerRows].sort((left, right) => {
-        const metricGap = Number(left[playerSortMetric]) - Number(right[playerSortMetric]);
-        if (metricGap !== 0) {
-          return playerSortDirection === "desc" ? -metricGap : metricGap;
+        if (playerSortMetric === "position_name") {
+          const leftGroup = tablePositionGroup(left.position_name);
+          const rightGroup = tablePositionGroup(right.position_name);
+          if (leftGroup !== rightGroup) {
+            const groupGap = leftGroup - rightGroup;
+            return playerSortDirection === "desc" ? -groupGap : groupGap;
+          }
+          const leftOrder = tablePositionOrder(left.position_name);
+          const rightOrder = tablePositionOrder(right.position_name);
+          if (leftOrder !== rightOrder) {
+            const orderGap = leftOrder - rightOrder;
+            return playerSortDirection === "desc" ? -orderGap : orderGap;
+          }
+        } else {
+          const metricGap = Number(left[playerSortMetric]) - Number(right[playerSortMetric]);
+          if (metricGap !== 0) {
+            return playerSortDirection === "desc" ? -metricGap : metricGap;
+          }
         }
-        const leftGroup = tablePositionGroup(left.position_name);
-        const rightGroup = tablePositionGroup(right.position_name);
-        if (leftGroup !== rightGroup) return leftGroup - rightGroup;
-
-        const leftOrder = tablePositionOrder(left.position_name);
-        const rightOrder = tablePositionOrder(right.position_name);
-        if (leftOrder !== rightOrder) return leftOrder - rightOrder;
 
         if (left.appearances !== right.appearances) return right.appearances - left.appearances;
         if (left.impact_score !== right.impact_score) return right.impact_score - left.impact_score;
@@ -2342,28 +2354,6 @@ export function HabitLabWireframe() {
 
               <article className="panel">
                 <h4 className="section-title">선수 상세 성과표</h4>
-                <div className="player-sort-controls">
-                  <label className="select-label">
-                    정렬 기준
-                    <select
-                      value={playerSortMetric}
-                      onChange={(event) => setPlayerSortMetric(event.target.value as PlayerSortMetric)}
-                    >
-                      {PLAYER_SORT_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    className="subtle-button"
-                    onClick={() => setPlayerSortDirection((current) => (current === "desc" ? "asc" : "desc"))}
-                  >
-                    정렬 순서: {playerSortDirection === "desc" ? "내림차순" : "오름차순"}
-                  </button>
-                </div>
                 <div className="player-mobile-list">
                   {playerRowsForTable.map((player) => (
                     <article key={`${player.sp_id}-${player.sp_position}`} className="player-mobile-card">
@@ -2404,15 +2394,47 @@ export function HabitLabWireframe() {
                         <th>선수</th>
                         <th>시즌</th>
                         <th>강화</th>
-                        <th>포지션</th>
+                        <th>
+                          <button type="button" className="table-sort-button" onClick={() => togglePlayerSort("position_name")}>
+                            포지션 {sortArrow("position_name", playerSortMetric, playerSortDirection)}
+                          </button>
+                        </th>
                         <th>출전</th>
-                        <th>골</th>
-                        <th>도움</th>
-                        <th>유효슛</th>
-                        <th>패스성공률</th>
-                        <th>태클성공률</th>
-                        <th>평균평점</th>
-                        <th>영향점수</th>
+                        <th>
+                          <button type="button" className="table-sort-button" onClick={() => togglePlayerSort("goals")}>
+                            골 {sortArrow("goals", playerSortMetric, playerSortDirection)}
+                          </button>
+                        </th>
+                        <th>
+                          <button type="button" className="table-sort-button" onClick={() => togglePlayerSort("assists")}>
+                            도움 {sortArrow("assists", playerSortMetric, playerSortDirection)}
+                          </button>
+                        </th>
+                        <th>
+                          <button type="button" className="table-sort-button" onClick={() => togglePlayerSort("effective_shots")}>
+                            유효슛 {sortArrow("effective_shots", playerSortMetric, playerSortDirection)}
+                          </button>
+                        </th>
+                        <th>
+                          <button type="button" className="table-sort-button" onClick={() => togglePlayerSort("pass_success_rate")}>
+                            패스성공률 {sortArrow("pass_success_rate", playerSortMetric, playerSortDirection)}
+                          </button>
+                        </th>
+                        <th>
+                          <button type="button" className="table-sort-button" onClick={() => togglePlayerSort("tackle_success_rate")}>
+                            태클성공률 {sortArrow("tackle_success_rate", playerSortMetric, playerSortDirection)}
+                          </button>
+                        </th>
+                        <th>
+                          <button type="button" className="table-sort-button" onClick={() => togglePlayerSort("avg_rating")}>
+                            평균평점 {sortArrow("avg_rating", playerSortMetric, playerSortDirection)}
+                          </button>
+                        </th>
+                        <th>
+                          <button type="button" className="table-sort-button" onClick={() => togglePlayerSort("impact_score")}>
+                            영향점수 {sortArrow("impact_score", playerSortMetric, playerSortDirection)}
+                          </button>
+                        </th>
                       </tr>
                     </thead>
                     <tbody>

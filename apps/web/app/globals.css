@@ -606,29 +606,6 @@ code {
   overflow-x: auto;
 }
 
-.player-sort-controls {
-  display: flex;
-  align-items: flex-end;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
-}
-
-.player-sort-controls .select-label {
-  max-width: 220px;
-}
-
-.subtle-button {
-  border: 1px solid #c2cede;
-  background: #ffffff;
-  color: #334155;
-  padding: 10px 12px;
-  border-radius: 10px;
-  cursor: pointer;
-  font-weight: 600;
-  min-height: 42px;
-}
-
 .player-mobile-list {
   display: none;
   gap: 10px;
@@ -701,6 +678,23 @@ code {
   background: #f3f8ff;
   font-size: 13px;
   font-weight: 700;
+}
+
+.table-sort-button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.table-sort-button:hover {
+  color: #1d4ed8;
 }
 
 .visual-metric-list {
@@ -1469,15 +1463,5 @@ code {
 
   .player-mobile-list {
     display: grid;
-  }
-
-  .player-sort-controls {
-    align-items: stretch;
-  }
-
-  .player-sort-controls .select-label,
-  .player-sort-controls .subtle-button {
-    width: 100%;
-    max-width: none;
   }
 }

@@ -990,19 +990,19 @@ def _player_report_summary(rows: list[MatchStats]) -> dict[str, Any]:
         )
         return any(_to_float(player.get(key)) > 0 for key in activity_keys)
 
-    aggregates: dict[tuple[int, int, int], dict[str, float]] = {}
+    aggregates: dict[tuple[int, int], dict[str, Any]] = {}
     controller_breakdown: dict[str, int] = defaultdict(int)
     for row in rows:
         controller = row.controller.strip() or "unknown"
         controller_breakdown[controller] += 1
-        seen_keys: set[tuple[int, int, int]] = set()
+        seen_keys: set[tuple[int, int]] = set()
         for player in row.player_stats:
             sp_id = _to_int(player.get("sp_id"))
             sp_position = _to_int(player.get("sp_position"))
             sp_grade = _to_int(player.get("sp_grade")) or 0
             if sp_id is None or sp_position is None:
                 continue
-            key = (sp_id, sp_position, sp_grade)
+            key = (sp_id, sp_grade)
             if key not in aggregates:
                 aggregates[key] = {
                     "appearances": 0.0,
@@ -1016,8 +1016,11 @@ def _player_report_summary(rows: list[MatchStats]) -> dict[str, Any]:
                     "tackle_success": 0.0,
                     "rating_sum": 0.0,
                     "rating_count": 0.0,
+                    "last_position": float(sp_position),
+                    "position_counts": {},
                 }
             target = aggregates[key]
+            target["last_position"] = float(sp_position)
             target["goals"] += _to_float(player.get("goals"))
             target["assists"] += _to_float(player.get("assists"))
             target["shots"] += _to_float(player.get("shots"))
@@ -1032,18 +1035,32 @@ def _player_report_summary(rows: list[MatchStats]) -> dict[str, Any]:
                 target["rating_count"] += 1
             if key not in seen_keys and participated_in_match(player):
                 target["appearances"] += 1
+                position_counts = target.get("position_counts")
+                if isinstance(position_counts, dict):
+                    position_counts[sp_position] = _to_float(position_counts.get(sp_position)) + 1.0
                 seen_keys.add(key)
 
     spid_names = _spid_name_map()
     position_names = _position_name_map()
     season_meta = _season_meta_map()
     players: list[dict[str, Any]] = []
-    for (sp_id, sp_position, sp_grade), value in aggregates.items():
+    for (sp_id, sp_grade), value in aggregates.items():
         appearances = max(1.0, value["appearances"])
         avg_rating = value["rating_sum"] / value["rating_count"] if value["rating_count"] > 0 else 0.0
         pass_success_rate = value["pass_success"] / value["pass_try"] if value["pass_try"] > 0 else 0.0
         tackle_success_rate = value["tackle_success"] / value["tackle_try"] if value["tackle_try"] > 0 else 0.0
         goal_involve_per_match = (value["goals"] + value["assists"]) / appearances
+        primary_position = _to_int(value.get("last_position"))
+        position_counts = value.get("position_counts")
+        if isinstance(position_counts, dict) and position_counts:
+            primary_position = max(
+                position_counts.items(),
+                key=lambda item: (
+                    _to_float(item[1]),
+                    0 if str(position_names.get(_to_int(item[0]) or -1, "")).upper() != "SUB" else -1,
+                ),
+            )[0]
+        sp_position = int(primary_position) if primary_position is not None else -1
         season_id = sp_id // 1_000_000
         impact_score = (
             goal_involve_per_match * 6.0
