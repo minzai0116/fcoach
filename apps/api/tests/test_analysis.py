@@ -7,6 +7,7 @@ def _sample_match(result: str, goals_for: float, goals_against: float, late_conc
     return MatchStats(
         match_date="2026-03-01T12:00:00+00:00",
         result=result,
+        opponent_nickname="상대",
         goals_for=goals_for,
         goals_against=goals_against,
         shots=shots,
@@ -101,6 +102,7 @@ class AnalysisTest(unittest.TestCase):
             MatchStats(
                 match_date="2026-03-01T12:00:00+00:00",
                 result="승",
+                opponent_nickname="상대A",
                 goals_for=2,
                 goals_against=1,
                 shots=8,
@@ -141,6 +143,7 @@ class AnalysisTest(unittest.TestCase):
             MatchStats(
                 match_date="2026-03-02T12:00:00+00:00",
                 result="무",
+                opponent_nickname="상대B",
                 goals_for=1,
                 goals_against=1,
                 shots=7,
@@ -187,6 +190,132 @@ class AnalysisTest(unittest.TestCase):
         self.assertEqual(first["appearances"], 2)
         self.assertEqual(first["goals"], 2.0)
         self.assertAlmostEqual(first["pass_success_rate"], 31 / 38, places=4)
+        self.assertEqual(first["role_group"], "ATT")
+        self.assertEqual(first["impact_model"], "role_weighted_v2")
+        self.assertGreaterEqual(first["impact_score"], 0.0)
+        self.assertLessEqual(first["impact_score"], 100.0)
+
+    def test_player_report_summary_role_weighted_score(self) -> None:
+        rows = [
+            MatchStats(
+                match_date="2026-03-01T12:00:00+00:00",
+                result="승",
+                opponent_nickname="상대A",
+                goals_for=2,
+                goals_against=1,
+                shots=9,
+                shots_on_target=5,
+                offside=1,
+                xg_for=1.8,
+                xg_against=1.1,
+                late_goals_against=0,
+                in_box_shots=7,
+                total_shots_detail=9,
+                possession=53,
+                pass_try=128,
+                pass_success=108,
+                through_pass_try=16,
+                through_pass_success=6,
+                tackle_try=19,
+                tackle_success=8,
+                shots_for_points=[],
+                goals_for_minutes=[],
+                goals_against_minutes=[],
+                goals_for_types=[],
+                player_stats=[
+                    {
+                        "sp_id": 100000041,
+                        "sp_position": 25,  # ST
+                        "goals": 1,
+                        "assists": 0,
+                        "shots": 4,
+                        "effective_shots": 2,
+                        "pass_try": 14,
+                        "pass_success": 10,
+                        "tackle_try": 1,
+                        "tackle_success": 0,
+                        "rating": 7.1,
+                    },
+                    {
+                        "sp_id": 100000999,
+                        "sp_position": 6,  # LCB
+                        "goals": 0,
+                        "assists": 0,
+                        "shots": 0,
+                        "effective_shots": 0,
+                        "pass_try": 26,
+                        "pass_success": 24,
+                        "tackle_try": 6,
+                        "tackle_success": 5,
+                        "rating": 7.0,
+                    },
+                ],
+            ),
+            MatchStats(
+                match_date="2026-03-02T12:00:00+00:00",
+                result="무",
+                opponent_nickname="상대B",
+                goals_for=1,
+                goals_against=1,
+                shots=6,
+                shots_on_target=3,
+                offside=0,
+                xg_for=1.1,
+                xg_against=1.0,
+                late_goals_against=0,
+                in_box_shots=4,
+                total_shots_detail=6,
+                possession=48,
+                pass_try=112,
+                pass_success=95,
+                through_pass_try=13,
+                through_pass_success=4,
+                tackle_try=18,
+                tackle_success=8,
+                shots_for_points=[],
+                goals_for_minutes=[],
+                goals_against_minutes=[],
+                goals_for_types=[],
+                player_stats=[
+                    {
+                        "sp_id": 100000041,
+                        "sp_position": 25,  # ST
+                        "goals": 0,
+                        "assists": 1,
+                        "shots": 2,
+                        "effective_shots": 1,
+                        "pass_try": 12,
+                        "pass_success": 9,
+                        "tackle_try": 0,
+                        "tackle_success": 0,
+                        "rating": 6.9,
+                    },
+                    {
+                        "sp_id": 100000999,
+                        "sp_position": 6,  # LCB
+                        "goals": 0,
+                        "assists": 0,
+                        "shots": 0,
+                        "effective_shots": 0,
+                        "pass_try": 23,
+                        "pass_success": 21,
+                        "tackle_try": 7,
+                        "tackle_success": 5,
+                        "rating": 7.2,
+                    },
+                ],
+            ),
+        ]
+        report = _player_report_summary(rows)
+        entries = {item["sp_id"]: item for item in report["players"]}
+        st = entries[100000041]
+        cb = entries[100000999]
+        self.assertEqual(st["role_group"], "ATT")
+        self.assertEqual(cb["role_group"], "DEF")
+        self.assertGreater(st["impact_score"], 0.0)
+        self.assertGreater(cb["impact_score"], 0.0)
+        self.assertGreaterEqual(st["impact_confidence"], 0.35)
+        self.assertGreaterEqual(cb["impact_confidence"], 0.35)
 
 if __name__ == "__main__":
     unittest.main()

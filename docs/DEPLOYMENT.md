@@ -5,7 +5,7 @@
 ## 1. 사전 검증
 
 ```bash
-cd /Users/kmj/Desktop/fc-habit-lab
+cd <repo-root>
 make test
 cd apps/web && npm run build
 ```
@@ -17,7 +17,7 @@ cd apps/web && npm run build
 ## 2. GitHub 업로드
 
 ```bash
-cd /Users/kmj/Desktop/fc-habit-lab
+cd <repo-root>
 git add .
 git commit -m "chore: release prep"
 git push origin main
@@ -80,4 +80,3 @@ curl -I https://fcoach.fun
 - Web: Vercel에서 이전 배포로 즉시 롤백
 - API: Vercel에서 직전 배포 Promote
 - 데이터: SQLite 파일 백업본 기준 복구
-

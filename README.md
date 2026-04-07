@@ -50,7 +50,7 @@ FCOACH는 아래 3단계 루프를 제품 중심으로 구현했습니다.
 ## 5. 디렉터리 구조
 
 ```text
-fc-habit-lab/
+fcoach/
 ├─ apps/
 │  ├─ api/         # FastAPI 엔드포인트/분석 로직
 │  └─ web/         # Next.js UI
@@ -63,7 +63,8 @@ fc-habit-lab/
 ## 6. 로컬 실행
 
 ```bash
-cd /Users/kmj/Desktop/fc-habit-lab
+git clone https://github.com/minzai0116/fcoach.git
+cd fcoach
 make init
 make init-db
 ```

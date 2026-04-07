@@ -184,6 +184,7 @@ class MatchStats:
     goals_for_minutes: list[float]
     goals_against_minutes: list[float]
     goals_for_types: list[int]
+    shots_on_target_against: float = 0.0
     goals_heading: float = 0.0
     goals_freekick: float = 0.0
     goals_penaltykick: float = 0.0
@@ -444,6 +445,12 @@ def _extract_user_match(payload: dict[str, Any], ouid: str) -> MatchStats | None
                 "pass_success": _to_float(status.get("passSuccess")),
                 "tackle_try": _to_float(status.get("tackleTry")),
                 "tackle_success": _to_float(status.get("tackle")),
+                "intercept": _to_float(status.get("intercept")),
+                "block_try": _to_float(status.get("blockTry")),
+                "block_success": _to_float(status.get("block")),
+                "dribble_try": _to_float(status.get("dribbleTry")),
+                "dribble_success": _to_float(status.get("dribbleSuccess")),
+                "defending_actions": _to_float(status.get("defending")),
                 "rating": _to_float(status.get("spRating")),
             }
         )
@@ -473,6 +480,7 @@ def _extract_user_match(payload: dict[str, Any], ouid: str) -> MatchStats | None
         goals_for_minutes=goals_for_minutes,
         goals_against_minutes=goals_against_minutes,
         goals_for_types=goals_for_types,
+        shots_on_target_against=_to_float(opp_shoot.get("effectiveShootTotal")),
         goals_heading=_to_float(user_shoot.get("goalHeading")),
         goals_freekick=_to_float(user_shoot.get("goalFreekick")),
         goals_penaltykick=_to_float(user_shoot.get("goalPenaltyKick")),
@@ -973,6 +981,127 @@ def _goal_profile_summary(rows: list[MatchStats]) -> dict[str, Any]:
     }
 
 
+_ATTACK_POSITIONS = {"ST", "CF", "LF", "RF", "LS", "RS", "LW", "RW", "LWF", "RWF"}
+_MIDFIELD_POSITIONS = {"CAM", "LAM", "RAM", "CM", "LCM", "RCM", "CDM", "LDM", "RDM", "LM", "RM"}
+_DEFENSE_POSITIONS = {"CB", "LCB", "RCB", "LB", "RB", "LWB", "RWB", "SW"}
+_PLAYER_ROLE_WEIGHTS: dict[str, dict[str, float]] = {
+    "ATT": {
+        "goals_per_match": 0.30,
+        "assists_per_match": 0.12,
+        "effective_shots_per_match": 0.22,
+        "shot_accuracy": 0.16,
+        "avg_rating": 0.14,
+        "dribble_success_rate": 0.06,
+    },
+    "MID": {
+        "assists_per_match": 0.16,
+        "pass_success_rate": 0.25,
+        "dribble_success_rate": 0.13,
+        "tackle_success_rate": 0.12,
+        "intercepts_per_match": 0.12,
+        "effective_shots_per_match": 0.08,
+        "shot_accuracy": 0.06,
+        "goals_per_match": 0.08,
+        "avg_rating": 0.10,
+    },
+    "DEF": {
+        "tackle_success_rate": 0.27,
+        "tackles_per_match": 0.18,
+        "intercepts_per_match": 0.23,
+        "blocks_per_match": 0.16,
+        "pass_success_rate": 0.08,
+        "avg_rating": 0.06,
+        "assists_per_match": 0.01,
+        "goals_per_match": 0.01,
+    },
+    "GK": {
+        "save_rate_proxy": 0.45,
+        "save_events_per_match": 0.20,
+        "avg_rating": 0.18,
+        "pass_success_rate": 0.12,
+        "intercepts_per_match": 0.05,
+    },
+    "SUB": {
+        "assists_per_match": 0.16,
+        "pass_success_rate": 0.25,
+        "dribble_success_rate": 0.13,
+        "tackle_success_rate": 0.12,
+        "intercepts_per_match": 0.12,
+        "effective_shots_per_match": 0.08,
+        "shot_accuracy": 0.06,
+        "goals_per_match": 0.08,
+        "avg_rating": 0.10,
+    },
+}
+
+
+def _safe_divide(numerator: float, denominator: float) -> float:
+    if denominator <= 0:
+        return 0.0
+    return numerator / denominator
+
+
+def _player_role(position_name: str) -> str:
+    position = position_name.strip().upper()
+    if position == "SUB":
+        return "SUB"
+    if position == "GK":
+        return "GK"
+    if position in _ATTACK_POSITIONS:
+        return "ATT"
+    if position in _MIDFIELD_POSITIONS:
+        return "MID"
+    if position in _DEFENSE_POSITIONS:
+        return "DEF"
+    if "DM" in position or "CM" in position or "AM" in position:
+        return "MID"
+    if position.endswith("B") or "WB" in position:
+        return "DEF"
+    if "W" in position or "F" in position:
+        return "ATT"
+    return "MID"
+
+
+def _quantile(values: list[float], q: float) -> float:
+    if not values:
+        return 0.0
+    sorted_values = sorted(values)
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    index = (len(sorted_values) - 1) * q
+    lower_index = int(math.floor(index))
+    upper_index = int(math.ceil(index))
+    if lower_index == upper_index:
+        return sorted_values[lower_index]
+    weight = index - lower_index
+    return sorted_values[lower_index] * (1.0 - weight) + sorted_values[upper_index] * weight
+
+
+def _robust_bounds(values: list[float]) -> tuple[float, float]:
+    if not values:
+        return 0.0, 1.0
+    if len(values) >= 5:
+        low = _quantile(values, 0.1)
+        high = _quantile(values, 0.9)
+    elif len(values) >= 2:
+        low = min(values)
+        high = max(values)
+    else:
+        center = values[0]
+        span = max(0.1, abs(center) * 0.15)
+        return center - span, center + span
+    if high - low < 1e-6:
+        span = max(0.1, abs(high) * 0.1)
+        return low - span, high + span
+    return low, high
+
+
+def _normalize_to_unit(value: float, low: float, high: float) -> float:
+    if high <= low:
+        return 0.5
+    return max(0.0, min(1.0, (value - low) / (high - low)))
+
+
 def _player_report_summary(rows: list[MatchStats]) -> dict[str, Any]:
     def participated_in_match(player: dict[str, float | int]) -> bool:
         rating = _to_float(player.get("rating"), default=0.0)
@@ -1014,6 +1143,14 @@ def _player_report_summary(rows: list[MatchStats]) -> dict[str, Any]:
                     "pass_success": 0.0,
                     "tackle_try": 0.0,
                     "tackle_success": 0.0,
+                    "intercept": 0.0,
+                    "block_try": 0.0,
+                    "block_success": 0.0,
+                    "dribble_try": 0.0,
+                    "dribble_success": 0.0,
+                    "defending_actions": 0.0,
+                    "gk_conceded": 0.0,
+                    "gk_saved": 0.0,
                     "rating_sum": 0.0,
                     "rating_count": 0.0,
                     "last_position": float(sp_position),
@@ -1029,12 +1166,23 @@ def _player_report_summary(rows: list[MatchStats]) -> dict[str, Any]:
             target["pass_success"] += _to_float(player.get("pass_success"))
             target["tackle_try"] += _to_float(player.get("tackle_try"))
             target["tackle_success"] += _to_float(player.get("tackle_success"))
+            target["intercept"] += _to_float(player.get("intercept"))
+            target["block_try"] += _to_float(player.get("block_try"))
+            target["block_success"] += _to_float(player.get("block_success"))
+            target["dribble_try"] += _to_float(player.get("dribble_try"))
+            target["dribble_success"] += _to_float(player.get("dribble_success"))
+            target["defending_actions"] += _to_float(player.get("defending_actions"))
             rating = _to_float(player.get("rating"), default=-1.0)
             if rating >= 0:
                 target["rating_sum"] += rating
                 target["rating_count"] += 1
             if key not in seen_keys and participated_in_match(player):
                 target["appearances"] += 1
+                if sp_position == 0:
+                    goals_conceded = max(0.0, row.goals_against)
+                    shots_on_target_against = max(0.0, row.shots_on_target_against)
+                    target["gk_conceded"] += goals_conceded
+                    target["gk_saved"] += max(0.0, shots_on_target_against - goals_conceded)
                 position_counts = target.get("position_counts")
                 if isinstance(position_counts, dict):
                     position_counts[sp_position] = _to_float(position_counts.get(sp_position)) + 1.0
@@ -1043,13 +1191,15 @@ def _player_report_summary(rows: list[MatchStats]) -> dict[str, Any]:
     spid_names = _spid_name_map()
     position_names = _position_name_map()
     season_meta = _season_meta_map()
-    players: list[dict[str, Any]] = []
+    raw_players: list[dict[str, Any]] = []
+    metric_pools_global: dict[str, list[float]] = defaultdict(list)
+    metric_pools_by_role: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
     for (sp_id, sp_grade), value in aggregates.items():
-        appearances = max(1.0, value["appearances"])
+        appearances_actual = max(0.0, value["appearances"])
+        appearances = max(1.0, appearances_actual)
         avg_rating = value["rating_sum"] / value["rating_count"] if value["rating_count"] > 0 else 0.0
         pass_success_rate = value["pass_success"] / value["pass_try"] if value["pass_try"] > 0 else 0.0
         tackle_success_rate = value["tackle_success"] / value["tackle_try"] if value["tackle_try"] > 0 else 0.0
-        goal_involve_per_match = (value["goals"] + value["assists"]) / appearances
         primary_position = _to_int(value.get("last_position"))
         position_counts = value.get("position_counts")
         if isinstance(position_counts, dict) and position_counts:
@@ -1061,15 +1211,32 @@ def _player_report_summary(rows: list[MatchStats]) -> dict[str, Any]:
                 ),
             )[0]
         sp_position = int(primary_position) if primary_position is not None else -1
+        position_name = position_names.get(sp_position, str(sp_position))
+        role_group = _player_role(position_name)
+        goalie_saved = max(0.0, _to_float(value.get("gk_saved")))
+        goalie_conceded = max(0.0, _to_float(value.get("gk_conceded")))
+        defending_actions = max(0.0, _to_float(value.get("defending_actions")))
+        saves_proxy = max(goalie_saved, defending_actions)
+        impact_metrics = {
+            "goals_per_match": _safe_divide(value["goals"], appearances),
+            "assists_per_match": _safe_divide(value["assists"], appearances),
+            "effective_shots_per_match": _safe_divide(value["effective_shots"], appearances),
+            "shot_accuracy": _safe_divide(value["effective_shots"], value["shots"]),
+            "pass_success_rate": pass_success_rate,
+            "tackle_success_rate": tackle_success_rate,
+            "tackles_per_match": _safe_divide(value["tackle_success"], appearances),
+            "intercepts_per_match": _safe_divide(value["intercept"], appearances),
+            "blocks_per_match": _safe_divide(value["block_success"], appearances),
+            "dribble_success_rate": _safe_divide(value["dribble_success"], value["dribble_try"]),
+            "save_events_per_match": _safe_divide(saves_proxy, appearances),
+            "save_rate_proxy": _safe_divide(saves_proxy, saves_proxy + goalie_conceded),
+            "avg_rating": avg_rating,
+        }
+        for metric_name, metric_value in impact_metrics.items():
+            metric_pools_global[metric_name].append(metric_value)
+            metric_pools_by_role[role_group][metric_name].append(metric_value)
         season_id = sp_id // 1_000_000
-        impact_score = (
-            goal_involve_per_match * 6.0
-            + (value["effective_shots"] / appearances) * 0.8
-            + pass_success_rate * 2.0
-            + tackle_success_rate * 1.6
-            + avg_rating * 0.5
-        )
-        players.append(
+        raw_players.append(
             {
                 "sp_id": sp_id,
                 "player_name": spid_names.get(sp_id, f"spId {sp_id}"),
@@ -1078,9 +1245,9 @@ def _player_report_summary(rows: list[MatchStats]) -> dict[str, Any]:
                 "season_img": season_meta.get(season_id, {}).get("image", ""),
                 **_player_image_urls(sp_id),
                 "sp_position": sp_position,
-                "position_name": position_names.get(sp_position, str(sp_position)),
+                "position_name": position_name,
                 "sp_grade": sp_grade,
-                "appearances": int(value["appearances"]),
+                "appearances": int(appearances_actual),
                 "goals": round(value["goals"], 2),
                 "assists": round(value["assists"], 2),
                 "goal_involvements": round(value["goals"] + value["assists"], 2),
@@ -1089,9 +1256,57 @@ def _player_report_summary(rows: list[MatchStats]) -> dict[str, Any]:
                 "pass_success_rate": round(pass_success_rate, 4),
                 "tackle_success_rate": round(tackle_success_rate, 4),
                 "avg_rating": round(avg_rating, 3),
-                "impact_score": round(impact_score, 3),
+                "_role_group": role_group,
+                "_appearances_actual": appearances_actual,
+                "_impact_metrics": impact_metrics,
             }
         )
+
+    bounds_cache: dict[tuple[str, str], tuple[float, float]] = {}
+    for role_group, weights in _PLAYER_ROLE_WEIGHTS.items():
+        for metric_name in weights:
+            role_values = metric_pools_by_role.get(role_group, {}).get(metric_name, [])
+            pool = role_values if len(role_values) >= 3 else metric_pools_global.get(metric_name, role_values)
+            bounds_cache[(role_group, metric_name)] = _robust_bounds(pool)
+
+    players: list[dict[str, Any]] = []
+    sample_match_count = max(1.0, float(len(rows)))
+    for raw_player in raw_players:
+        role_group = str(raw_player.pop("_role_group", "MID"))
+        appearances_actual = _to_float(raw_player.pop("_appearances_actual", 0.0))
+        impact_metrics = raw_player.pop("_impact_metrics", {})
+        if not isinstance(impact_metrics, dict):
+            impact_metrics = {}
+        weights = _PLAYER_ROLE_WEIGHTS.get(role_group, _PLAYER_ROLE_WEIGHTS["MID"])
+        weighted_score = 0.0
+        impact_components: list[dict[str, Any]] = []
+        for metric_name, weight in weights.items():
+            value = _to_float(impact_metrics.get(metric_name))
+            low, high = bounds_cache.get((role_group, metric_name), (0.0, 1.0))
+            normalized = _normalize_to_unit(value, low, high)
+            contribution = normalized * weight
+            weighted_score += contribution
+            impact_components.append(
+                {
+                    "metric": metric_name,
+                    "weight": round(weight, 3),
+                    "raw": round(value, 4),
+                    "normalized": round(normalized, 4),
+                    "weighted_score": round(contribution, 4),
+                }
+            )
+        impact_components.sort(key=lambda item: _to_float(item.get("weighted_score")), reverse=True)
+
+        sample_reference = max(3.0, sample_match_count * 0.35)
+        sample_factor = 0.0 if appearances_actual <= 0 else min(1.0, math.sqrt(appearances_actual / sample_reference))
+        reliability_scale = 0.65 + 0.35 * sample_factor
+        impact_score = weighted_score * 100.0 * reliability_scale
+        raw_player["role_group"] = role_group
+        raw_player["impact_model"] = "role_weighted_v2"
+        raw_player["impact_confidence"] = round(0.35 + 0.65 * sample_factor, 3)
+        raw_player["impact_components"] = impact_components
+        raw_player["impact_score"] = round(impact_score, 3)
+        players.append(raw_player)
 
     players.sort(key=lambda item: (-int(item["appearances"]), -float(item["impact_score"]), -float(item["goal_involvements"])))
     preferred_top = [player for player in players if str(player.get("position_name", "")).upper() != "SUB"]

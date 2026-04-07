@@ -103,6 +103,13 @@ type VisualSummary = {
 type ShotPoint = { x: number; y: number; is_goal: boolean };
 type TimingBucket = { label: string; count: number };
 type GoalTypeBucket = { type_code: number; label: string; count: number; ratio: number };
+type ImpactComponent = {
+  metric: string;
+  weight: number;
+  raw: number;
+  normalized: number;
+  weighted_score: number;
+};
 type RecentMatchSummary = {
   match_date: string;
   opponent_nickname: string;
@@ -133,6 +140,10 @@ type PlayerReportEntry = {
   tackle_success_rate: number;
   avg_rating: number;
   impact_score: number;
+  role_group?: string;
+  impact_model?: string;
+  impact_confidence?: number;
+  impact_components?: ImpactComponent[];
 };
 
 type FormationNode = PlayerReportEntry & {
@@ -811,6 +822,95 @@ function sortArrow(metric: PlayerSortMetric, currentMetric: PlayerSortMetric, di
   return direction === "desc" ? "↓" : "↑";
 }
 
+const IMPACT_COMPONENT_LABELS: Record<string, string> = {
+  goals_per_match: "경기당 골",
+  assists_per_match: "경기당 도움",
+  effective_shots_per_match: "경기당 유효슛",
+  shot_accuracy: "슈팅 정확도",
+  pass_success_rate: "패스 성공률",
+  tackle_success_rate: "태클 성공률",
+  tackles_per_match: "경기당 태클 성공",
+  intercepts_per_match: "경기당 인터셉트",
+  blocks_per_match: "경기당 블락",
+  dribble_success_rate: "드리블 성공률",
+  save_events_per_match: "경기당 선방",
+  save_rate_proxy: "선방률",
+  avg_rating: "평균 평점",
+};
+
+function roleGroupLabel(roleGroup: string): string {
+  const role = roleGroup.toUpperCase();
+  if (role === "ATT") return "공격";
+  if (role === "MID") return "미드";
+  if (role === "DEF") return "수비";
+  if (role === "GK") return "골키퍼";
+  if (role === "SUB") return "교체";
+  return "미분류";
+}
+
+function formatImpactRaw(metric: string, value: number): string {
+  if (
+    [
+      "shot_accuracy",
+      "pass_success_rate",
+      "tackle_success_rate",
+      "dribble_success_rate",
+      "save_rate_proxy",
+      "weight",
+      "normalized",
+      "weighted_score",
+    ].includes(metric)
+  ) {
+    return formatPercent(value);
+  }
+  if (metric === "avg_rating") return formatFixed(value, 2);
+  return formatFixed(value, 2);
+}
+
+function normalizeImpactComponents(value: unknown): ImpactComponent[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => ({
+      metric: String((item as ImpactComponent).metric ?? ""),
+      weight: Number((item as ImpactComponent).weight ?? 0),
+      raw: Number((item as ImpactComponent).raw ?? 0),
+      normalized: Number((item as ImpactComponent).normalized ?? 0),
+      weighted_score: Number((item as ImpactComponent).weighted_score ?? 0),
+    }))
+    .filter((item) => item.metric.length > 0)
+    .slice(0, 5);
+}
+
+function normalizePlayerEntry(item: unknown): PlayerReportEntry {
+  return {
+    sp_id: Number((item as PlayerReportEntry).sp_id ?? 0),
+    player_name: String((item as PlayerReportEntry).player_name ?? ""),
+    season_id: Number((item as PlayerReportEntry).season_id ?? 0),
+    season_name: String((item as PlayerReportEntry).season_name ?? "-"),
+    season_img: String((item as PlayerReportEntry).season_img ?? ""),
+    face_img: String((item as PlayerReportEntry).face_img ?? ""),
+    action_img: String((item as PlayerReportEntry).action_img ?? ""),
+    fallback_img: String((item as PlayerReportEntry).fallback_img ?? ""),
+    sp_position: Number((item as PlayerReportEntry).sp_position ?? -1),
+    position_name: String((item as PlayerReportEntry).position_name ?? "-"),
+    sp_grade: Number((item as PlayerReportEntry).sp_grade ?? 0),
+    appearances: Number((item as PlayerReportEntry).appearances ?? 0),
+    goals: Number((item as PlayerReportEntry).goals ?? 0),
+    assists: Number((item as PlayerReportEntry).assists ?? 0),
+    goal_involvements: Number((item as PlayerReportEntry).goal_involvements ?? 0),
+    shots: Number((item as PlayerReportEntry).shots ?? 0),
+    effective_shots: Number((item as PlayerReportEntry).effective_shots ?? 0),
+    pass_success_rate: Number((item as PlayerReportEntry).pass_success_rate ?? 0),
+    tackle_success_rate: Number((item as PlayerReportEntry).tackle_success_rate ?? 0),
+    avg_rating: Number((item as PlayerReportEntry).avg_rating ?? 0),
+    impact_score: Number((item as PlayerReportEntry).impact_score ?? 0),
+    role_group: String((item as PlayerReportEntry).role_group ?? "MID"),
+    impact_model: String((item as PlayerReportEntry).impact_model ?? ""),
+    impact_confidence: Number((item as PlayerReportEntry).impact_confidence ?? 0),
+    impact_components: normalizeImpactComponents((item as PlayerReportEntry).impact_components),
+  };
+}
+
 function buildFormationNodes(players: PlayerReportEntry[]): FormationNode[] {
   if (!players.length) return [];
   const capped = players.slice(0, 11);
@@ -1437,29 +1537,7 @@ export function HabitLabWireframe() {
     const raw = playerReport?.players;
     if (!Array.isArray(raw)) return [] as PlayerReportEntry[];
     return raw
-      .map((item) => ({
-        sp_id: Number((item as PlayerReportEntry).sp_id ?? 0),
-        player_name: String((item as PlayerReportEntry).player_name ?? ""),
-        season_id: Number((item as PlayerReportEntry).season_id ?? 0),
-        season_name: String((item as PlayerReportEntry).season_name ?? "-"),
-        season_img: String((item as PlayerReportEntry).season_img ?? ""),
-        face_img: String((item as PlayerReportEntry).face_img ?? ""),
-        action_img: String((item as PlayerReportEntry).action_img ?? ""),
-        fallback_img: String((item as PlayerReportEntry).fallback_img ?? ""),
-        sp_position: Number((item as PlayerReportEntry).sp_position ?? -1),
-        position_name: String((item as PlayerReportEntry).position_name ?? "-"),
-        sp_grade: Number((item as PlayerReportEntry).sp_grade ?? 0),
-        appearances: Number((item as PlayerReportEntry).appearances ?? 0),
-        goals: Number((item as PlayerReportEntry).goals ?? 0),
-        assists: Number((item as PlayerReportEntry).assists ?? 0),
-        goal_involvements: Number((item as PlayerReportEntry).goal_involvements ?? 0),
-        shots: Number((item as PlayerReportEntry).shots ?? 0),
-        effective_shots: Number((item as PlayerReportEntry).effective_shots ?? 0),
-        pass_success_rate: Number((item as PlayerReportEntry).pass_success_rate ?? 0),
-        tackle_success_rate: Number((item as PlayerReportEntry).tackle_success_rate ?? 0),
-        avg_rating: Number((item as PlayerReportEntry).avg_rating ?? 0),
-        impact_score: Number((item as PlayerReportEntry).impact_score ?? 0),
-      }))
+      .map(normalizePlayerEntry)
       .filter((item) => item.sp_id > 0 && item.appearances > 0);
   }, [playerReport?.players]);
   const topPlayerRows = useMemo(() => {
@@ -1468,32 +1546,17 @@ export function HabitLabWireframe() {
       return playerRows.slice(0, 11);
     }
     return raw
-      .map((item) => ({
-        sp_id: Number((item as PlayerReportEntry).sp_id ?? 0),
-        player_name: String((item as PlayerReportEntry).player_name ?? ""),
-        season_id: Number((item as PlayerReportEntry).season_id ?? 0),
-        season_name: String((item as PlayerReportEntry).season_name ?? "-"),
-        season_img: String((item as PlayerReportEntry).season_img ?? ""),
-        face_img: String((item as PlayerReportEntry).face_img ?? ""),
-        action_img: String((item as PlayerReportEntry).action_img ?? ""),
-        fallback_img: String((item as PlayerReportEntry).fallback_img ?? ""),
-        sp_position: Number((item as PlayerReportEntry).sp_position ?? -1),
-        position_name: String((item as PlayerReportEntry).position_name ?? "-"),
-        sp_grade: Number((item as PlayerReportEntry).sp_grade ?? 0),
-        appearances: Number((item as PlayerReportEntry).appearances ?? 0),
-        goals: Number((item as PlayerReportEntry).goals ?? 0),
-        assists: Number((item as PlayerReportEntry).assists ?? 0),
-        goal_involvements: Number((item as PlayerReportEntry).goal_involvements ?? 0),
-        shots: Number((item as PlayerReportEntry).shots ?? 0),
-        effective_shots: Number((item as PlayerReportEntry).effective_shots ?? 0),
-        pass_success_rate: Number((item as PlayerReportEntry).pass_success_rate ?? 0),
-        tackle_success_rate: Number((item as PlayerReportEntry).tackle_success_rate ?? 0),
-        avg_rating: Number((item as PlayerReportEntry).avg_rating ?? 0),
-        impact_score: Number((item as PlayerReportEntry).impact_score ?? 0),
-      }))
+      .map(normalizePlayerEntry)
       .filter((item) => item.sp_id > 0 && item.appearances > 0)
       .slice(0, 11);
   }, [playerReport?.top_players, playerRows]);
+  const impactExplainPlayers = useMemo(
+    () =>
+      [...playerRows]
+        .sort((left, right) => right.impact_score - left.impact_score)
+        .slice(0, Math.min(4, playerRows.length)),
+    [playerRows],
+  );
   const playerRowsForTable = useMemo(
     () =>
       [...playerRows].sort((left, right) => {
@@ -2354,6 +2417,47 @@ export function HabitLabWireframe() {
 
               <article className="panel">
                 <h4 className="section-title">선수 상세 성과표</h4>
+                <div className="impact-explain-grid">
+                  {impactExplainPlayers.map((player) => {
+                    const topComponents = (player.impact_components ?? []).slice(0, 3);
+                    return (
+                      <article key={`${player.sp_id}-${player.sp_grade}-impact`} className="impact-card">
+                        <div className="impact-card-head">
+                          <div className="impact-card-title">
+                            <strong>{player.player_name}</strong>
+                            <span>{player.position_name}</span>
+                          </div>
+                          <div className="impact-card-meta">
+                            <span className="impact-chip">{roleGroupLabel(String(player.role_group ?? "MID"))}</span>
+                            <span className="impact-chip score">영향 {formatFixed(player.impact_score, 2)}</span>
+                          </div>
+                        </div>
+                        {topComponents.length > 0 && (
+                          <div className="impact-component-list">
+                            {topComponents.map((component) => {
+                              const metricLabel = IMPACT_COMPONENT_LABELS[component.metric] ?? component.metric;
+                              const normalizedPercent = Math.round(Math.max(0, Math.min(1, component.normalized)) * 100);
+                              return (
+                                <div key={`${player.sp_id}-${component.metric}`} className="impact-component-row">
+                                  <div className="impact-component-top">
+                                    <strong>{metricLabel}</strong>
+                                    <span>{formatImpactRaw(component.metric, component.raw)}</span>
+                                  </div>
+                                  <div className="impact-component-sub">
+                                    정규화 {formatPercent(component.normalized)} · 가중치 {formatPercent(component.weight)}
+                                  </div>
+                                  <div className="impact-component-bar">
+                                    <div className="impact-component-fill" style={{ width: `${normalizedPercent}%` }} />
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
                 <div className="player-mobile-list">
                   {playerRowsForTable.map((player) => (
                     <article key={`${player.sp_id}-${player.sp_position}`} className="player-mobile-card">
