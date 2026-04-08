@@ -69,32 +69,21 @@ make init
 make init-db
 ```
 
-`.env` 예시:
+필수 `.env`:
 
 ```bash
 NEXON_OPEN_API_KEY=YOUR_NEXON_OPEN_API_KEY
-HABIT_LAB_AUTO_RANKER_SYNC=0
-HABIT_LAB_ENABLE_LIVE_MATCH_SYNC=0
-HABIT_LAB_MATCH_SYNC_COOLDOWN_SEC=60
-HABIT_LAB_MATCH_CACHE_TTL_SEC=1800
-HABIT_LAB_ENABLE_DEBUG_ENDPOINTS=0
-HABIT_LAB_ENABLE_ANALYTICS_SUMMARY=0
-HABIT_LAB_ANALYTICS_ADMIN_KEY=CHANGE_ME_LONG_RANDOM_STRING
-HABIT_LAB_SYNC_ADMIN_KEY=CHANGE_ME_LONG_RANDOM_STRING
-HABIT_LAB_CORS_ORIGINS=http://127.0.0.1:3000,http://localhost:3000,https://fcoach.fun,https://www.fcoach.fun
-HABIT_LAB_ALLOW_VERCEL_PREVIEW_ORIGIN=1
-HABIT_LAB_CORS_ORIGIN_REGEX=^https://.*\\.vercel\\.app$
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 ```
 
-실행:
+실행(로컬):
 
 ```bash
 make api
 cd apps/web && npm install && npm run dev
 ```
 
-## 7. 주요 API
+## 7. 주요 API (요약)
 
 - `GET /users/search?nickname=...`
 - `POST /analysis/run`
@@ -102,37 +91,12 @@ cd apps/web && npm install && npm run dev
 - `GET /actions/latest?ouid=...&match_type=52&window=30`
 - `POST /experiments`
 - `GET /experiments/evaluation?ouid=...&match_type=52`
-- `GET /rankers/latest?mode=1vs1&limit=20`
-- `POST /rankers/refresh` (`x-admin-key`, `HABIT_LAB_SYNC_ADMIN_KEY` 필요)
-- `POST /events/track`
-- `GET /events/summary?hours=24&limit=10` (`x-admin-key` 필요)
 
-## 8. 운영 체크리스트 (실서비스)
+## 8. 배포
 
-- [ ] `.env`와 API 키가 Git에 포함되지 않았는지 확인
-- [ ] `HABIT_LAB_ENABLE_DEBUG_ENDPOINTS=0` 유지
-- [ ] `HABIT_LAB_ENABLE_ANALYTICS_SUMMARY=0` 기본 유지
-- [ ] `events/summary`는 운영자 키(`HABIT_LAB_ANALYTICS_ADMIN_KEY`)로만 접근
-- [ ] `rankers/refresh`는 운영자 키(`HABIT_LAB_SYNC_ADMIN_KEY`)로만 접근
-- [ ] 랭커 동기화는 배치 실행(요청 경로에서 동기 실행 금지)
-- [ ] `HABIT_LAB_ENABLE_LIVE_MATCH_SYNC=0` 유지(실시간 동기 호출 최소화)
-- [ ] Open API 429 대응(캐시 TTL, 재시도 백오프, 쿨다운) 점검
-- [ ] 모바일(iOS Safari/Android Chrome) QA 수행
+- 배포 절차: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 
-## 9. 성능 관점
-
-- 현재 구조는 SQLite 단일 파일이므로 읽기 중심 트래픽에는 빠르지만, 동시 쓰기 증가 시 lock 대기가 생길 수 있습니다.
-- 액션/진단 조회 경로는 대부분 단순 집계와 스냅샷 조회로 구성되어 평균 시간복잡도는 입력 경기 수 `n` 기준 `O(n)`입니다.
-- 트래픽 증가 시 우선순위:
-  1. 동기화/크롤링을 비동기 배치로 분리
-  2. 캐시 계층 추가
-  3. Postgres 전환
-
-## 10. 배포
-
-배포 절차는 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)를 참고하세요.
-
-## 11. 라이선스 및 고지
+## 9. 라이선스 및 고지
 
 - 소스코드 라이선스: MIT ([LICENSE](LICENSE))
 - FC Online 관련 데이터/상표/이미지 권리는 각 권리자에게 있습니다.
