@@ -1419,7 +1419,7 @@ export function HabitLabWireframe() {
   const [screen, setScreen] = useState<ScreenKey>("search");
   const [matchType, setMatchType] = useState<MatchType>(60);
   const [windowSize, setWindowSize] = useState<WindowSize>(30);
-  const [nicknameInput, setNicknameInput] = useState("맹장축구");
+  const [nicknameInput, setNicknameInput] = useState("");
   const [resolvedUser, setResolvedUser] = useState<UserSearchResponse | null>(null);
   const [ouidInput, setOuidInput] = useState("");
   const [loading, setLoading] = useState(false);
