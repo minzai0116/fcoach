@@ -4,7 +4,7 @@ FC Online 경기 로그를 기반으로 개인 플레이를 진단하고, 전술
 
 - 서비스 URL: [https://fcoach.fun](https://fcoach.fun)
 - API URL: [https://fcoach-api.vercel.app](https://fcoach-api.vercel.app)
-- 저장소: [https://github.com/minzai0116/fcoach](https://github.com/minzai0116/fcoach)
+- GitHub: [https://github.com/minzai0116/fcoach](https://github.com/minzai0116/fcoach)
 
 ## 1. 프로젝트 목표
 
@@ -29,7 +29,7 @@ FCOACH는 아래 3단계 루프를 제품 중심으로 구현했습니다.
 
 - Web: Next.js 15, React 19, TypeScript
 - API: FastAPI, Pydantic
-- 저장소: SQLite (단일 파일)
+- DB: SQLite (단일 파일)
 - 데이터 소스: Nexon Open API, FC Online DataCenter(랭커)
 - 배포: Vercel(Web/API)
 
@@ -65,14 +65,21 @@ fcoach/
 ```bash
 git clone https://github.com/minzai0116/fcoach.git
 cd fcoach
+cp .env.example .env
+cp apps/web/.env.example apps/web/.env.local
 make init
 make init-db
 ```
 
-필수 `.env`:
+필수 설정:
 
 ```bash
 NEXON_OPEN_API_KEY=YOUR_NEXON_OPEN_API_KEY
+```
+
+`apps/web/.env.local`:
+
+```bash
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 ```
 
@@ -95,6 +102,10 @@ cd apps/web && npm install && npm run dev
 ## 8. 배포
 
 - 배포 절차: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+- 현재 공개 서비스는 `Vercel(Web/API)` 기준의 데모 배포입니다.
+- API가 serverless 환경에서 로컬 SQLite를 사용하면 스냅샷, 실험 기록, 이벤트 로그는 지속 저장되지 않습니다.
+- 장기 운영 기준에서는 관리형 DB 또는 persistent volume이 있는 환경으로 전환이 필요합니다.
+- 루트 `render.yaml`은 상태 저장형 Python API 배포 구성을 검토할 때 참고하는 초안입니다.
 
 ## 9. 라이선스 및 고지
 

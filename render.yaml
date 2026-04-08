@@ -1,3 +1,6 @@
+# Alternative reference for a stateful API deployment.
+# The current public service is documented around the Vercel path.
+# If this file is used, attach persistent storage or switch to an external DB.
 services:
   - type: web
     name: fcoach-api
