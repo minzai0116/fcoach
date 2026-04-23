@@ -154,6 +154,9 @@ def init_db() -> None:
     CREATE INDEX IF NOT EXISTS idx_matches_raw_ouid_type_date
       ON matches_raw (ouid, match_type, match_date DESC);
 
+    CREATE INDEX IF NOT EXISTS idx_matches_raw_ouid_type_match
+      ON matches_raw (ouid, match_type, match_id);
+
     CREATE INDEX IF NOT EXISTS idx_metrics_latest
       ON user_metrics_snapshot (ouid, match_type, window_size, created_at DESC);
 
@@ -180,6 +183,16 @@ def init_db() -> None:
     """
     with db_cursor() as cur:
         cur.executescript(schema)
+        cur.execute(
+            """
+            DELETE FROM matches_raw
+            WHERE id NOT IN (
+              SELECT MAX(id)
+              FROM matches_raw
+              GROUP BY ouid, match_type, match_id
+            )
+            """
+        )
 
 
 def upsert_matches(
@@ -188,26 +201,62 @@ def upsert_matches(
     rows: Iterable[dict[str, Any]],
 ) -> int:
     inserted = 0
+    seen_match_ids: set[str] = set()
     with db_cursor() as cur:
         for row in rows:
+            match_id = str(row.get("match_id", "")).strip()
+            if not match_id or match_id in seen_match_ids:
+                continue
+            seen_match_ids.add(match_id)
             payload_json = json.dumps(row["payload"], ensure_ascii=True)
             cur.execute(
                 """
-                INSERT OR IGNORE INTO matches_raw (
+                SELECT 1
+                FROM matches_raw
+                WHERE ouid = ? AND match_type = ? AND match_id = ?
+                LIMIT 1
+                """,
+                (ouid, match_type, match_id),
+            )
+            existed = cur.fetchone() is not None
+            cur.execute(
+                """
+                DELETE FROM matches_raw
+                WHERE ouid = ? AND match_type = ? AND match_id = ?
+                """,
+                (ouid, match_type, match_id),
+            )
+            cur.execute(
+                """
+                INSERT INTO matches_raw (
                     ouid, match_type, match_id, match_date, payload_json, payload_hash, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     ouid,
                     match_type,
-                    row["match_id"],
+                    match_id,
                     row.get("match_date"),
                     payload_json,
                     row["payload_hash"],
                     utc_now_iso(),
                 ),
             )
-            inserted += cur.rowcount
+            if not existed:
+                inserted += 1
+        cur.execute(
+            """
+            DELETE FROM matches_raw
+            WHERE ouid = ? AND match_type = ?
+              AND id NOT IN (
+                SELECT MAX(id)
+                FROM matches_raw
+                WHERE ouid = ? AND match_type = ?
+                GROUP BY match_id
+              )
+            """,
+            (ouid, match_type, ouid, match_type),
+        )
     return inserted
 
 

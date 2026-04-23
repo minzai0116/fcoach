@@ -18,6 +18,7 @@ from app.services.action_explainer import build_action_explanation
 from app.services.cache import CacheClient
 from app.services.openapi_client import NexonOpenApiClient, OpenApiRateLimitError
 from app.services.ranker_source import fetch_official_rankers, list_official_rankers
+from app.services.tactic_recommendation import get_issue_tactic_mapping
 
 
 BENCHMARKS = {
@@ -545,41 +546,7 @@ def _issue_scores(metrics: dict[str, float], benchmark: dict[str, float]) -> dic
 
 
 def _apply_tactic_delta(issue_code: str, current_tactic: dict[str, Any] | None) -> tuple[str, dict[str, Any]]:
-    mappings: dict[str, tuple[str, dict[str, Any]]] = {
-        "HIGH_LATE_CONCEDE": (
-            "Stabilize defensive block in late game",
-            {"defense_style_target": "후퇴", "defense_depth_delta": -1, "defense_width_delta": -1, "cdm_stay_back": True},
-        ),
-        "LOW_FINISHING": (
-            "Prioritize high-quality shots in box",
-            {"buildup_style_target": "밸런스", "box_players_delta": 1, "attack_width_delta": -1},
-        ),
-        "POOR_SHOT_SELECTION": (
-            "Reduce low-value shots and improve build-up patience",
-            {"buildup_style_target": "느린 빌드업", "box_players_delta": -1, "attack_width_delta": -1},
-        ),
-        "OFFSIDE_RISK": (
-            "Delay forward runs and reduce risky through balls",
-            {"attack_width_delta": -1, "quick_attack_off": ["박스 안 침투", "스트라이커 추가"]},
-        ),
-        "BUILDUP_INEFFICIENCY": (
-            "Improve passing stability before final third",
-            {"buildup_style_target": "밸런스", "attack_width_delta": -1, "box_players_delta": -1},
-        ),
-        "DEFENSE_DUEL_WEAKNESS": (
-            "Reinforce first defensive contact and line compactness",
-            {"defense_style_target": "밸런스", "defense_width_delta": -1, "defense_depth_delta": -1},
-        ),
-        "CHANCE_CREATION_LOW": (
-            "Increase chance volume with wider attack and more box entries",
-            {"buildup_style_target": "빠른 빌드업", "attack_width_delta": 1, "box_players_delta": 1},
-        ),
-        "POSSESSION_CONTROL_RISK": (
-            "Stabilize possession with safer circulation",
-            {"buildup_style_target": "느린 빌드업", "attack_width_delta": -1},
-        ),
-    }
-    direction, delta = mappings[issue_code]
+    direction, delta = get_issue_tactic_mapping(issue_code)
     if not current_tactic:
         return direction, delta
 
@@ -1943,10 +1910,16 @@ def list_match_stats(ouid: str, match_type: int) -> list[MatchStats]:
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT payload_json
-            FROM matches_raw
-            WHERE ouid = ? AND match_type = ?
-            ORDER BY match_date DESC, id DESC
+            SELECT mr.payload_json
+            FROM matches_raw mr
+            INNER JOIN (
+              SELECT match_id, MAX(id) AS latest_id
+              FROM matches_raw
+              WHERE ouid = ? AND match_type = ?
+              GROUP BY match_id
+            ) latest
+              ON latest.latest_id = mr.id
+            ORDER BY mr.match_date DESC, mr.id DESC
             """,
             (ouid, match_type),
         )
@@ -1966,8 +1939,12 @@ def _list_match_stats_from_cache(ouid: str, match_type: int) -> list[MatchStats]
     if not isinstance(payload, list):
         return []
     stats: list[MatchStats] = []
+    seen_match_ids: set[str] = set()
     for row in payload:
         if not isinstance(row, dict):
+            continue
+        match_id = str(row.get("match_id", "")).strip()
+        if match_id and match_id in seen_match_ids:
             continue
         raw_payload = row.get("payload")
         if not isinstance(raw_payload, dict):
@@ -1975,13 +1952,28 @@ def _list_match_stats_from_cache(ouid: str, match_type: int) -> list[MatchStats]
         parsed = _extract_user_match(raw_payload, ouid)
         if parsed is not None:
             stats.append(parsed)
+            if match_id:
+                seen_match_ids.add(match_id)
     return stats
 
 
 def _save_match_rows_to_cache(ouid: str, match_type: int, match_rows: list[dict[str, Any]]) -> None:
     if not match_rows:
         return
-    _MATCH_CACHE.set_json(_match_cache_key(ouid, match_type), match_rows[:120], ttl_sec=_match_cache_ttl_sec())
+    deduped: list[dict[str, Any]] = []
+    seen_match_ids: set[str] = set()
+    for row in match_rows:
+        if not isinstance(row, dict):
+            continue
+        match_id = str(row.get("match_id", "")).strip()
+        if match_id and match_id in seen_match_ids:
+            continue
+        if match_id:
+            seen_match_ids.add(match_id)
+        deduped.append(row)
+        if len(deduped) >= 120:
+            break
+    _MATCH_CACHE.set_json(_match_cache_key(ouid, match_type), deduped, ttl_sec=_match_cache_ttl_sec())
 
 
 def _latest_known_match_ids(ouid: str, match_type: int, limit: int) -> list[str]:
@@ -1993,7 +1985,8 @@ def _latest_known_match_ids(ouid: str, match_type: int, limit: int) -> list[str]
             SELECT match_id
             FROM matches_raw
             WHERE ouid = ? AND match_type = ?
-            ORDER BY match_date DESC, id DESC
+            GROUP BY match_id
+            ORDER BY MAX(match_date) DESC, MAX(id) DESC
             LIMIT ?
             """,
             (ouid, match_type, limit),
@@ -2493,6 +2486,63 @@ def create_experiment(payload: dict[str, Any]) -> dict[str, Any]:
     return {"experiment_id": run_id, "status": "created"}
 
 
+def get_latest_experiment(ouid: str, match_type: int) -> dict[str, Any] | None:
+    conn = connect()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT *
+            FROM experiment_runs
+            WHERE ouid = ? AND match_type = ?
+            ORDER BY started_at DESC
+            LIMIT 1
+            """,
+            (ouid, match_type),
+        )
+        run = cur.fetchone()
+        if run is None:
+            return None
+
+        cur.execute(
+            """
+            SELECT evaluated_at, delta_json
+            FROM experiment_eval
+            WHERE experiment_id = ?
+            ORDER BY evaluated_at DESC
+            LIMIT 1
+            """,
+            (run["id"],),
+        )
+        latest_eval = cur.fetchone()
+        latest_delta: dict[str, Any] | None = None
+        latest_evaluated_at: str | None = None
+        if latest_eval is not None:
+            latest_evaluated_at = str(latest_eval["evaluated_at"])
+            try:
+                parsed_delta = json.loads(str(latest_eval["delta_json"]))
+                latest_delta = parsed_delta if isinstance(parsed_delta, dict) else None
+            except Exception:
+                latest_delta = None
+
+        return {
+            "experiment_id": str(run["id"]),
+            "ouid": str(run["ouid"]),
+            "match_type": int(run["match_type"]),
+            "action_code": str(run["action_code"]),
+            "action_title": str(run["action_title"]),
+            "window_size": int(run["window_size"]),
+            "started_at": str(run["started_at"]),
+            "ended_at": str(run["ended_at"]) if run["ended_at"] else None,
+            "status": str(run["status"]),
+            "notes": str(run["notes"]) if run["notes"] else None,
+            "latest_evaluated_at": latest_evaluated_at,
+            "latest_delta": latest_delta,
+        }
+    finally:
+        conn.close()
+
+
 def evaluate_latest_experiment(ouid: str, match_type: int) -> dict[str, Any] | None:
     conn = connect()
     try:
@@ -2512,83 +2562,13 @@ def evaluate_latest_experiment(ouid: str, match_type: int) -> dict[str, Any] | N
             return None
         window_size = int(run["window_size"])
         started_at = str(run["started_at"])
-        live_sync_enabled = _is_truthy(os.getenv("HABIT_LAB_ENABLE_LIVE_MATCH_SYNC", "0"))
-        rows = list_match_stats(ouid, match_type)
-        if not rows:
-            rows = _list_match_stats_from_cache(ouid, match_type)
-        refreshed_match_rows = 0
-        refresh_warning: str | None = None
-        latest_before = rows[0].match_date if rows else None
-        latest_before_dt = _parse_iso_datetime(latest_before) if latest_before else None
-        should_refresh = not rows
-        if rows and latest_before_dt is not None:
-            should_refresh = datetime.now(timezone.utc) - latest_before_dt >= MATCH_REFRESH_THRESHOLD
-        if rows and latest_before_dt is None:
-            should_refresh = True
-        if len(rows) < max(window_size, 12):
-            should_refresh = True
-
-        if should_refresh and live_sync_enabled:
-            try:
-                api = NexonOpenApiClient(timeout_sec=15, retries=2)
-                sync_error: Exception | None = None
-                for fetch_limit in _sync_fetch_limits(window_size=window_size, has_cached_rows=bool(rows)):
-                    try:
-                        match_rows = api.collect_match_rows(ouid=ouid, match_type=match_type, limit=fetch_limit)
-                        if match_rows:
-                            refreshed_match_rows = upsert_matches(ouid=ouid, match_type=match_type, rows=match_rows)
-                            _save_match_rows_to_cache(ouid, match_type, match_rows)
-                            rows = list_match_stats(ouid, match_type)
-                            if not rows:
-                                rows = _list_match_stats_from_cache(ouid, match_type)
-                        sync_error = None
-                        break
-                    except requests.HTTPError as exc:
-                        sync_error = exc
-                        status_code = exc.response.status_code if exc.response is not None else None
-                        if status_code == 429:
-                            continue
-                        raise
-                if sync_error is not None:
-                    raise sync_error
-            except OpenApiRateLimitError as exc:
-                wait_seconds = int(round(exc.wait_seconds or 0))
-                refresh_warning = (
-                    f"Nexon Open API 호출 제한으로 최신 동기화에 실패했습니다. "
-                    f"{wait_seconds}초 후 다시 시도해주세요."
-                    if wait_seconds > 0
-                    else "Nexon Open API 호출 제한으로 최신 동기화에 실패했습니다. 잠시 후 다시 시도해주세요."
-                )
-                rows = list_match_stats(ouid, match_type)
-                if not rows:
-                    rows = _list_match_stats_from_cache(ouid, match_type)
-            except requests.HTTPError as exc:
-                status_code = exc.response.status_code if exc.response is not None else None
-                if status_code == 429:
-                    refresh_warning = "Nexon Open API 호출 제한(429)으로 최신 동기화에 실패했습니다. 잠시 후 재시도해주세요."
-                elif status_code is not None and status_code >= 500:
-                    refresh_warning = f"Nexon Open API 서버 응답 오류({status_code})로 최신 동기화에 실패했습니다."
-                elif status_code is not None:
-                    refresh_warning = f"Nexon Open API 요청 오류({status_code})로 최신 동기화에 실패했습니다."
-                else:
-                    refresh_warning = "Nexon Open API 통신 오류로 최신 동기화에 실패했습니다."
-                rows = list_match_stats(ouid, match_type)
-                if not rows:
-                    rows = _list_match_stats_from_cache(ouid, match_type)
-            except Exception as exc:
-                refresh_warning = (
-                    "최신 경기 동기화에 실패해 저장된 데이터로 평가했습니다."
-                    f" ({type(exc).__name__})"
-                )
-                rows = list_match_stats(ouid, match_type)
-                if not rows:
-                    rows = _list_match_stats_from_cache(ouid, match_type)
-        elif should_refresh and not rows:
-            refresh_warning = "저장된 경기 데이터가 없어 최신 동기화가 필요합니다. 잠시 후 다시 시도해주세요."
-        if not rows and refresh_warning:
-            refresh_warning = f"{refresh_warning} 해당 모드에서 저장된 경기 데이터가 없습니다."
-        if not rows and not refresh_warning:
-            refresh_warning = "해당 모드에서 조회 가능한 경기 데이터가 없습니다."
+        rows, refreshed_match_rows, refresh_warning, should_refresh = _load_rows_for_analysis(
+            ouid=ouid,
+            match_type=match_type,
+            window_size=window_size,
+            live_sync_enabled=True,
+            manual_refresh_probe=True,
+        )
 
         playable_controllers = {"keyboard", "gamepad"}
         playable_rows = [row for row in rows if row.controller.strip().lower() in playable_controllers]
@@ -2652,6 +2632,7 @@ def evaluate_latest_experiment(ouid: str, match_type: int) -> dict[str, Any] | N
             "sync_attempted": should_refresh,
             "sync_new_rows": refreshed_match_rows,
             "sync_warning": refresh_warning,
+            "latest_match_date": rows[0].match_date if rows else None,
             "pre": pre,
             "post": post,
             "delta": delta,

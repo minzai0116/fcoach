@@ -1269,6 +1269,35 @@ code {
   gap: 18px;
 }
 
+.tracking-insight-list {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 12px;
+}
+
+.tracking-insight-item {
+  border: 1px solid #d8e1ee;
+  background: #f8fbff;
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.tracking-insight-item.good {
+  border-color: #a7e3bc;
+  background: #effcf4;
+}
+
+.tracking-insight-item.bad {
+  border-color: #f3c2c2;
+  background: #fff5f5;
+}
+
+.tracking-insight-item.neutral {
+  border-color: #d8e1ee;
+  background: #f8fbff;
+}
+
 .guide-card {
   border: 1px solid #d7e2f3;
   background: #f8fbff;
@@ -1445,7 +1474,8 @@ code {
   .action-grid,
   .coach-focus-grid,
   .player-chip-list,
-  .guide-tips {
+  .guide-tips,
+  .tracking-insight-list {
     grid-template-columns: 1fr;
   }
 

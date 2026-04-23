@@ -23,6 +23,7 @@ from app.models import AnalysisRunRequest, EventTrackRequest, ExperimentCreateRe
 from app.services.analysis import (
     create_experiment,
     evaluate_latest_experiment,
+    get_latest_experiment,
     get_latest_actions,
     get_latest_analysis,
     run_analysis,
@@ -413,6 +414,17 @@ def actions_latest(
 @app.post("/experiments")
 def experiments_create(req: ExperimentCreateRequest) -> dict[str, Any]:
     return create_experiment(req.model_dump())
+
+
+@app.get("/experiments/latest")
+def experiments_latest(
+    ouid: str,
+    match_type: int = Query(..., ge=1),
+) -> dict[str, Any]:
+    payload = get_latest_experiment(ouid=ouid, match_type=match_type)
+    if payload is None:
+        return {"exists": False}
+    return {"exists": True, **payload}
 
 
 @app.get("/experiments/evaluation")

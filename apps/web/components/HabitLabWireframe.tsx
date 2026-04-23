@@ -2,6 +2,22 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { FCoachLogo } from "./FCoachLogo";
+import {
+  actionGuide,
+  fallbackPlanB,
+  oneLinePrescription,
+  tacticAdjustmentLines,
+  type CurrentTactic,
+} from "../lib/actionPlan";
+import { buildTrackingCoachInsight } from "../lib/trackingCoach";
+import {
+  DEFENSE_STYLE_OPTIONS,
+  FC_TACTIC_VALUES,
+  SET_PIECE_OPTIONS,
+  setPieceLabel,
+  tacticBandLabel,
+  TACTIC_STYLE_OPTIONS,
+} from "../lib/tactic";
 
 type ScreenKey = "search" | "diagnosis" | "players" | "habits" | "actions" | "rankers" | "tracking" | "guide";
 type MatchType = 50 | 60 | 52;
@@ -213,6 +229,22 @@ type EvaluationPayload = {
   evaluated_at: string;
 };
 
+type ExperimentPreview = {
+  experiment_id: string;
+  ouid: string;
+  match_type: number;
+  action_code: string;
+  action_title: string;
+  window_size: number;
+  started_at: string;
+  ended_at?: string | null;
+  status: string;
+  notes?: string | null;
+  latest_evaluated_at?: string | null;
+  latest_delta?: MetricMap | null;
+};
+type ExperimentPreviewPayload = { exists: false } | ({ exists: true } & ExperimentPreview);
+
 type SimilarRanker = {
   ranker_proxy_rank: number;
   ouid: string;
@@ -331,11 +363,6 @@ const BENCHMARK_SOURCE_LABEL: Record<string, string> = {
   top_cohort_v1: "수집 데이터 상위권 코호트",
 };
 
-const FC_TACTIC_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-
-const SET_PIECE_OPTIONS = [1, 2, 3, 4, 5];
-const DEFENSE_STYLE_OPTIONS = ["후퇴", "밸런스", "볼터치 실수시 압박", "공 뺏긴 직후 압박", "지속적인 압박"];
-const BUILDUP_STYLE_OPTIONS = ["느린 빌드업", "밸런스", "긴 패스", "빠른 빌드업"];
 const DISTINCT_ID_KEY = "fcoach_distinct_id";
 const SESSION_ID_KEY = "fcoach_session_id";
 
@@ -586,37 +613,6 @@ function similarRankerSourceLabel(source: string): string {
 
 function toModelScale(fcValue: number): number {
   return Math.max(1, Math.min(10, Math.round(fcValue)));
-}
-
-function toFcScale(modelValue: number): number {
-  return Math.max(1, Math.min(10, Math.round(modelValue)));
-}
-
-function tacticBandLabel(value: number, field: "defenseWidth" | "defenseDepth" | "attackWidth" | "boxPlayers"): string {
-  if (field === "defenseWidth") {
-    if (value <= 3) return "중앙 압축형";
-    if (value <= 7) return "균형";
-    return "측면 커버형";
-  }
-  if (field === "defenseDepth") {
-    if (value <= 3) return "깊은 라인";
-    if (value <= 7) return "균형";
-    return "높은 라인";
-  }
-  if (field === "attackWidth") {
-    if (value <= 3) return "중앙 연계형";
-    if (value <= 7) return "균형";
-    return "측면 확장형";
-  }
-  if (value <= 3) return "역습 대비형";
-  if (value <= 7) return "균형";
-  return "박스 침투형";
-}
-
-function setPieceLabel(value: number): string {
-  if (value <= 2) return "수비적";
-  if (value === 3) return "균형";
-  return "공격적";
 }
 
 function compareText(gapValue: number, higherIsBetter: boolean): string {
@@ -1005,12 +1001,6 @@ function buildVisualMetricItems(metrics: MetricMap, benchmark: MetricMap | undef
   ];
 }
 
-type ActionGuide = {
-  why: string;
-  doNow: string;
-  verify: string;
-};
-
 type MetricGapEntry = {
   metric_name: string;
   metric_label: string;
@@ -1040,13 +1030,6 @@ type CoachKpiTarget = {
   similarText?: string;
   reasonText: string;
   formulaText: string;
-};
-
-type CurrentTactic = {
-  defenseWidth: number;
-  defenseDepth: number;
-  attackWidth: number;
-  boxPlayers: number;
 };
 
 const ACTION_TARGET_METRICS: Record<string, string[]> = {
@@ -1228,181 +1211,6 @@ function buildCoachTargets(
   });
 }
 
-function oneLinePrescription(actionCode: string, adjustments: string[], tacticInputKnown: boolean): string {
-  const mainAdjustment = adjustments.find((line) => line !== "권장 전술 변경 없음") ?? "현재 전술 유지";
-  const issueLabel = ISSUE_LABELS[actionCode] ?? actionCode;
-  if (!tacticInputKnown) {
-    return `${mainAdjustment} 방향을 5경기 테스트해 ${issueLabel} 개선 추세를 먼저 확인하세요.`;
-  }
-  return `${mainAdjustment}를 5경기 고정 적용해 ${issueLabel}를 우선 교정하세요.`;
-}
-
-function fallbackPlanB(actionCode: string, tacticInputKnown: boolean): string[] {
-  if (actionCode === "CHANCE_CREATION_LOW") {
-    return [
-      "2경기 연속 xG 개선이 없으면 공격 폭을 추가 +1 조정",
-      tacticInputKnown
-        ? "여전히 정체면 다음 3경기는 빌드업 스타일을 밸런스로 고정"
-        : "여전히 정체면 다음 3경기는 빌드업 스타일 후보(밸런스/느린 빌드업) 중 1개를 테스트",
-    ];
-  }
-  if (actionCode === "LOW_FINISHING") {
-    return [
-      "2경기 연속 득점률 정체 시 박스 안 쪽 선수 값을 1단계 더 상향",
-      "중거리 비중 과다 시 다음 경기부터 공격 폭을 1단계 하향",
-    ];
-  }
-  if (actionCode === "OFFSIDE_RISK") {
-    return [
-      "2경기 평균 오프사이드 0.7 이상이면 공격 폭을 추가 -1 조정",
-      "찬스 급감 시 스루패스 비중만 복원하고 전술 수치는 유지",
-    ];
-  }
-  if (actionCode === "HIGH_LATE_CONCEDE") {
-    return [
-      "2경기 연속 후반 실점 발생 시 수비 깊이 추가 -1 조정",
-      "역습 실점 반복이면 풀백 오버랩 빈도를 다음 경기에서 제한",
-    ];
-  }
-  return [
-    "2경기 연속 목표 미달이면 동일 이슈 액션을 1단계 강화",
-    "연패가 이어지면 다음 경기 시작 전 액션 #2로 전환",
-  ];
-}
-
-function actionGuide(
-  actionCode: string,
-  gapValue: number,
-  tacticDelta: Record<string, unknown>,
-  tacticInputKnown: boolean,
-): ActionGuide {
-  if (actionCode === "HIGH_LATE_CONCEDE") {
-    const target = typeof tacticDelta.defense_depth_target === "number" ? toFcScale(Number(tacticDelta.defense_depth_target)) : null;
-    return {
-      why: `후반 실점 비율이 기준 대비 ${gapValue >= 0 ? "+" : ""}${formatFixed(gapValue, 3)} 차이입니다.`,
-      doNow: tacticInputKnown
-        ? `수비 스타일을 보수적으로 두고(후퇴/밸런스), 수비 깊이를 1단계 낮춰 목표 ${target ?? "권장값"}로 5경기 고정하세요.`
-        : `수비 스타일을 보수적으로 두고(후퇴/밸런스), 수비 깊이 -1 방향을 5경기 테스트하세요.`,
-      verify: "다음 5경기 후 후반 실점 비율이 최소 0.10 이상 내려가면 유지, 아니면 수비 폭을 1단계 추가 하향하세요.",
-    };
-  }
-  if (actionCode === "LOW_FINISHING") {
-    return {
-      why: `유효슈팅 대비 득점률이 기준보다 ${gapValue >= 0 ? "+" : ""}${formatFixed(gapValue, 3)} 차이입니다.`,
-      doNow: "박스 안 쪽 선수 수치를 1단계 올리고, 공격 폭은 1단계 줄여 마무리 위치를 더 안쪽으로 유도하세요.",
-      verify: "5경기 뒤 유효슈팅 대비 득점률이 기준치에 근접하면 유지합니다.",
-    };
-  }
-  if (actionCode === "POOR_SHOT_SELECTION") {
-    return {
-      why: `박스 안 슈팅 비중이 기준 대비 ${gapValue >= 0 ? "+" : ""}${formatFixed(gapValue, 3)}입니다.`,
-      doNow: "빌드업 스타일을 느린 빌드업/밸런스로 변경하고, 박스 안 쪽 선수·공격 폭을 각 1단계 낮춰 무리한 슛을 줄이세요.",
-      verify: "5경기 뒤 박스 안 슈팅 비중과 유효슈팅 비율이 함께 상승하면 유지합니다.",
-    };
-  }
-  if (actionCode === "OFFSIDE_RISK") {
-    return {
-      why: `오프사이드 평균이 기준 대비 ${gapValue >= 0 ? "+" : ""}${formatFixed(gapValue, 3)}입니다.`,
-      doNow: "공격 폭을 1단계 줄이고, 빠른 공격 전술(박스 안 침투/스트라이커 추가)은 필요 시점에만 사용하세요.",
-      verify: "5경기 뒤 오프사이드 평균이 0.3 이상 감소하면 성공입니다.",
-    };
-  }
-  if (actionCode === "BUILDUP_INEFFICIENCY") {
-    return {
-      why: `빌드업 핵심 지표가 기준 대비 ${gapValue >= 0 ? "+" : ""}${formatFixed(gapValue, 3)}입니다.`,
-      doNow: "빌드업 스타일을 밸런스로 두고 공격 폭/박스 침투 수치를 1단계 낮춰 연결 안정성을 먼저 확보하세요.",
-      verify: "5경기 뒤 패스·스루패스 성공률이 동시에 상승하면 유지합니다.",
-    };
-  }
-  if (actionCode === "DEFENSE_DUEL_WEAKNESS") {
-    return {
-      why: `수비 경합 지표가 기준 대비 ${gapValue >= 0 ? "+" : ""}${formatFixed(gapValue, 3)}입니다.`,
-      doNow: "수비 폭과 수비 깊이를 1단계 낮춰 라인 간격을 줄이고, 1차 저지 안정화를 우선 적용하세요.",
-      verify: "5경기 뒤 경기당 실점과 태클 성공률이 동시에 개선되면 유지합니다.",
-    };
-  }
-  if (actionCode === "CHANCE_CREATION_LOW") {
-    return {
-      why: `찬스 생성 지표가 기준 대비 ${gapValue >= 0 ? "+" : ""}${formatFixed(gapValue, 3)}입니다.`,
-      doNow: "공격 폭과 박스 안 쪽 선수 수치를 각각 1단계 올려 슈팅 볼륨을 확보하세요.",
-      verify: "5경기 뒤 경기당 xG 또는 슈팅수가 유의미하게 증가하면 유지합니다.",
-    };
-  }
-  if (actionCode === "POSSESSION_CONTROL_RISK") {
-    return {
-      why: `점유 안정 지표가 기준 대비 ${gapValue >= 0 ? "+" : ""}${formatFixed(gapValue, 3)}입니다.`,
-      doNow: "빌드업을 느린 빌드업/밸런스로 설정하고 공격 폭을 1단계 줄여 볼 순환 안정성을 확보하세요.",
-      verify: "5경기 뒤 점유율과 패스 성공률이 동시에 개선되면 유지합니다.",
-    };
-  }
-  return {
-    why: "고우선순위 이슈가 없어 현재 전술을 유지해도 됩니다.",
-    doNow: "현재 세팅을 유지하고, 데이터가 쌓이면 다시 분석하세요.",
-    verify: "5경기 뒤 승률/실점이 악화되면 그때 액션 플랜을 다시 적용합니다.",
-  };
-}
-
-function tacticAdjustmentLines(tacticDelta: Record<string, unknown>, current: CurrentTactic | null): string[] {
-  const base = current ?? { defenseWidth: 0, defenseDepth: 0, attackWidth: 0, boxPlayers: 0 };
-  const lines: string[] = [];
-  if (typeof tacticDelta.defense_style_target === "string") {
-    lines.push(`수비 스타일: ${String(tacticDelta.defense_style_target)}`);
-  }
-  if (typeof tacticDelta.buildup_style_target === "string") {
-    lines.push(`빌드업 스타일: ${String(tacticDelta.buildup_style_target)}`);
-  }
-  if (typeof tacticDelta.defense_width_delta === "number") {
-    if (typeof tacticDelta.defense_width_target === "number") {
-      const target = toFcScale(Number(tacticDelta.defense_width_target));
-      lines.push(current ? `수비 폭 ${base.defenseWidth} → ${target}` : `수비 폭 목표: ${target}`);
-    } else if (current) {
-      lines.push(`수비 폭 ${base.defenseWidth} → ${toFcScale(base.defenseWidth + Number(tacticDelta.defense_width_delta))}`);
-    } else {
-      lines.push(`수비 폭 변화: ${Number(tacticDelta.defense_width_delta) > 0 ? "+" : ""}${Number(tacticDelta.defense_width_delta)}`);
-    }
-  }
-  if (typeof tacticDelta.defense_depth_delta === "number") {
-    if (typeof tacticDelta.defense_depth_target === "number") {
-      const target = toFcScale(Number(tacticDelta.defense_depth_target));
-      lines.push(current ? `수비 깊이 ${base.defenseDepth} → ${target}` : `수비 깊이 목표: ${target}`);
-    } else if (current) {
-      lines.push(`수비 깊이 ${base.defenseDepth} → ${toFcScale(base.defenseDepth + Number(tacticDelta.defense_depth_delta))}`);
-    } else {
-      lines.push(`수비 깊이 변화: ${Number(tacticDelta.defense_depth_delta) > 0 ? "+" : ""}${Number(tacticDelta.defense_depth_delta)}`);
-    }
-  }
-  if (typeof tacticDelta.attack_width_delta === "number") {
-    if (typeof tacticDelta.attack_width_target === "number") {
-      const target = toFcScale(Number(tacticDelta.attack_width_target));
-      lines.push(current ? `공격 폭 ${base.attackWidth} → ${target}` : `공격 폭 목표: ${target}`);
-    } else if (current) {
-      lines.push(`공격 폭 ${base.attackWidth} → ${toFcScale(base.attackWidth + Number(tacticDelta.attack_width_delta))}`);
-    } else {
-      lines.push(`공격 폭 변화: ${Number(tacticDelta.attack_width_delta) > 0 ? "+" : ""}${Number(tacticDelta.attack_width_delta)}`);
-    }
-  }
-  if (typeof tacticDelta.box_players_delta === "number") {
-    if (typeof tacticDelta.box_players_target === "number") {
-      const target = toFcScale(Number(tacticDelta.box_players_target));
-      lines.push(current ? `박스 안 쪽 선수 ${base.boxPlayers} → ${target}` : `박스 안 쪽 선수 목표: ${target}`);
-    } else if (current) {
-      lines.push(`박스 안 쪽 선수 ${base.boxPlayers} → ${toFcScale(base.boxPlayers + Number(tacticDelta.box_players_delta))}`);
-    } else {
-      lines.push(`박스 안 쪽 선수 변화: ${Number(tacticDelta.box_players_delta) > 0 ? "+" : ""}${Number(tacticDelta.box_players_delta)}`);
-    }
-  }
-  if (Array.isArray(tacticDelta.quick_attack_off) && tacticDelta.quick_attack_off.length > 0) {
-    lines.push(`빠른 공격 전술 해제 권장: ${tacticDelta.quick_attack_off.join(", ")}`);
-  }
-  if (typeof tacticDelta.cdm_stay_back === "boolean") {
-    lines.push(`CDM 후방대기 ${tacticDelta.cdm_stay_back ? "켜기" : "끄기"}`);
-  }
-  if (lines.length === 0) {
-    lines.push("권장 전술 변경 없음");
-  }
-  return lines;
-}
-
 function normalizeErrorMessage(error: unknown, fallbackMessage: string): string {
   if (!(error instanceof Error)) return fallbackMessage;
   const message = error.message.trim();
@@ -1429,11 +1237,14 @@ export function HabitLabWireframe() {
   const [analysis, setAnalysis] = useState<AnalysisPayload | null>(null);
   const [actions, setActions] = useState<ActionCard[]>([]);
   const [evaluation, setEvaluation] = useState<EvaluationPayload | null>(null);
+  const [experimentPreview, setExperimentPreview] = useState<ExperimentPreview | null>(null);
+  const [experimentPreviewLoading, setExperimentPreviewLoading] = useState(false);
   const [officialRankers, setOfficialRankers] = useState<OfficialRanker[]>([]);
   const [rankerMeta, setRankerMeta] = useState<{ mode: string; count: number; mapped: number } | null>(null);
 
   const [defenseStyle, setDefenseStyle] = useState("밸런스");
-  const [buildupStyle, setBuildupStyle] = useState("밸런스");
+  const [buildupPlayStyle, setBuildupPlayStyle] = useState("밸런스");
+  const [chanceCreationStyle, setChanceCreationStyle] = useState("밸런스");
   const [defenseWidth, setDefenseWidth] = useState(5);
   const [defenseDepth, setDefenseDepth] = useState(6);
   const [attackWidth, setAttackWidth] = useState(5);
@@ -1497,6 +1308,20 @@ export function HabitLabWireframe() {
     () => Object.entries(issues).sort((left, right) => right[1] - left[1]),
     [issues],
   );
+  const trackingCoach = useMemo(
+    () =>
+      buildTrackingCoachInsight({
+        evaluation,
+        experimentActionCode: experimentPreview?.action_code ?? actions[0]?.actionCode ?? null,
+        actions: actions.map((action) => ({
+          rank: action.rank,
+          actionCode: action.actionCode,
+          title: action.title,
+        })),
+        issueLabelMap: ISSUE_LABELS,
+      }),
+    [actions, evaluation, experimentPreview?.action_code],
+  );
   const visualMetricItems = useMemo(() => buildVisualMetricItems(metrics, analysis?.benchmark), [analysis?.benchmark, metrics]);
   const shotMap = useMemo(() => {
     const raw = analysis?.visuals?.shot_map;
@@ -1527,10 +1352,25 @@ export function HabitLabWireframe() {
     () => (Array.isArray(analysis?.visuals?.goal_type_for) ? analysis?.visuals?.goal_type_for : []),
     [analysis?.visuals],
   );
-  const recentMatches = useMemo(
-    () => (Array.isArray(analysis?.recent_matches) ? analysis?.recent_matches : [] as RecentMatchSummary[]),
-    [analysis?.recent_matches],
-  );
+  const recentMatches = useMemo(() => {
+    const raw = Array.isArray(analysis?.recent_matches) ? analysis.recent_matches : ([] as RecentMatchSummary[]);
+    const seen = new Set<string>();
+    const deduped: RecentMatchSummary[] = [];
+    for (const match of raw) {
+      if (!match) continue;
+      const key = [
+        String(match.match_date ?? "").trim(),
+        String(match.opponent_nickname ?? "").trim(),
+        String(match.result ?? "").trim(),
+        String(match.score_for ?? ""),
+        String(match.score_against ?? ""),
+      ].join("|");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(match);
+    }
+    return deduped;
+  }, [analysis?.recent_matches]);
   const goalTypeNote = String(analysis?.visuals?.goal_type_note ?? "");
   const playerReport = analysis?.visuals?.player_report;
   const playerRows = useMemo(() => {
@@ -1612,9 +1452,9 @@ export function HabitLabWireframe() {
     }
     if (actions.length > 0) completed.add("actions");
     if (officialRankers.length > 0 || similarRankersForView.length > 0) completed.add("rankers");
-    if (evaluation) completed.add("tracking");
+    if (evaluation || experimentPreview) completed.add("tracking");
     return completed;
-  }, [actions.length, analysis, evaluation, officialRankers.length, ouidInput, playerRows.length, similarRankersForView.length]);
+  }, [actions.length, analysis, evaluation, experimentPreview, officialRankers.length, ouidInput, playerRows.length, similarRankersForView.length]);
 
   useEffect(() => {
     trackEvent("page_view", {
@@ -1644,11 +1484,45 @@ export function HabitLabWireframe() {
     }
   }
 
+  async function loadLatestExperimentPreview(targetOuid: string, targetMatchType: number): Promise<ExperimentPreview | null> {
+    const safeOuid = targetOuid.trim();
+    if (safeOuid.length < 8) {
+      setExperimentPreview(null);
+      return null;
+    }
+    setExperimentPreviewLoading(true);
+    try {
+      const payload = await requestApi<ExperimentPreviewPayload>(
+        `/experiments/latest?ouid=${encodeURIComponent(safeOuid)}&match_type=${targetMatchType}`,
+      );
+      if (payload.exists) {
+        setExperimentPreview(payload);
+        return payload;
+      }
+      setExperimentPreview(null);
+      return null;
+    } catch {
+      setExperimentPreview(null);
+      return null;
+    } finally {
+      setExperimentPreviewLoading(false);
+    }
+  }
+
   useEffect(() => {
     if (screen === "rankers" && officialRankers.length === 0) {
       void loadOfficialRankers(30, true);
     }
   }, [officialRankers.length, screen]);
+
+  useEffect(() => {
+    if (screen !== "tracking") return;
+    if (ouidInput.trim().length < 8) {
+      setExperimentPreview(null);
+      return;
+    }
+    void loadLatestExperimentPreview(ouidInput, matchType);
+  }, [screen, ouidInput, matchType]);
 
   async function resolveOuidFromNickname(): Promise<string> {
     const targetNickname = nicknameInput.trim();
@@ -1685,7 +1559,9 @@ export function HabitLabWireframe() {
       const targetOuid = await resolveOuidFromNickname();
       const currentTacticPayload = {
         defense_style: defenseStyle,
-        buildup_style: buildupStyle,
+        buildup_play_style: buildupPlayStyle,
+        chance_creation_style: chanceCreationStyle,
+        buildup_style: buildupPlayStyle,
         defense_width: toModelScale(Number(defenseWidth)),
         defense_depth: toModelScale(Number(defenseDepth)),
         attack_width: toModelScale(Number(attackWidth)),
@@ -1712,10 +1588,13 @@ export function HabitLabWireframe() {
         defenseDepth: Number(defenseDepth),
         attackWidth: Number(attackWidth),
         boxPlayers: Number(boxPlayers),
+        buildupPlayStyle,
+        chanceCreationStyle,
       });
       void loadOfficialRankers(30, true);
       setNotice(syncNoticeText(payload, "분석이 완료되었습니다."));
       setScreen("diagnosis");
+      void loadLatestExperimentPreview(targetOuid, matchType);
       trackEvent("run_analysis", {
         screen: "search",
         matchType,
@@ -1772,6 +1651,7 @@ export function HabitLabWireframe() {
       void loadOfficialRankers(30, true);
       setNotice(syncNoticeText(payload, "완료: 진단 실행"));
       setScreen("diagnosis");
+      void loadLatestExperimentPreview(targetOuid, matchType);
       trackEvent("run_analysis", {
         screen: "search",
         matchType,
@@ -1804,6 +1684,7 @@ export function HabitLabWireframe() {
       return;
     }
 
+    const experimentWindow = analysisWindowSize;
     setLoading(true);
     setError("");
     setNotice("");
@@ -1815,16 +1696,17 @@ export function HabitLabWireframe() {
           match_type: matchType,
           action_code: action.actionCode,
           action_title: action.title,
-          window_size: windowSize,
+          window_size: experimentWindow,
           notes: "웹 대시보드에서 채택",
         }),
       });
-      setNotice(`실험 생성 완료: ${payload.experiment_id}`);
+      setNotice(`실험 생성 완료: ${payload.experiment_id} (기준 ${experimentWindow}경기)`);
       setScreen("tracking");
+      void loadLatestExperimentPreview(targetOuid, matchType);
       trackEvent("adopt_action", {
         screen: "actions",
         matchType,
-        windowSize,
+        windowSize: experimentWindow,
         ouid: targetOuid,
         properties: {
           action_code: action.actionCode,
@@ -1856,9 +1738,16 @@ export function HabitLabWireframe() {
     setError("");
     setNotice("");
     try {
+      const latestExperiment = await loadLatestExperimentPreview(targetOuid, matchType);
+      if (!latestExperiment) {
+        setEvaluation(null);
+        setNotice("아직 시작된 실험이 없습니다. 액션 플랜에서 먼저 실험을 시작해주세요.");
+        return;
+      }
       const payload = await requestApi<EvaluationPayload>(`/experiments/evaluation?ouid=${targetOuid}&match_type=${matchType}`);
       setEvaluation(payload);
       setNotice("실험 평가를 갱신했습니다.");
+      void loadLatestExperimentPreview(targetOuid, matchType);
       trackEvent("view_evaluation", {
         screen: "tracking",
         matchType,
@@ -1993,7 +1882,7 @@ export function HabitLabWireframe() {
           {showAdvancedTactic && (
             <>
               <div className="notice ok">
-                공식 노트 기준 핵심 팀전술 입력입니다. 수비/공격 폭·깊이·박스 안 쪽 선수는 1~10, 코너/프리킥은 1~5를 사용합니다.
+                공식 노트 기준 팀전술 입력입니다. 수비/공격 폭·깊이·박스 안 쪽 선수는 1~10, 코너/프리킥은 1~5이며 수치가 높을수록 페널티 박스 공격 가담이 커집니다.
               </div>
               <div className="grid grid-2">
                 <div className="field-card">
@@ -2007,9 +1896,19 @@ export function HabitLabWireframe() {
                   </select>
                 </div>
                 <div className="field-card">
-                  <label>빌드업 스타일</label>
-                  <select value={buildupStyle} onChange={(event) => setBuildupStyle(event.target.value)}>
-                    {BUILDUP_STYLE_OPTIONS.map((option) => (
+                  <label>빌드업 플레이</label>
+                  <select value={buildupPlayStyle} onChange={(event) => setBuildupPlayStyle(event.target.value)}>
+                    {TACTIC_STYLE_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field-card">
+                  <label>기회 만들기</label>
+                  <select value={chanceCreationStyle} onChange={(event) => setChanceCreationStyle(event.target.value)}>
+                    {TACTIC_STYLE_OPTIONS.map((option) => (
                       <option key={option} value={option}>
                         {option}
                       </option>
@@ -2057,7 +1956,7 @@ export function HabitLabWireframe() {
                   </select>
                 </div>
                 <div className="field-card">
-                  <label>코너킥 참여 인원 (1~5)</label>
+                  <label>코너킥 공격 가담 성향 (1~5)</label>
                   <select value={String(cornerKick)} onChange={(event) => setCornerKick(Number(event.target.value))}>
                     {SET_PIECE_OPTIONS.map((value) => (
                       <option key={value} value={value}>
@@ -2067,7 +1966,7 @@ export function HabitLabWireframe() {
                   </select>
                 </div>
                 <div className="field-card">
-                  <label>프리킥 참여 인원 (1~5)</label>
+                  <label>프리킥 공격 가담 성향 (1~5)</label>
                   <select value={String(freeKick)} onChange={(event) => setFreeKick(Number(event.target.value))}>
                     {SET_PIECE_OPTIONS.map((value) => (
                       <option key={value} value={value}>
@@ -2298,7 +2197,13 @@ export function HabitLabWireframe() {
                 <>
                   <div className="guide-card">
                     <div className="guide-title">이번 주 핵심 교정 1개</div>
-                    <p>{oneLinePrescription(actions[0].actionCode, tacticAdjustmentLines(actions[0].tacticDelta, appliedTactic), tacticInputKnown)}</p>
+                    <p>
+                      {oneLinePrescription(
+                        ISSUE_LABELS[actions[0].actionCode] ?? actions[0].actionCode,
+                        tacticAdjustmentLines(actions[0].tacticDelta, appliedTactic),
+                        tacticInputKnown,
+                      )}
+                    </p>
                   </div>
                   <div className="guide-card">
                     <div className="guide-title">바로 다음 단계</div>
@@ -2614,7 +2519,11 @@ export function HabitLabWireframe() {
             const guide = actionGuide(action.actionCode, gapValue, action.tacticDelta, tacticInputKnown);
             const coachExplanation = getCoachExplanation(action.evidence);
             const safeAdjustments = tacticAdjustmentLines(action.tacticDelta, appliedTactic);
-            const focusPrescription = oneLinePrescription(action.actionCode, safeAdjustments, tacticInputKnown);
+            const focusPrescription = oneLinePrescription(
+              ISSUE_LABELS[action.actionCode] ?? action.actionCode,
+              safeAdjustments,
+              tacticInputKnown,
+            );
             const kpiTargets = buildCoachTargets(action.actionCode, metricGapTable, benchmarkCompare, similarRankers);
             const planBItems = fallbackPlanB(action.actionCode, tacticInputKnown);
             const isPrimaryAction = action.rank === 1;
@@ -2796,12 +2705,24 @@ export function HabitLabWireframe() {
 
       {screen === "tracking" && (
         <section className="grid grid-2">
-          <article className="panel">
+          <article className="panel span-2">
             <h3 className="section-title">평가 실행</h3>
             <p className="muted">최근 채택한 액션 실험의 전/후 지표를 계산합니다.</p>
             <p className="muted compact">
-              실험 시작 시각 기준으로 PRE/POST를 자동 분리합니다. 실험 시작 기록은 SQLite에 저장되므로 새로고침/재접속 후에도 유지됩니다.
+              실험 시작 시각 기준으로 PRE/POST를 자동 분리합니다. 새로고침/재접속 후에도 현재 실험 상태를 그대로 확인할 수 있습니다.
             </p>
+            <div className="notice ok">
+              {experimentPreviewLoading && "실험 상태를 확인 중입니다..."}
+              {!experimentPreviewLoading && !experimentPreview && "시작된 실험이 없습니다. 액션 플랜에서 먼저 실험 시작을 눌러주세요."}
+              {!experimentPreviewLoading && experimentPreview && (
+                <>
+                  <strong>진행 중 실험</strong>: {experimentPreview.action_title} (
+                  {ISSUE_LABELS[experimentPreview.action_code] ?? experimentPreview.action_code}) · 시작{" "}
+                  {formatDate(experimentPreview.started_at)} · 기준 {experimentPreview.window_size}경기 · 상태 {experimentPreview.status}
+                  {experimentPreview.latest_evaluated_at ? ` · 최근 평가 ${formatDate(experimentPreview.latest_evaluated_at)}` : " · 아직 평가 기록 없음"}
+                </>
+              )}
+            </div>
             <button className="btn" onClick={onEvaluateExperiment} disabled={loading}>
               {loading ? "평가 중..." : "최신 실험 평가 갱신"}
             </button>
@@ -2809,27 +2730,65 @@ export function HabitLabWireframe() {
             {evaluation && (
               <p className="muted">
                 비교 표본: PRE {Number(evaluation.pre_match_count ?? 0)}경기 / POST {Number(evaluation.post_match_count ?? 0)}경기
+                {" · "}실험 기준 {Number(evaluation.window_size ?? 0)}경기
                 {evaluation.sample_scope === "playable_only" ? " (키보드/패드 기준)" : ""}
               </p>
             )}
             {evaluation?.sync_warning && <div className="notice warn">{evaluation.sync_warning}</div>}
           </article>
+          {trackingCoach && (
+            <article className="panel span-2">
+              <h3 className="section-title">코치 해석 · 다음 방향</h3>
+              <div className="coach-focus-grid compact">
+                <div className="focus-card primary">
+                  <p className="action-title">핵심 해석</p>
+                  <p className="focus-line">{trackingCoach.headline}</p>
+                  <p className="muted">{trackingCoach.guidance}</p>
+                </div>
+                <div className="focus-card">
+                  <p className="action-title">평가 신뢰도</p>
+                  <p className="focus-line">
+                    {trackingCoach.reliabilityLabel} · <span className={trackingCoach.reliabilityClassName}>{trackingCoach.outcomeLabel}</span>
+                  </p>
+                  <p className="muted">{trackingCoach.reliabilityDetail}</p>
+                </div>
+                <div className="focus-card">
+                  <p className="action-title">다음 추천 실험</p>
+                  <p className="focus-line">{trackingCoach.recommendationTitle}</p>
+                  <p className="muted">{trackingCoach.recommendationDescription}</p>
+                  <p className="muted compact">{trackingCoach.recommendationReason}</p>
+                </div>
+              </div>
+              <div className="tracking-insight-list">
+                {trackingCoach.metricInsights.map((item) => (
+                  <div key={item.key} className={`tracking-insight-item ${item.tone}`}>
+                    <p className="action-title">{item.label}</p>
+                    <p className="focus-line">{item.deltaText}</p>
+                    <p className="muted">{item.comment}</p>
+                  </div>
+                ))}
+              </div>
+            </article>
+          )}
           <article className="panel">
-            <h3 className="section-title">적용 전 (PRE)</h3>
+            <h3 className="section-title">적용 전·후 요약</h3>
             <ul className="list">
-              <li>승률: {formatPercent(toKpiValue(evaluation?.pre ?? {}, "win_rate"))}</li>
-              <li>xG For: {formatFixed(toKpiValue(evaluation?.pre ?? {}, "xg_for"))}</li>
-              <li>xG Against: {formatFixed(toKpiValue(evaluation?.pre ?? {}, "xg_against"))}</li>
-              <li>유효슈팅 비율: {formatPercent(toKpiValue(evaluation?.pre ?? {}, "shot_on_target_rate"))}</li>
-            </ul>
-          </article>
-          <article className="panel">
-            <h3 className="section-title">적용 후 (POST)</h3>
-            <ul className="list">
-              <li>승률: {formatPercent(toKpiValue(evaluation?.post ?? {}, "win_rate"))}</li>
-              <li>xG For: {formatFixed(toKpiValue(evaluation?.post ?? {}, "xg_for"))}</li>
-              <li>xG Against: {formatFixed(toKpiValue(evaluation?.post ?? {}, "xg_against"))}</li>
-              <li>유효슈팅 비율: {formatPercent(toKpiValue(evaluation?.post ?? {}, "shot_on_target_rate"))}</li>
+              <li>
+                승률: {formatPercent(toKpiValue(evaluation?.pre ?? {}, "win_rate"))} →{" "}
+                {formatPercent(toKpiValue(evaluation?.post ?? {}, "win_rate"))}
+              </li>
+              <li>
+                xG For: {formatFixed(toKpiValue(evaluation?.pre ?? {}, "xg_for"))} →{" "}
+                {formatFixed(toKpiValue(evaluation?.post ?? {}, "xg_for"))}
+              </li>
+              <li>
+                xG Against: {formatFixed(toKpiValue(evaluation?.pre ?? {}, "xg_against"))} →{" "}
+                {formatFixed(toKpiValue(evaluation?.post ?? {}, "xg_against"))}
+              </li>
+              <li>
+                유효슈팅 비율: {formatPercent(toKpiValue(evaluation?.pre ?? {}, "shot_on_target_rate"))} →{" "}
+                {formatPercent(toKpiValue(evaluation?.post ?? {}, "shot_on_target_rate"))}
+              </li>
             </ul>
           </article>
           <article className="panel">

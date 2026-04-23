@@ -103,8 +103,20 @@ class NexonOpenApiClient:
                     ids.append(item)
                 elif isinstance(item, dict) and isinstance(item.get("matchId"), str):
                     ids.append(str(item["matchId"]))
-            return ids
+            return self._dedupe_match_ids(ids)
         return []
+
+    @staticmethod
+    def _dedupe_match_ids(match_ids: list[str]) -> list[str]:
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for match_id in match_ids:
+            target = str(match_id).strip()
+            if not target or target in seen:
+                continue
+            seen.add(target)
+            deduped.append(target)
+        return deduped
 
     def fetch_match_detail(self, match_id: str) -> dict[str, Any]:
         payload = self._get("/fconline/v1/match-detail", {"matchid": match_id})
