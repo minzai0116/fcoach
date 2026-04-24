@@ -1225,6 +1225,63 @@ code {
   background: linear-gradient(90deg, #4ade80, #16a34a);
 }
 
+.delta-track {
+  position: relative;
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: #e6edf7;
+  overflow: hidden;
+}
+
+.delta-centerline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  background: #94a3b8;
+  opacity: 0.7;
+  transform: translateX(-1px);
+}
+
+.delta-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+}
+
+.delta-fill.good {
+  background: linear-gradient(90deg, #60a5fa, #2563eb);
+}
+
+.delta-fill.bad {
+  background: linear-gradient(90deg, #fbbf24, #f97316);
+}
+
+.delta-fill.neutral {
+  background: #94a3b8;
+}
+
+.visual-metric-note {
+  font-size: 12px;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+.visual-metric-note.good {
+  color: #2563eb;
+}
+
+.visual-metric-note.bad {
+  color: #ea580c;
+}
+
+.visual-metric-note.neutral {
+  color: #64748b;
+}
+
 .benchmark-marker {
   position: absolute;
   top: -3px;

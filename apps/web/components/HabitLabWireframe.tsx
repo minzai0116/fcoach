@@ -2802,29 +2802,60 @@ export function HabitLabWireframe() {
           </article>
           <article className="panel span-2">
             <h3 className="section-title">변화 시각화</h3>
+            {(() => {
+              const preCount = Number(evaluation?.pre_match_count ?? 0);
+              const postCount = Number(evaluation?.post_match_count ?? 0);
+              const preXgFor = toKpiValue(evaluation?.pre ?? {}, "xg_for");
+              const postXgFor = toKpiValue(evaluation?.post ?? {}, "xg_for");
+              const preXgAgainst = toKpiValue(evaluation?.pre ?? {}, "xg_against");
+              const postXgAgainst = toKpiValue(evaluation?.post ?? {}, "xg_against");
+
+              const xgForPerMatchDelta =
+                preCount > 0 && postCount > 0 ? postXgFor / postCount - preXgFor / preCount : toKpiValue(evaluation?.delta ?? {}, "xg_for");
+              const xgAgainstPerMatchDelta =
+                preCount > 0 && postCount > 0
+                  ? postXgAgainst / postCount - preXgAgainst / preCount
+                  : toKpiValue(evaluation?.delta ?? {}, "xg_against");
+
+              const visualItems = [
+                { key: "win_rate", label: "승률 Δ", delta: toKpiValue(evaluation?.delta ?? {}, "win_rate"), scale: 0.2 },
+                { key: "xg_for_per_match", label: "경기당 xG For Δ", delta: xgForPerMatchDelta, scale: 0.6 },
+                { key: "xg_against_per_match", label: "경기당 xG Against Δ(감소 권장)", delta: xgAgainstPerMatchDelta, scale: 0.6, reverse: true },
+                { key: "shot_on_target_rate", label: "유효슈팅 Δ", delta: toKpiValue(evaluation?.delta ?? {}, "shot_on_target_rate"), scale: 0.15 },
+              ];
+
+              return (
             <div className="visual-metric-list">
-              {[
-                { key: "win_rate", label: "승률 Δ", max: 0.5 },
-                { key: "xg_for", label: "xG For Δ", max: 2 },
-                { key: "xg_against", label: "xG Against Δ(감소 권장)", max: 2, reverse: true },
-                { key: "shot_on_target_rate", label: "유효슈팅 Δ", max: 0.5 },
-              ].map((item) => {
-                const deltaValue = toKpiValue(evaluation?.delta ?? {}, item.key);
-                const normalized = item.reverse ? Math.max(0, item.max - Math.max(0, deltaValue)) : Math.max(0, deltaValue + item.max / 2);
-                const percent = toProgressPercent(normalized, item.reverse ? item.max : item.max);
+              {visualItems.map((item) => {
+                const directionAdjusted = item.reverse ? -item.delta : item.delta;
+                const normalized = Math.tanh(directionAdjusted / item.scale);
+                const barWidth = Math.abs(normalized) * 50;
+                const left = normalized >= 0 ? 50 : 50 - barWidth;
+                const tone = normalized > 0.08 ? "good" : normalized < -0.08 ? "bad" : "neutral";
+                const toneLabel = tone === "good" ? "개선" : tone === "bad" ? "악화" : "보합";
                 return (
                   <div key={item.key} className="visual-metric-item">
                     <div className="visual-metric-head">
                       <span>{item.label}</span>
-                      <strong>{formatFixed(deltaValue, 3)}</strong>
+                      <strong>{formatFixed(item.delta, 3)}</strong>
                     </div>
-                    <div className={`progress-track ${item.reverse ? "reverse" : ""}`}>
-                      <div className={`progress-fill ${item.reverse ? "reverse" : ""}`} style={{ width: `${percent}%` }} />
+                    <div className={`visual-metric-note ${tone}`}>{toneLabel}</div>
+                    <div className="delta-track">
+                      <div className="delta-centerline" />
+                      <div
+                        className={`delta-fill ${tone}`}
+                        style={{
+                          left: `${left}%`,
+                          width: `${barWidth}%`,
+                        }}
+                      />
                     </div>
                   </div>
                 );
               })}
             </div>
+              );
+            })()}
           </article>
         </section>
       )}
