@@ -4,7 +4,7 @@
 
 FC Online 경기 데이터를 분석해 플레이 문제를 진단하고, 액션 제안과 효과 검증까지 연결한 데이터 기반 코칭 서비스
 
-[서비스](https://fcoach.fun) · [API](https://fcoach-api.vercel.app) · [GitHub](https://github.com/minzai0116/fcoach)
+[서비스](https://fcoach.fun) · [API Docs](https://fcoach-api.vercel.app/docs) · [GitHub](https://github.com/minzai0116/fcoach)
 
 </div>
 
