@@ -18,439 +18,56 @@ import {
   tacticBandLabel,
   TACTIC_STYLE_OPTIONS,
 } from "../lib/tactic";
-
-type ScreenKey = "search" | "diagnosis" | "players" | "habits" | "actions" | "rankers" | "tracking" | "guide";
-type MatchType = 50 | 60 | 52;
-type WindowSize = 5 | 10 | 30;
-
-const SCREEN_LABELS: Record<ScreenKey, string> = {
-  search: "검색/설정",
-  diagnosis: "진단 대시보드",
-  players: "선수 리포트",
-  habits: "습관 분석",
-  actions: "액션 플랜",
-  rankers: "랭커 분석",
-  tracking: "개선 추적",
-  guide: "이용 가이드",
-};
-
-const SCREEN_FLOW: { key: ScreenKey; icon: string; hint: string }[] = [
-  { key: "search", icon: "🔎", hint: "대상/옵션 선택" },
-  { key: "diagnosis", icon: "📊", hint: "핵심 지표 진단" },
-  { key: "players", icon: "🧾", hint: "선수별 성과 분석" },
-  { key: "habits", icon: "🧩", hint: "문제 습관 분해" },
-  { key: "actions", icon: "🎯", hint: "핵심 액션 실행" },
-  { key: "rankers", icon: "🏅", hint: "랭커 비교 분석" },
-  { key: "tracking", icon: "📈", hint: "적용 효과 검증" },
-  { key: "guide", icon: "📘", hint: "서비스 활용법" },
-];
-
-const MATCH_LABELS: Record<MatchType, string> = {
-  50: "공식경기",
-  60: "공식 친선",
-  52: "감독모드",
-};
-
-const MATCH_TYPE_OPTIONS: MatchType[] = [50, 60];
-const WINDOW_OPTIONS: WindowSize[] = [5, 10, 30];
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
-
-type IssueCode =
-  | "HIGH_LATE_CONCEDE"
-  | "LOW_FINISHING"
-  | "POOR_SHOT_SELECTION"
-  | "OFFSIDE_RISK"
-  | "BUILDUP_INEFFICIENCY"
-  | "DEFENSE_DUEL_WEAKNESS"
-  | "CHANCE_CREATION_LOW"
-  | "POSSESSION_CONTROL_RISK"
-  | "INSUFFICIENT_DATA";
-
-type MetricMap = Record<string, number>;
-type IssueMap = Record<string, number>;
-
-type UserSearchResponse = {
-  ouid: string;
-  nickname: string;
-  source: string;
-};
-
-type AnalysisPayload = {
-  ouid: string;
-  match_type: number;
-  window_size: number;
-  sample_scope?: string;
-  sample_count?: number;
-  tactic_input_mode?: "provided" | "missing";
-  latest_match_date?: string | null;
-  sync_attempted?: boolean;
-  sync_new_rows?: number;
-  sync_warning?: string | null;
-  created_at: string;
-  recent_matches?: RecentMatchSummary[];
-  benchmark?: MetricMap;
-  benchmark_meta?: Record<string, unknown>;
-  similar_rankers?: unknown[];
-  metrics?: MetricMap;
-  visuals?: VisualSummary;
-  kpis?: MetricMap;
-  issues?: IssueMap;
-  issue_scores?: IssueMap;
-  actions?: RawActionCard[];
-};
-
-type VisualSummary = {
-  shot_map?: ShotPoint[];
-  shot_zone?: {
-    left_ratio?: number;
-    center_ratio?: number;
-    right_ratio?: number;
-    in_box_ratio?: number;
-    outside_box_ratio?: number;
-    total_shots?: number;
-  };
-  goal_timing_for?: TimingBucket[];
-  goal_timing_against?: TimingBucket[];
-  player_report?: PlayerReport;
-  goal_type_for?: GoalTypeBucket[];
-  goal_type_note?: string;
-};
-
-type ShotPoint = { x: number; y: number; is_goal: boolean };
-type TimingBucket = { label: string; count: number };
-type GoalTypeBucket = { type_code: number; label: string; count: number; ratio: number };
-type ImpactComponent = {
-  metric: string;
-  weight: number;
-  raw: number;
-  normalized: number;
-  weighted_score: number;
-};
-type RecentMatchSummary = {
-  match_date: string;
-  opponent_nickname: string;
-  result: string;
-  score_for: number;
-  score_against: number;
-  controller?: string;
-};
-type PlayerReportEntry = {
-  sp_id: number;
-  player_name: string;
-  season_id: number;
-  season_name: string;
-  season_img?: string;
-  face_img?: string;
-  action_img?: string;
-  fallback_img?: string;
-  sp_position: number;
-  position_name: string;
-  sp_grade: number;
-  appearances: number;
-  goals: number;
-  assists: number;
-  goal_involvements: number;
-  shots: number;
-  effective_shots: number;
-  pass_success_rate: number;
-  tackle_success_rate: number;
-  avg_rating: number;
-  impact_score: number;
-  role_group?: string;
-  impact_model?: string;
-  impact_confidence?: number;
-  impact_components?: ImpactComponent[];
-};
-
-type FormationNode = PlayerReportEntry & {
-  slot_left: number;
-  slot_top: number;
-};
-type PlayerReportSummary = {
-  sample_matches: number;
-  controller_breakdown?: Record<string, number>;
-  player_count: number;
-  top_players?: PlayerReportEntry[];
-  players?: PlayerReportEntry[];
-  top_scorer?: PlayerReportEntry | null;
-  top_assister?: PlayerReportEntry | null;
-  most_used?: PlayerReportEntry | null;
-};
-type PlayerReport = PlayerReportSummary;
-type PlayerSortMetric =
-  | "position_name"
-  | "goals"
-  | "assists"
-  | "effective_shots"
-  | "pass_success_rate"
-  | "tackle_success_rate"
-  | "avg_rating"
-  | "impact_score";
-type PlayerSortDirection = "desc" | "asc";
-
-type RawActionCard = {
-  rank?: number;
-  action_rank?: number;
-  action_code: string;
-  title: string;
-  description: string;
-  evidence?: Record<string, unknown>;
-  tactic_direction: string;
-  tactic_delta: Record<string, unknown>;
-  confidence: number;
-  created_at?: string;
-};
-
-type ActionCard = {
-  rank: number;
-  actionCode: string;
-  title: string;
-  description: string;
-  evidence?: Record<string, unknown>;
-  tacticDirection: string;
-  tacticDelta: Record<string, unknown>;
-  confidence: number;
-  createdAt?: string;
-};
-
-type EvaluationPayload = {
-  experiment_id: string;
-  window_size: number;
-  started_at: string;
-  sample_scope?: string;
-  pre_match_count?: number;
-  post_match_count?: number;
-  sync_attempted?: boolean;
-  sync_new_rows?: number;
-  sync_warning?: string | null;
-  pre: MetricMap;
-  post: MetricMap;
-  delta: MetricMap;
-  evaluated_at: string;
-};
-
-type ExperimentPreview = {
-  experiment_id: string;
-  ouid: string;
-  match_type: number;
-  action_code: string;
-  action_title: string;
-  window_size: number;
-  started_at: string;
-  ended_at?: string | null;
-  status: string;
-  notes?: string | null;
-  latest_evaluated_at?: string | null;
-  latest_delta?: MetricMap | null;
-};
-type ExperimentPreviewPayload = { exists: false } | ({ exists: true } & ExperimentPreview);
-
-type SimilarRanker = {
-  ranker_proxy_rank: number;
-  ouid: string;
-  nickname: string;
-  similarity: number;
-  match_count: number;
-  win_rate: number;
-  reliability: number;
-  source: string;
-  formation: string;
-  team_color: string;
-  gaps: Record<string, number>;
-  metric_comparisons: SimilarMetricComparison[];
-};
-
-type SimilarMetricComparison = {
-  metric_name: string;
-  metric_label: string;
-  higher_is_better: boolean;
-  user_value: number;
-  candidate_value: number;
-  gap_value: number;
-};
-
-type CoachExplanation = {
-  coach_message: string;
-  root_cause?: string;
-  execution_checklist?: string[];
-  in_game_signals?: string[];
-  failure_patterns?: string[];
-  expected_effect?: string;
-  source?: string;
-};
-
-type OfficialRanker = {
-  mode: string;
-  rank_no: number;
-  nickname: string;
-  ouid: string;
-  elo: number;
-  win_rate: number;
-  win_count: number;
-  draw_count: number;
-  loss_count: number;
-  formation: string;
-  team_color: string;
-  fetched_at: string;
-  source: string;
-};
-
-type RankersLatestPayload = {
-  mode: string;
-  count: number;
-  mapped_ouid_count: number;
-  rankers: OfficialRanker[];
-};
-
-const ISSUE_LABELS: Record<string, string> = {
-  HIGH_LATE_CONCEDE: "후반 실점 리스크",
-  LOW_FINISHING: "마무리 효율 저하",
-  POOR_SHOT_SELECTION: "슈팅 선택 품질 저하",
-  OFFSIDE_RISK: "오프사이드 빈도 리스크",
-  BUILDUP_INEFFICIENCY: "빌드업 효율 저하",
-  DEFENSE_DUEL_WEAKNESS: "수비 경합 약세",
-  CHANCE_CREATION_LOW: "찬스 생성량 저하",
-  POSSESSION_CONTROL_RISK: "점유 안정성 리스크",
-  INSUFFICIENT_DATA: "표본 부족",
-  MAINTAIN_PERFORMANCE: "유지 권장",
-};
-
-const ISSUE_DETAIL: Record<string, string> = {
-  HIGH_LATE_CONCEDE: "후반 집중력/수비 라인 안정화가 필요합니다.",
-  LOW_FINISHING: "기대득점 대비 실제 득점이 낮아 마무리 개선이 필요합니다.",
-  POOR_SHOT_SELECTION: "낮은 기대값 슈팅 비중이 높습니다.",
-  OFFSIDE_RISK: "오프사이드 발생 빈도가 높습니다. 침투/패스 시도 빈도 조정이 필요합니다.",
-  BUILDUP_INEFFICIENCY: "패스/스루패스 연결 효율이 낮아 전개 안정화가 필요합니다.",
-  DEFENSE_DUEL_WEAKNESS: "1차 수비 경합에서 밀리고 있어 수비 구조 보완이 필요합니다.",
-  CHANCE_CREATION_LOW: "경기당 슈팅·xG 생성량이 낮아 공격 전개 볼륨 보강이 필요합니다.",
-  POSSESSION_CONTROL_RISK: "점유 안정성이 낮아 공격 전환 전에 볼 순환 품질 개선이 필요합니다.",
-  INSUFFICIENT_DATA: "최소 5경기 이상 데이터가 필요합니다.",
-  MAINTAIN_PERFORMANCE: "현재 전술을 유지하면서 동일 조건에서 추가 표본을 수집하세요.",
-};
-
-const TACTIC_DIRECTION_KO: Record<string, string> = {
-  HIGH_LATE_CONCEDE: "후반 수비 라인 안정화",
-  LOW_FINISHING: "페널티박스 내 고품질 슈팅 유도",
-  POOR_SHOT_SELECTION: "빌드업 인내도 상승으로 저효율 슈팅 감소",
-  OFFSIDE_RISK: "침투 타이밍 지연 및 무리한 스루패스 축소",
-  BUILDUP_INEFFICIENCY: "전개 연결 안정화",
-  DEFENSE_DUEL_WEAKNESS: "수비 블록 압축 및 경합 강화",
-  CHANCE_CREATION_LOW: "공격 전개 볼륨 확대",
-  POSSESSION_CONTROL_RISK: "점유 안정화 우선",
-  INSUFFICIENT_DATA: "추가 표본 수집 우선",
-  MAINTAIN_PERFORMANCE: "전술 유지 및 추적 관찰",
-};
-
-const METRIC_LABEL_KO: Record<string, string> = {
-  late_concede_ratio: "후반 실점 비율(낮을수록 좋음)",
-  goals_per_sot: "유효슈팅 대비 득점률(높을수록 좋음)",
-  in_box_shot_ratio: "박스 안 슈팅 비중(높을수록 좋음)",
-  shot_on_target_rate: "유효슈팅 비율(높을수록 좋음)",
-  pass_success_rate: "패스 성공률(높을수록 좋음)",
-  through_pass_success_rate: "스루패스 성공률(높을수록 좋음)",
-  tackle_success_rate: "태클 성공률(높을수록 좋음)",
-  shots_per_match: "경기당 슈팅수(높을수록 좋음)",
-  goals_against_per_match: "경기당 실점(낮을수록 좋음)",
-  possession_avg: "평균 점유율(높을수록 좋음)",
-  offside_avg: "오프사이드 평균(낮을수록 좋음)",
-  overall: "전체 퍼포먼스",
-  xg_for_per_match: "경기당 xG",
-};
-
-const BENCHMARK_SOURCE_LABEL: Record<string, string> = {
-  official_rank_1vs1: "공식 랭킹(1vs1)",
-  ranker_proxy_v1: "기본 기준(공식 랭커 매핑 전)",
-  top_cohort_v1: "수집 데이터 상위권 코호트",
-};
-
-const DISTINCT_ID_KEY = "fcoach_distinct_id";
-const SESSION_ID_KEY = "fcoach_session_id";
-
-type RequestApiOptions = {
-  timeoutMs?: number;
-};
-
-function ensureStorageId(storage: Storage, key: string): string {
-  const existing = storage.getItem(key);
-  if (existing) return existing;
-  const generated = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  storage.setItem(key, generated);
-  return generated;
-}
-
-function maskOuid(ouid: string): string {
-  const value = ouid.trim();
-  if (value.length < 10) return value;
-  return `${value.slice(0, 6)}...${value.slice(-4)}`;
-}
-
-function trackEvent(
-  eventName: string,
-  payload: {
-    screen?: string;
-    matchType?: number;
-    windowSize?: number;
-    ouid?: string;
-    properties?: Record<string, unknown>;
-  },
-): void {
-  if (typeof window === "undefined") return;
-  try {
-    const distinctId = ensureStorageId(window.localStorage, DISTINCT_ID_KEY);
-    const sessionId = ensureStorageId(window.sessionStorage, SESSION_ID_KEY);
-    const body = {
-      event_name: eventName,
-      distinct_id: distinctId,
-      session_id: sessionId,
-      path: window.location.pathname,
-      screen: payload.screen ?? null,
-      referrer: document.referrer || null,
-      properties: {
-        match_type: payload.matchType ?? null,
-        window_size: payload.windowSize ?? null,
-        ouid_masked: payload.ouid ? maskOuid(payload.ouid) : null,
-        ...(payload.properties ?? {}),
-      },
-    };
-    void fetch(`${API_BASE_URL}/events/track`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      keepalive: true,
-    });
-  } catch {
-    return;
-  }
-}
-
-async function requestApi<T>(path: string, init?: RequestInit, options?: RequestApiOptions): Promise<T> {
-  const timeoutMs = options?.timeoutMs ?? 30_000;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(`${API_BASE_URL}${path}`, {
-      ...init,
-      signal: init?.signal ?? controller.signal,
-      headers: {
-        "Content-Type": "application/json",
-        ...(init?.headers ?? {}),
-      },
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      const detail = typeof body.detail === "string" ? body.detail : `HTTP ${res.status}`;
-      throw new Error(detail);
-    }
-    return (await res.json()) as T;
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error("요청 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.");
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
+import { requestApi, trackEvent } from "../lib/apiClient";
+import {
+  BENCHMARK_SOURCE_LABEL,
+  ISSUE_DETAIL,
+  ISSUE_LABELS,
+  MATCH_LABELS,
+  MATCH_TYPE_OPTIONS,
+  METRIC_LABEL_KO,
+  SCREEN_FLOW,
+  SCREEN_LABELS,
+  TACTIC_DIRECTION_KO,
+  WINDOW_OPTIONS,
+} from "../lib/uiConstants";
+import type {
+  ActionCard,
+  AnalysisPayload,
+  CoachExplanation,
+  EvaluationPayload,
+  ExperimentPreview,
+  ExperimentPreviewPayload,
+  MatchType,
+  MetricMap,
+  OfficialRanker,
+  PlayerReportEntry,
+  PlayerSortDirection,
+  PlayerSortMetric,
+  RankersLatestPayload,
+  RawActionCard,
+  RecentMatchSummary,
+  ScreenKey,
+  SimilarMetricComparison,
+  SimilarRanker,
+  ShotPoint,
+  TimingBucket,
+  UserSearchResponse,
+  WindowSize,
+} from "../types/analysis";
+import { PlayerPortrait } from "./player/PlayerPortrait";
+import {
+  buildFormationNodes,
+  enhanceLevelClass,
+  formatImpactRaw,
+  IMPACT_COMPONENT_LABELS,
+  normalizedGrade,
+  normalizePlayerEntry,
+  roleGroupLabel,
+  sortArrow,
+  tablePositionGroup,
+  tablePositionOrder,
+} from "../lib/playerReport";
 
 function toActionCards(raw: RawActionCard[] | undefined): ActionCard[] {
   if (!raw || raw.length === 0) return [];
@@ -634,305 +251,16 @@ function toProgressPercent(value: number, maxValue: number): number {
   return Math.round(ratio * 100);
 }
 
-function normalizedGrade(grade: number): number {
-  const numeric = Math.round(Number.isFinite(grade) ? grade : 0);
-  if (numeric <= 0) return 1;
-  return Math.min(13, numeric);
-}
-
-function enhanceLevelClass(grade: number): string {
-  const normalized = normalizedGrade(grade);
-  return `level-${normalized}`;
-}
-
 function normalizeMatchType(value: unknown, fallback: MatchType): MatchType {
   const numeric = Number(value);
   if (numeric === 50 || numeric === 52 || numeric === 60) return numeric;
   return fallback;
 }
 
-function playerFaceCandidates(player: Pick<PlayerReportEntry, "face_img" | "action_img" | "fallback_img" | "sp_id">): string[] {
-  const pid = Math.max(1, Number(player.sp_id) % 1_000_000);
-  const defaults = [
-    player.face_img,
-    player.action_img,
-    `https://fco.dn.nexoncdn.co.kr/live/externalAssets/common/players/p${pid}.png`,
-    `https://fco.dn.nexoncdn.co.kr/live/externalAssets/common/playersAction/p${player.sp_id}.png`,
-    player.fallback_img,
-    "https://ssl.nexon.com/s2/game/fc/mobile/squadMaker/default/d_player.png",
-  ];
-  return Array.from(new Set(defaults.filter((item): item is string => typeof item === "string" && item.trim().length > 0)));
-}
-
-function PlayerPortrait({
-  player,
-  alt,
-  className,
-}: {
-  player: Pick<PlayerReportEntry, "face_img" | "action_img" | "fallback_img" | "sp_id">;
-  alt: string;
-  className: string;
-}) {
-  const candidates = useMemo(() => playerFaceCandidates(player), [player]);
-  const [imageIndex, setImageIndex] = useState(0);
-
-  useEffect(() => {
-    setImageIndex(0);
-  }, [candidates]);
-
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      className={className}
-      src={candidates[imageIndex] ?? "https://ssl.nexon.com/s2/game/fc/mobile/squadMaker/default/d_player.png"}
-      alt={alt}
-      onError={() => setImageIndex((prev) => (prev + 1 < candidates.length ? prev + 1 : prev))}
-    />
-  );
-}
-
 function normalizeWindowSize(value: unknown, fallback: WindowSize): WindowSize {
   const numeric = Number(value);
   if (numeric === 5 || numeric === 10 || numeric === 30) return numeric;
   return fallback;
-}
-
-const POSITION_COORDS: Record<string, { left: number; top: number }> = {
-  GK: { left: 50, top: 92 },
-  SW: { left: 50, top: 84 },
-  CB: { left: 50, top: 80 },
-  LCB: { left: 41, top: 80 },
-  RCB: { left: 59, top: 80 },
-  LB: { left: 25, top: 77 },
-  RB: { left: 75, top: 77 },
-  LWB: { left: 17, top: 73 },
-  RWB: { left: 83, top: 73 },
-  CDM: { left: 50, top: 68 },
-  LDM: { left: 40, top: 68 },
-  RDM: { left: 60, top: 68 },
-  CM: { left: 50, top: 59 },
-  LCM: { left: 38, top: 59 },
-  RCM: { left: 62, top: 59 },
-  LM: { left: 24, top: 56 },
-  RM: { left: 76, top: 56 },
-  LW: { left: 24, top: 31 },
-  RW: { left: 76, top: 31 },
-  CAM: { left: 50, top: 46 },
-  LAM: { left: 34, top: 44 },
-  RAM: { left: 66, top: 44 },
-  CF: { left: 50, top: 35 },
-  LF: { left: 38, top: 32 },
-  RF: { left: 62, top: 32 },
-  LWF: { left: 24, top: 29 },
-  RWF: { left: 76, top: 29 },
-  LWS: { left: 30, top: 26 },
-  RWS: { left: 70, top: 26 },
-  LS: { left: 44, top: 24 },
-  RS: { left: 56, top: 24 },
-  ST: { left: 50, top: 20 },
-};
-
-const POSITION_TABLE_ORDER = [
-  "GK",
-  "RB",
-  "RWB",
-  "RCB",
-  "CB",
-  "SW",
-  "LCB",
-  "LB",
-  "LWB",
-  "RDM",
-  "CDM",
-  "LDM",
-  "RM",
-  "RCM",
-  "CM",
-  "LCM",
-  "LM",
-  "RAM",
-  "CAM",
-  "LAM",
-  "RW",
-  "RWF",
-  "RF",
-  "RS",
-  "CF",
-  "ST",
-  "LS",
-  "LF",
-  "LWF",
-  "LW",
-] as const;
-
-const POSITION_TABLE_INDEX = new Map<string, number>(POSITION_TABLE_ORDER.map((key, index) => [key, index]));
-
-const FALLBACK_SLOTS: Record<"DEF" | "MID" | "ATT", Array<{ left: number; top: number }>> = {
-  DEF: [
-    { left: 20, top: 78 },
-    { left: 35, top: 80 },
-    { left: 50, top: 81 },
-    { left: 65, top: 80 },
-    { left: 80, top: 78 },
-  ],
-  MID: [
-    { left: 24, top: 57 },
-    { left: 38, top: 60 },
-    { left: 50, top: 61 },
-    { left: 62, top: 60 },
-    { left: 76, top: 57 },
-  ],
-  ATT: [
-    { left: 28, top: 34 },
-    { left: 42, top: 27 },
-    { left: 50, top: 23 },
-    { left: 58, top: 27 },
-    { left: 72, top: 34 },
-  ],
-};
-
-function inferPositionLane(positionName: string): "DEF" | "MID" | "ATT" {
-  const upper = positionName.toUpperCase();
-  if (upper.includes("B") || upper.includes("CB") || upper.includes("WB")) return "DEF";
-  if (upper.includes("M") || upper === "CDM") return "MID";
-  return "ATT";
-}
-
-function tablePositionGroup(positionName: string): number {
-  const upper = positionName.toUpperCase().trim();
-  if (upper === "SUB") return 4;
-  if (upper === "GK") return 0;
-  if (["SW", "CB", "LCB", "RCB", "LB", "RB", "LWB", "RWB"].includes(upper)) return 1;
-  if (["CDM", "LDM", "RDM", "CM", "LCM", "RCM", "LM", "RM", "CAM", "LAM", "RAM"].includes(upper)) return 2;
-  return 3;
-}
-
-function tablePositionOrder(positionName: string): number {
-  const upper = positionName.toUpperCase().trim();
-  if (upper === "SUB") return 999;
-  return POSITION_TABLE_INDEX.get(upper) ?? 900;
-}
-
-function sortArrow(metric: PlayerSortMetric, currentMetric: PlayerSortMetric, direction: PlayerSortDirection): string {
-  if (metric !== currentMetric) return "↕";
-  return direction === "desc" ? "↓" : "↑";
-}
-
-const IMPACT_COMPONENT_LABELS: Record<string, string> = {
-  goals_per_match: "경기당 골",
-  assists_per_match: "경기당 도움",
-  effective_shots_per_match: "경기당 유효슛",
-  shot_accuracy: "슈팅 정확도",
-  pass_success_rate: "패스 성공률",
-  tackle_success_rate: "태클 성공률",
-  tackles_per_match: "경기당 태클 성공",
-  intercepts_per_match: "경기당 인터셉트",
-  blocks_per_match: "경기당 블락",
-  dribble_success_rate: "드리블 성공률",
-  save_events_per_match: "경기당 선방",
-  save_rate_proxy: "선방률",
-  avg_rating: "평균 평점",
-};
-
-function roleGroupLabel(roleGroup: string): string {
-  const role = roleGroup.toUpperCase();
-  if (role === "ATT") return "공격";
-  if (role === "MID") return "미드";
-  if (role === "DEF") return "수비";
-  if (role === "GK") return "골키퍼";
-  if (role === "SUB") return "교체";
-  return "미분류";
-}
-
-function formatImpactRaw(metric: string, value: number): string {
-  if (
-    [
-      "shot_accuracy",
-      "pass_success_rate",
-      "tackle_success_rate",
-      "dribble_success_rate",
-      "save_rate_proxy",
-      "weight",
-      "normalized",
-      "weighted_score",
-    ].includes(metric)
-  ) {
-    return formatPercent(value);
-  }
-  if (metric === "avg_rating") return formatFixed(value, 2);
-  return formatFixed(value, 2);
-}
-
-function normalizeImpactComponents(value: unknown): ImpactComponent[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => ({
-      metric: String((item as ImpactComponent).metric ?? ""),
-      weight: Number((item as ImpactComponent).weight ?? 0),
-      raw: Number((item as ImpactComponent).raw ?? 0),
-      normalized: Number((item as ImpactComponent).normalized ?? 0),
-      weighted_score: Number((item as ImpactComponent).weighted_score ?? 0),
-    }))
-    .filter((item) => item.metric.length > 0)
-    .slice(0, 5);
-}
-
-function normalizePlayerEntry(item: unknown): PlayerReportEntry {
-  return {
-    sp_id: Number((item as PlayerReportEntry).sp_id ?? 0),
-    player_name: String((item as PlayerReportEntry).player_name ?? ""),
-    season_id: Number((item as PlayerReportEntry).season_id ?? 0),
-    season_name: String((item as PlayerReportEntry).season_name ?? "-"),
-    season_img: String((item as PlayerReportEntry).season_img ?? ""),
-    face_img: String((item as PlayerReportEntry).face_img ?? ""),
-    action_img: String((item as PlayerReportEntry).action_img ?? ""),
-    fallback_img: String((item as PlayerReportEntry).fallback_img ?? ""),
-    sp_position: Number((item as PlayerReportEntry).sp_position ?? -1),
-    position_name: String((item as PlayerReportEntry).position_name ?? "-"),
-    sp_grade: Number((item as PlayerReportEntry).sp_grade ?? 0),
-    appearances: Number((item as PlayerReportEntry).appearances ?? 0),
-    goals: Number((item as PlayerReportEntry).goals ?? 0),
-    assists: Number((item as PlayerReportEntry).assists ?? 0),
-    goal_involvements: Number((item as PlayerReportEntry).goal_involvements ?? 0),
-    shots: Number((item as PlayerReportEntry).shots ?? 0),
-    effective_shots: Number((item as PlayerReportEntry).effective_shots ?? 0),
-    pass_success_rate: Number((item as PlayerReportEntry).pass_success_rate ?? 0),
-    tackle_success_rate: Number((item as PlayerReportEntry).tackle_success_rate ?? 0),
-    avg_rating: Number((item as PlayerReportEntry).avg_rating ?? 0),
-    impact_score: Number((item as PlayerReportEntry).impact_score ?? 0),
-    role_group: String((item as PlayerReportEntry).role_group ?? "MID"),
-    impact_model: String((item as PlayerReportEntry).impact_model ?? ""),
-    impact_confidence: Number((item as PlayerReportEntry).impact_confidence ?? 0),
-    impact_components: normalizeImpactComponents((item as PlayerReportEntry).impact_components),
-  };
-}
-
-function buildFormationNodes(players: PlayerReportEntry[]): FormationNode[] {
-  if (!players.length) return [];
-  const capped = players.slice(0, 11);
-  const laneCursor = { DEF: 0, MID: 0, ATT: 0 };
-  const occupiedCount = new Map<string, number>();
-
-  return capped.map((player) => {
-    const positionKey = player.position_name.toUpperCase().trim();
-    const fixed = POSITION_COORDS[positionKey];
-    let slot = fixed;
-    if (!slot) {
-      const lane = inferPositionLane(positionKey);
-      const laneSlots = FALLBACK_SLOTS[lane];
-      slot = laneSlots[Math.min(laneCursor[lane], laneSlots.length - 1)];
-      laneCursor[lane] += 1;
-    }
-    const key = `${slot.left}-${slot.top}`;
-    const duplicateIndex = occupiedCount.get(key) ?? 0;
-    occupiedCount.set(key, duplicateIndex + 1);
-    const jitter = duplicateIndex === 0 ? 0 : (duplicateIndex % 2 === 0 ? 1 : -1) * Math.ceil(duplicateIndex / 2) * 3;
-    return {
-      ...player,
-      slot_left: Math.max(8, Math.min(92, slot.left + jitter)),
-      slot_top: slot.top,
-    };
-  });
 }
 
 type VisualMetricItem = {
@@ -1524,7 +852,7 @@ export function HabitLabWireframe() {
     void loadLatestExperimentPreview(ouidInput, matchType);
   }, [screen, ouidInput, matchType]);
 
-  async function resolveOuidFromNickname(): Promise<string> {
+  async function resolveOuidFromNickname(mode: "quick" | "advanced"): Promise<string> {
     const targetNickname = nicknameInput.trim();
     if (targetNickname.length < 2) {
       throw new Error("닉네임을 2글자 이상 입력해주세요.");
@@ -1537,7 +865,23 @@ export function HabitLabWireframe() {
     if (resolvedUser && resolvedUser.nickname === targetNickname && resolvedUser.ouid.trim().length >= 8) {
       return resolvedUser.ouid;
     }
-    const found = await requestApi<UserSearchResponse>(`/users/search?nickname=${encodeURIComponent(targetNickname)}`);
+    let found: UserSearchResponse;
+    try {
+      found = await requestApi<UserSearchResponse>(`/users/search?nickname=${encodeURIComponent(targetNickname)}`);
+    } catch (searchError) {
+      trackEvent("search_user_failed", {
+        screen: "search",
+        matchType,
+        windowSize,
+        properties: {
+          mode,
+          stage: "user_search",
+          nickname_length: targetNickname.length,
+          error_message: normalizeErrorMessage(searchError, "닉네임 조회 실패"),
+        },
+      });
+      throw searchError;
+    }
     setResolvedUser(found);
     setOuidInput(found.ouid);
     trackEvent("search_user", {
@@ -1545,7 +889,7 @@ export function HabitLabWireframe() {
       matchType,
       windowSize,
       ouid: found.ouid,
-      properties: { source: found.source },
+      properties: { mode, source: found.source },
     });
     return found.ouid;
   }
@@ -1555,8 +899,9 @@ export function HabitLabWireframe() {
     setLoading(true);
     setError("");
     setNotice("");
+    let targetOuid = "";
     try {
-      const targetOuid = await resolveOuidFromNickname();
+      targetOuid = await resolveOuidFromNickname("advanced");
       const currentTacticPayload = {
         defense_style: defenseStyle,
         buildup_play_style: buildupPlayStyle,
@@ -1607,13 +952,21 @@ export function HabitLabWireframe() {
         },
       });
     } catch (analysisError) {
-      setError(normalizeErrorMessage(analysisError, "분석 실행 실패"));
-      trackEvent("run_analysis_failed", {
-        screen: "search",
-        matchType,
-        windowSize,
-        ouid: ouidInput,
-      });
+      const errorMessage = normalizeErrorMessage(analysisError, "분석 실행 실패");
+      setError(errorMessage);
+      if (targetOuid) {
+        trackEvent("run_analysis_failed", {
+          screen: "search",
+          matchType,
+          windowSize,
+          ouid: targetOuid,
+          properties: {
+            mode: "advanced",
+            stage: "analysis_run",
+            error_message: errorMessage,
+          },
+        });
+      }
     } finally {
       setLoading(false);
       setAnalysisLoadingMode(null);
@@ -1635,8 +988,9 @@ export function HabitLabWireframe() {
     setActions([]);
     setAppliedTactic(null);
     setEvaluation(null);
+    let targetOuid = "";
     try {
-      const targetOuid = await resolveOuidFromNickname();
+      targetOuid = await resolveOuidFromNickname("quick");
       const payload = await requestApi<AnalysisPayload>("/analysis/run", {
         method: "POST",
         body: JSON.stringify({
@@ -1664,13 +1018,21 @@ export function HabitLabWireframe() {
         },
       });
     } catch (quickRunError) {
-      setError(normalizeErrorMessage(quickRunError, "빠른 실행 실패"));
-      trackEvent("run_analysis_failed", {
-        screen: "search",
-        matchType,
-        windowSize,
-        ouid: ouidInput,
-      });
+      const errorMessage = normalizeErrorMessage(quickRunError, "빠른 실행 실패");
+      setError(errorMessage);
+      if (targetOuid) {
+        trackEvent("run_analysis_failed", {
+          screen: "search",
+          matchType,
+          windowSize,
+          ouid: targetOuid,
+          properties: {
+            mode: "quick",
+            stage: "analysis_run",
+            error_message: errorMessage,
+          },
+        });
+      }
     } finally {
       setLoading(false);
       setAnalysisLoadingMode(null);

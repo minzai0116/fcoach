@@ -3,96 +3,50 @@ from __future__ import annotations
 import json
 import math
 import os
-import unicodedata
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from functools import lru_cache
-from typing import Any, Iterable
+from typing import Any
 
 import requests
 
 from app.db import connect, upsert_matches, utc_now_iso
 from app.services.action_explainer import build_action_explanation
+from app.services.analysis_constants import (
+    BENCHMARKS,
+    CONFIDENCE_BASE,
+    CONFIDENCE_SAMPLE_FULL_MATCHES,
+    CONFIDENCE_SAMPLE_WEIGHT,
+    CONFIDENCE_SEVERITY_WEIGHT,
+    CONFIDENCE_TACTIC_MISSING_PENALTY,
+    ISSUE_MIN_ACTION_SCORE,
+    MATCH_CACHE_TTL_SEC_DEFAULT,
+    MATCH_HEAD_PROBE_TTL_SEC,
+    MATCH_REFRESH_THRESHOLD,
+    OFFICIAL_BENCHMARK_SOURCE,
+    OFFICIAL_RANKER_FALLBACK_CACHE_TTL,
+    SEASON_META_URL,
+    SPPOSITION_META_URL,
+    SPID_META_URL,
+    STATIC_BENCHMARK_SOURCE,
+)
+from app.services.analysis_models import MatchStats
+from app.services.analysis_metrics import compute_metrics as _compute_metrics
+from app.services.analysis_metrics import goal_profile_summary as _goal_profile_summary
+from app.services.analysis_metrics import goal_type_summary as _goal_type_summary
+from app.services.analysis_metrics import shot_zone_summary as _shot_zone_summary
+from app.services.analysis_metrics import time_bucket_counts as _time_bucket_counts
+from app.services.analysis_utils import is_truthy as _is_truthy
+from app.services.analysis_utils import normalize_nickname as _normalize_nickname
 from app.services.cache import CacheClient
 from app.services.openapi_client import NexonOpenApiClient, OpenApiRateLimitError
 from app.services.ranker_source import fetch_official_rankers, list_official_rankers
 from app.services.tactic_recommendation import get_issue_tactic_mapping
 
-
-BENCHMARKS = {
-    50: {
-        "win_rate": 0.52,
-        "shot_on_target_rate": 0.42,
-        "offside_avg": 0.9,
-        "late_concede_ratio": 0.30,
-        "goals_per_sot": 0.42,
-        "in_box_shot_ratio": 0.58,
-        "pass_success_rate": 0.83,
-        "through_pass_success_rate": 0.31,
-        "tackle_success_rate": 0.41,
-        "shots_per_match": 7.8,
-        "xg_for_per_match": 1.55,
-        "goals_against_per_match": 1.20,
-        "possession_avg": 50.0,
-    },
-    60: {
-        "win_rate": 0.50,
-        "shot_on_target_rate": 0.40,
-        "offside_avg": 1.0,
-        "late_concede_ratio": 0.33,
-        "goals_per_sot": 0.40,
-        "in_box_shot_ratio": 0.56,
-        "pass_success_rate": 0.81,
-        "through_pass_success_rate": 0.29,
-        "tackle_success_rate": 0.39,
-        "shots_per_match": 7.3,
-        "xg_for_per_match": 1.45,
-        "goals_against_per_match": 1.28,
-        "possession_avg": 50.0,
-    },
-    52: {
-        "win_rate": 0.50,
-        "shot_on_target_rate": 0.40,
-        "offside_avg": 1.0,
-        "late_concede_ratio": 0.33,
-        "goals_per_sot": 0.40,
-        "in_box_shot_ratio": 0.56,
-        "pass_success_rate": 0.81,
-        "through_pass_success_rate": 0.29,
-        "tackle_success_rate": 0.39,
-        "shots_per_match": 7.3,
-        "xg_for_per_match": 1.45,
-        "goals_against_per_match": 1.28,
-        "possession_avg": 50.0,
-    },
-}
-
-STATIC_BENCHMARK_SOURCE = "ranker_proxy_v1"
-OFFICIAL_BENCHMARK_SOURCE = "official_rank_1vs1"
-ISSUE_MIN_ACTION_SCORE = 5.0
-CONFIDENCE_BASE = 0.35
-CONFIDENCE_SAMPLE_WEIGHT = 0.40
-CONFIDENCE_SEVERITY_WEIGHT = 0.25
-CONFIDENCE_TACTIC_MISSING_PENALTY = 0.90
-CONFIDENCE_SAMPLE_FULL_MATCHES = 15.0
-SPID_META_URL = "https://open.api.nexon.com/static/fconline/meta/spid.json"
-SPPOSITION_META_URL = "https://open.api.nexon.com/static/fconline/meta/spposition.json"
-SEASON_META_URL = "https://open.api.nexon.com/static/fconline/meta/seasonid.json"
-MATCH_REFRESH_THRESHOLD = timedelta(minutes=15)
-MATCH_CACHE_TTL_SEC_DEFAULT = 1800
-MATCH_HEAD_PROBE_TTL_SEC = 45
 _MATCH_CACHE = CacheClient()
 _OFFICIAL_RANKER_FALLBACK_CACHE_AT: datetime | None = None
 _OFFICIAL_RANKER_FALLBACK_CACHE_ROWS: list[dict[str, Any]] = []
-_OFFICIAL_RANKER_FALLBACK_CACHE_TTL = timedelta(minutes=5)
-
-
-def _is_truthy(value: str | None) -> bool:
-    if value is None:
-        return False
-    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _match_cache_ttl_sec() -> int:
@@ -105,11 +59,6 @@ def _match_cache_ttl_sec() -> int:
 
 def _match_cache_key(ouid: str, match_type: int) -> str:
     return f"matches_raw:{ouid}:{int(match_type)}"
-
-
-def _normalize_nickname(value: str) -> str:
-    normalized = unicodedata.normalize("NFKC", value or "")
-    return normalized.replace("\u200b", "").replace("\ufeff", "").strip().lower()
 
 
 def _load_official_rankers(limit: int = 80) -> list[dict[str, Any]]:
@@ -125,7 +74,7 @@ def _load_official_rankers(limit: int = 80) -> list[dict[str, Any]]:
     now = datetime.now(timezone.utc)
     if (
         _OFFICIAL_RANKER_FALLBACK_CACHE_AT is not None
-        and now - _OFFICIAL_RANKER_FALLBACK_CACHE_AT <= _OFFICIAL_RANKER_FALLBACK_CACHE_TTL
+        and now - _OFFICIAL_RANKER_FALLBACK_CACHE_AT <= OFFICIAL_RANKER_FALLBACK_CACHE_TTL
         and _OFFICIAL_RANKER_FALLBACK_CACHE_ROWS
     ):
         return _OFFICIAL_RANKER_FALLBACK_CACHE_ROWS[:safe_limit]
@@ -157,42 +106,6 @@ def _load_official_rankers(limit: int = 80) -> list[dict[str, Any]]:
     _OFFICIAL_RANKER_FALLBACK_CACHE_AT = now
     _OFFICIAL_RANKER_FALLBACK_CACHE_ROWS = fallback_rows
     return fallback_rows[:safe_limit]
-
-
-@dataclass
-class MatchStats:
-    match_date: str
-    result: str
-    opponent_nickname: str
-    goals_for: float
-    goals_against: float
-    shots: float
-    shots_on_target: float
-    offside: float
-    xg_for: float
-    xg_against: float
-    late_goals_against: float
-    in_box_shots: float
-    total_shots_detail: float
-    possession: float
-    pass_try: float
-    pass_success: float
-    through_pass_try: float
-    through_pass_success: float
-    tackle_try: float
-    tackle_success: float
-    shots_for_points: list[dict[str, float | bool]]
-    goals_for_minutes: list[float]
-    goals_against_minutes: list[float]
-    goals_for_types: list[int]
-    shots_on_target_against: float = 0.0
-    goals_heading: float = 0.0
-    goals_freekick: float = 0.0
-    goals_penaltykick: float = 0.0
-    goals_in_penalty: float = 0.0
-    goals_out_penalty: float = 0.0
-    controller: str = ""
-    player_stats: list[dict[str, float | int]] = field(default_factory=list)
 
 
 def _sync_fetch_limits(window_size: int, has_cached_rows: bool) -> list[int]:
@@ -745,206 +658,6 @@ def _maintain_action(metrics: dict[str, float], benchmark_source: str, metric_ga
         "tactic_direction": "현재 전술 유지 및 추가 표본 확보",
         "tactic_delta": {},
         "confidence": 0.45,
-    }
-
-
-def _compute_metrics(matches: Iterable[MatchStats]) -> dict[str, float]:
-    rows = list(matches)
-    count = len(rows)
-    if count == 0:
-        return {
-            "match_count": 0.0,
-            "win_rate": 0.0,
-            "goals_for": 0.0,
-            "goals_against": 0.0,
-            "xg_for": 0.0,
-            "xg_against": 0.0,
-            "shot_on_target_rate": 0.0,
-            "goals_per_sot": 0.0,
-            "goals_per_shot": 0.0,
-            "pass_success_rate": 0.0,
-            "through_pass_success_rate": 0.0,
-            "tackle_success_rate": 0.0,
-            "offside_avg": 0.0,
-            "late_concede_ratio": 0.0,
-            "in_box_shot_ratio": 0.0,
-            "shots_total": 0.0,
-            "shots_on_target_total": 0.0,
-            "shots_per_match": 0.0,
-            "xg_for_per_match": 0.0,
-            "goals_against_per_match": 0.0,
-            "possession_avg": 0.0,
-        }
-    wins = sum(1 for row in rows if row.result == "승")
-    goals_for = sum(row.goals_for for row in rows)
-    goals_against = sum(row.goals_against for row in rows)
-    xg_for = sum(row.xg_for for row in rows)
-    xg_against = sum(row.xg_against for row in rows)
-    total_shots = sum(row.shots for row in rows)
-    total_sot = sum(row.shots_on_target for row in rows)
-    total_offside = sum(row.offside for row in rows)
-    late_concede = sum(row.late_goals_against for row in rows)
-    in_box_shots = sum(row.in_box_shots for row in rows)
-    detailed_shots = sum(row.total_shots_detail for row in rows)
-    pass_try_total = sum(row.pass_try for row in rows)
-    pass_success_total = sum(row.pass_success for row in rows)
-    through_pass_try_total = sum(row.through_pass_try for row in rows)
-    through_pass_success_total = sum(row.through_pass_success for row in rows)
-    tackle_try_total = sum(row.tackle_try for row in rows)
-    tackle_success_total = sum(row.tackle_success for row in rows)
-    valid_possessions = [row.possession for row in rows if row.possession >= 0]
-    possession_total = sum(valid_possessions)
-    possession_count = len(valid_possessions)
-    return {
-        "match_count": float(count),
-        "win_rate": wins / count,
-        "goals_for": goals_for,
-        "goals_against": goals_against,
-        "xg_for": xg_for,
-        "xg_against": xg_against,
-        "shot_on_target_rate": total_sot / total_shots if total_shots > 0 else 0.0,
-        "goals_per_sot": goals_for / total_sot if total_sot > 0 else 0.0,
-        "goals_per_shot": goals_for / total_shots if total_shots > 0 else 0.0,
-        "pass_success_rate": pass_success_total / pass_try_total if pass_try_total > 0 else 0.0,
-        "through_pass_success_rate": through_pass_success_total / through_pass_try_total if through_pass_try_total > 0 else 0.0,
-        "tackle_success_rate": tackle_success_total / tackle_try_total if tackle_try_total > 0 else 0.0,
-        "offside_avg": total_offside / count,
-        "late_concede_ratio": late_concede / goals_against if goals_against > 0 else 0.0,
-        "in_box_shot_ratio": in_box_shots / detailed_shots if detailed_shots > 0 else 0.0,
-        "shots_total": total_shots,
-        "shots_on_target_total": total_sot,
-        "shots_per_match": total_shots / count,
-        "xg_for_per_match": xg_for / count,
-        "goals_against_per_match": goals_against / count,
-        "possession_avg": possession_total / possession_count if possession_count > 0 else 0.0,
-    }
-
-
-def _time_bucket_counts(minutes: Iterable[float]) -> list[dict[str, Any]]:
-    buckets = [
-        (0, 15, "0-15"),
-        (15, 30, "15-30"),
-        (30, 45, "30-45"),
-        (45, 60, "45-60"),
-        (60, 75, "60-75"),
-        (75, 200, "75+"),
-    ]
-    counts = [0, 0, 0, 0, 0, 0]
-    for minute in minutes:
-        for idx, (left, right, _) in enumerate(buckets):
-            if left <= minute < right:
-                counts[idx] += 1
-                break
-    return [
-        {"label": label, "count": counts[idx]}
-        for idx, (_, _, label) in enumerate(buckets)
-    ]
-
-
-def _shot_zone_summary(points: list[dict[str, float | bool]]) -> dict[str, float]:
-    if not points:
-        return {
-            "left_ratio": 0.0,
-            "center_ratio": 0.0,
-            "right_ratio": 0.0,
-            "in_box_ratio": 0.0,
-            "outside_box_ratio": 0.0,
-            "total_shots": 0.0,
-        }
-    left = 0
-    center = 0
-    right = 0
-    in_box = 0
-    # Center lane is intentionally narrow (0.45~0.55) to avoid over-clustering in
-    # long-term samples where central shots dominate around y=0.5.
-    center_left = 0.45
-    center_right = 0.55
-    for point in points:
-        x = float(point.get("x", 0.0))
-        y = float(point.get("y", 0.0))
-        if y < center_left:
-            left += 1
-        elif y <= center_right:
-            center += 1
-        else:
-            right += 1
-        if _is_in_box(x, y):
-            in_box += 1
-    total = float(len(points))
-    return {
-        "left_ratio": left / total,
-        "center_ratio": center / total,
-        "right_ratio": right / total,
-        "in_box_ratio": in_box / total,
-        "outside_box_ratio": 1.0 - (in_box / total),
-        "total_shots": total,
-    }
-
-
-def _goal_type_label(type_code: int) -> str:
-    labels = {
-        1: "일반 슈팅 (normal)",
-        2: "감아차기 (finesse)",
-        3: "헤더 (header)",
-        4: "로빙슛 (lob)",
-        5: "플레어슛 (flare)",
-        6: "낮은 슛 (low)",
-        7: "발리슛 (volley)",
-        8: "프리킥 (free-kick)",
-        9: "패널티킥 (penalty)",
-        10: "무회전슛 (knuckle)",
-        11: "바이시클킥 (bicycle)",
-        12: "파워슛 (super)",
-    }
-    return labels.get(type_code, f"미정의 슈팅 타입 {type_code} (공식 문서 미기재)")
-
-
-def _goal_type_summary(type_codes: list[int]) -> list[dict[str, Any]]:
-    if not type_codes:
-        return []
-    counts: dict[int, int] = defaultdict(int)
-    for code in type_codes:
-        counts[code] += 1
-    total = sum(counts.values())
-    ranked = sorted(counts.items(), key=lambda item: item[1], reverse=True)[:5]
-    return [
-        {
-            "type_code": code,
-            "label": _goal_type_label(code),
-            "count": count,
-            "ratio": round(count / total, 4) if total > 0 else 0.0,
-        }
-        for code, count in ranked
-    ]
-
-
-def _goal_profile_summary(rows: list[MatchStats]) -> dict[str, Any]:
-    total_goals = sum(row.goals_for for row in rows)
-    heading_goals = sum(row.goals_heading for row in rows)
-    freekick_goals = sum(row.goals_freekick for row in rows)
-    penaltykick_goals = sum(row.goals_penaltykick for row in rows)
-    in_penalty_goals = sum(row.goals_in_penalty for row in rows)
-    out_penalty_goals = sum(row.goals_out_penalty for row in rows)
-    footedness_note = "FC Online Open API는 득점의 왼발/오른발 구분 필드를 직접 제공하지 않습니다."
-
-    def ratio(value: float) -> float:
-        if total_goals <= 0:
-            return 0.0
-        return round(value / total_goals, 4)
-
-    return {
-        "total_goals": round(total_goals, 2),
-        "heading_goals": round(heading_goals, 2),
-        "freekick_goals": round(freekick_goals, 2),
-        "penaltykick_goals": round(penaltykick_goals, 2),
-        "in_penalty_goals": round(in_penalty_goals, 2),
-        "out_penalty_goals": round(out_penalty_goals, 2),
-        "heading_ratio": ratio(heading_goals),
-        "freekick_ratio": ratio(freekick_goals),
-        "penaltykick_ratio": ratio(penaltykick_goals),
-        "in_penalty_ratio": ratio(in_penalty_goals),
-        "out_penalty_ratio": ratio(out_penalty_goals),
-        "footedness_note": footedness_note,
     }
 
 

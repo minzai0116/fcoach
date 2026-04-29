@@ -333,6 +333,16 @@ def insert_analytics_event(
         )
 
 
+def _safe_json_object(raw: str | None) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def get_analytics_summary(hours: int = 24, limit: int = 20) -> dict[str, Any]:
     safe_hours = max(1, min(24 * 30, int(hours)))
     safe_limit = max(1, min(100, int(limit)))
@@ -371,6 +381,18 @@ def get_analytics_summary(hours: int = 24, limit: int = 20) -> dict[str, Any]:
             (since, safe_limit),
         )
         page_rows = cur.fetchall()
+        cur.execute(
+            """
+            SELECT event_name, path, screen, properties_json, created_at
+            FROM analytics_events
+            WHERE created_at >= ?
+              AND event_name IN ('search_user_failed', 'run_analysis_failed', 'adopt_action_failed')
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (since, safe_limit),
+        )
+        failure_rows = cur.fetchall()
     return {
         "hours": safe_hours,
         "since": since,
@@ -389,5 +411,15 @@ def get_analytics_summary(hours: int = 24, limit: int = 20) -> dict[str, Any]:
                 "count": int(row["page_views"]),
             }
             for row in page_rows
+        ],
+        "recent_failures": [
+            {
+                "event_name": str(row["event_name"] or ""),
+                "path": str(row["path"] or "/"),
+                "screen": str(row["screen"] or ""),
+                "created_at": str(row["created_at"] or ""),
+                "properties": _safe_json_object(row["properties_json"]),
+            }
+            for row in failure_rows
         ],
     }
