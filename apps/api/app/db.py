@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import unicodedata
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -15,6 +16,11 @@ DEFAULT_DB_PATH = BASE_DIR / "data" / "habit_lab.sqlite3"
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _lookup_key(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value or "")
+    return normalized.replace("\u200b", "").replace("\ufeff", "").strip().lower()
 
 
 def get_db_path() -> Path:
@@ -264,14 +270,21 @@ def get_user_lookup(nickname: str) -> dict[str, str] | None:
     target = nickname.strip()
     if not target:
         return None
+    keys = [target]
+    normalized = _lookup_key(target)
+    if normalized and normalized != target:
+        keys.append(normalized)
     with db_cursor() as cur:
+        placeholders = ",".join("?" for _ in keys)
         cur.execute(
-            """
+            f"""
             SELECT nickname, ouid, source, updated_at
             FROM user_lookup_cache
-            WHERE nickname = ?
+            WHERE nickname IN ({placeholders})
+            ORDER BY updated_at DESC
+            LIMIT 1
             """,
-            (target,),
+            keys,
         )
         row = cur.fetchone()
     if row is None:
@@ -289,18 +302,24 @@ def save_user_lookup(nickname: str, ouid: str, source: str = "nexon_open_api") -
     target_ouid = ouid.strip()
     if not target_nickname or not target_ouid:
         return
+    lookup_keys = [target_nickname]
+    normalized = _lookup_key(target_nickname)
+    if normalized and normalized != target_nickname:
+        lookup_keys.append(normalized)
     with db_cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO user_lookup_cache (nickname, ouid, source, updated_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(nickname) DO UPDATE SET
-              ouid = excluded.ouid,
-              source = excluded.source,
-              updated_at = excluded.updated_at
-            """,
-            (target_nickname, target_ouid, source, utc_now_iso()),
-        )
+        now = utc_now_iso()
+        for lookup_key in lookup_keys:
+            cur.execute(
+                """
+                INSERT INTO user_lookup_cache (nickname, ouid, source, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(nickname) DO UPDATE SET
+                  ouid = excluded.ouid,
+                  source = excluded.source,
+                  updated_at = excluded.updated_at
+                """,
+                (lookup_key, target_ouid, source, now),
+            )
 
 
 def insert_analytics_event(

@@ -29,6 +29,7 @@ from app.services.analysis import (
     run_analysis,
 )
 from app.services.cache import CacheClient
+from app.services.analysis_utils import normalize_nickname
 from app.services.openapi_client import NexonOpenApiClient, OpenApiRateLimitError
 from app.services.ranker_source import ensure_official_rankers, fetch_official_rankers, list_official_rankers
 
@@ -43,6 +44,29 @@ _MATCH_SYNC_LAST_ATTEMPT: dict[tuple[str, int], datetime] = {}
 _MATCH_SYNC_GUARD_LOCK = threading.Lock()
 _RATE_LIMIT_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
 _RATE_LIMIT_LOCK = threading.Lock()
+_USER_SEARCH_LOCKS: dict[str, threading.Lock] = {}
+_USER_SEARCH_LOCKS_GUARD = threading.Lock()
+
+
+def _user_lookup_cache_ttl_sec() -> int:
+    raw = os.getenv("HABIT_LAB_USER_LOOKUP_CACHE_TTL_SEC", "2592000").strip()
+    try:
+        return max(3600, min(7776000, int(raw)))
+    except Exception:
+        return 2592000
+
+
+def _user_search_lock(key: str) -> threading.Lock:
+    with _USER_SEARCH_LOCKS_GUARD:
+        lock = _USER_SEARCH_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _USER_SEARCH_LOCKS[key] = lock
+        if len(_USER_SEARCH_LOCKS) > 5000:
+            for stale_key in list(_USER_SEARCH_LOCKS)[:1000]:
+                if stale_key != key:
+                    _USER_SEARCH_LOCKS.pop(stale_key, None)
+        return lock
 
 
 def _is_truthy(value: str | None) -> bool:
@@ -292,7 +316,12 @@ def health() -> dict[str, str]:
 def users_search(request: Request, nickname: str = Query(..., min_length=2)) -> UserSearchResponse:
     _enforce_rate_limit(request, scope="users_search", max_requests=12, window_sec=60)
     target_nickname = nickname.strip()
-    cache_key = f"user_search:{target_nickname}"
+    normalized_nickname = normalize_nickname(target_nickname)
+    if not normalized_nickname:
+        raise HTTPException(status_code=400, detail="닉네임을 입력해주세요.")
+    cache_key = f"user_search:{normalized_nickname}"
+    cache_ttl = _user_lookup_cache_ttl_sec()
+
     cached = cache.get_json(cache_key)
     if cached:
         return UserSearchResponse(**cached)
@@ -304,47 +333,70 @@ def users_search(request: Request, nickname: str = Query(..., min_length=2)) -> 
             "nickname": target_nickname,
             "source": "sqlite_user_lookup_cache",
         }
-        cache.set_json(cache_key, payload, ttl_sec=21600)
+        cache.set_json(cache_key, payload, ttl_sec=cache_ttl)
         return UserSearchResponse(**payload)
 
-    try:
-        client = NexonOpenApiClient()
-        payload = client.find_user_by_nickname(target_nickname)
-    except OpenApiRateLimitError as exc:
+    lock = _user_search_lock(normalized_nickname)
+    with lock:
+        cached = cache.get_json(cache_key)
+        if cached:
+            return UserSearchResponse(**cached)
+
+        cached_lookup = get_user_lookup(target_nickname)
         if cached_lookup and cached_lookup.get("ouid", "").strip():
             payload = {
                 "ouid": str(cached_lookup["ouid"]),
                 "nickname": target_nickname,
-                "source": "sqlite_user_lookup_cache_stale",
+                "source": "sqlite_user_lookup_cache",
             }
-            cache.set_json(cache_key, payload, ttl_sec=21600)
+            cache.set_json(cache_key, payload, ttl_sec=cache_ttl)
             return UserSearchResponse(**payload)
-        wait_seconds = int(round(exc.wait_seconds or 0))
-        if wait_seconds > 0:
+
+        cooldown = NexonOpenApiClient.cooldown_remaining_sec()
+        if cooldown > 0:
             raise HTTPException(
                 status_code=429,
-                detail=f"닉네임 조회 호출이 많아 잠시 제한되었습니다. 약 {wait_seconds}초 후 다시 시도해주세요.",
-            ) from exc
-        raise HTTPException(status_code=429, detail="닉네임 조회 호출이 많아 잠시 제한되었습니다. 1~2분 후 다시 시도해주세요.") from exc
-    except requests.HTTPError as exc:
-        status_code = exc.response.status_code if exc.response is not None else 502
-        if status_code == 429:
+                detail=f"닉네임 조회 호출이 많아 잠시 제한되었습니다. 약 {int(round(cooldown))}초 후 다시 시도해주세요.",
+            )
+
+        try:
+            client = NexonOpenApiClient()
+            payload = client.find_user_by_nickname(target_nickname)
+        except OpenApiRateLimitError as exc:
             if cached_lookup and cached_lookup.get("ouid", "").strip():
                 payload = {
                     "ouid": str(cached_lookup["ouid"]),
                     "nickname": target_nickname,
                     "source": "sqlite_user_lookup_cache_stale",
                 }
-                cache.set_json(cache_key, payload, ttl_sec=21600)
+                cache.set_json(cache_key, payload, ttl_sec=cache_ttl)
                 return UserSearchResponse(**payload)
+            wait_seconds = int(round(exc.wait_seconds or 0))
+            if wait_seconds > 0:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"닉네임 조회 호출이 많아 잠시 제한되었습니다. 약 {wait_seconds}초 후 다시 시도해주세요.",
+                ) from exc
             raise HTTPException(status_code=429, detail="닉네임 조회 호출이 많아 잠시 제한되었습니다. 1~2분 후 다시 시도해주세요.") from exc
-        raise HTTPException(status_code=status_code, detail=f"user search failed: {exc}") from exc
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"user search failed: {exc}") from exc
+        except requests.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else 502
+            if status_code == 429:
+                if cached_lookup and cached_lookup.get("ouid", "").strip():
+                    payload = {
+                        "ouid": str(cached_lookup["ouid"]),
+                        "nickname": target_nickname,
+                        "source": "sqlite_user_lookup_cache_stale",
+                    }
+                    cache.set_json(cache_key, payload, ttl_sec=cache_ttl)
+                    return UserSearchResponse(**payload)
+                raise HTTPException(status_code=429, detail="닉네임 조회 호출이 많아 잠시 제한되었습니다. 1~2분 후 다시 시도해주세요.") from exc
+            raise HTTPException(status_code=status_code, detail=f"user search failed: {exc}") from exc
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"user search failed: {exc}") from exc
 
-    save_user_lookup(target_nickname, str(payload.get("ouid", "")).strip(), source="nexon_open_api")
-    cache.set_json(cache_key, payload, ttl_sec=21600)
-    return UserSearchResponse(**payload)
+        save_user_lookup(target_nickname, str(payload.get("ouid", "")).strip(), source="nexon_open_api")
+        cache.set_json(cache_key, payload, ttl_sec=cache_ttl)
+        return UserSearchResponse(**payload)
 
 
 @app.post("/analysis/run")
