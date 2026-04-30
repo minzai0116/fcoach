@@ -37,7 +37,7 @@ flowchart LR
     A["닉네임 입력"] --> B["경기 데이터 수집"]
     B --> C["KPI 계산"]
     C --> D["문제 유형 진단"]
-    D --> E["액션 카드 제안"]
+    D --> E["전술 코칭 제안"]
     E --> F["전후 지표 비교"]
 ```
 
@@ -46,7 +46,7 @@ flowchart LR
 - 닉네임 기반 OUID 조회와 분석 실행 흐름 구현
 - 공식전/친선전, 최근 5·10·30경기 구간별 플레이 패턴 비교
 - 후반 실점, 찬스 생성, 마무리, 오프사이드 등 세부 이슈 점수화
-- 문제 원인별 액션 카드와 전술 변경 가이드 제공
+- 문제 원인별 전술 코칭과 전술 변경 가이드 제공
 - 랭커 기준 비교와 유사 성향 랭커 후보 제공
 - 선수 리포트에서 포지션 배치, 시즌/강화, 상세 성과표 제공
 - 클릭, 탭, 실행 이벤트 기록을 통한 운영 지표 추적
@@ -59,11 +59,13 @@ flowchart TD
     B --> C["SQLite Snapshot Store"]
     B --> D["Nexon Open API"]
     B --> E["FC Online DataCenter"]
+    B -. "선택 캐시/락" .-> F["Upstash Redis"]
 ```
 
 - Web은 분석 요청과 결과 렌더링을 담당합니다.
 - API는 외부 데이터를 수집하고 정규화한 뒤 분석 결과와 실험 로그를 생성합니다.
 - 저장 계층은 스냅샷, 실험 기록, 이벤트 로그를 관리합니다.
+- Redis는 선택 구성으로, Vercel 인스턴스 간 캐시와 중복 요청 방지 락을 공유합니다.
 - 읽기 경로와 동기화 경로를 분리해 사용자 체감 지연을 줄였습니다.
 
 ## 기술 스택
@@ -71,6 +73,7 @@ flowchart TD
 - 웹: `Next.js 15`, `React 19`, `TypeScript`
 - API: `FastAPI`, `Pydantic`
 - DB: `SQLite`
+- Cache: `Redis` 선택 구성
 - 데이터: `Nexon Open API`, `FC Online DataCenter`
 - 배포: `Vercel`
 
@@ -89,6 +92,8 @@ make init-db
 
 ```bash
 NEXON_OPEN_API_KEY=YOUR_NEXON_OPEN_API_KEY
+# 선택: Vercel 다중 인스턴스 캐시/락 공유
+REDIS_URL=rediss://...
 ```
 
 `apps/web/.env.local`:

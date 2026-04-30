@@ -124,8 +124,8 @@ function recommendationForOutcome(
   const currentLabel = issueLabelMap[actionCode] ?? actionCode;
   const fallback = {
     title: "재진단 권장",
-    description: "액션 플랜 탭에서 최신 진단을 다시 실행해 새로운 실험 후보를 생성하세요.",
-    reason: "현재 비교 가능한 보조 액션 카드가 없습니다.",
+    description: "전술 코칭 탭에서 최신 진단을 다시 실행해 새로운 실험 후보를 생성하세요.",
+    reason: "현재 비교 가능한 보조 추천이 없습니다.",
   };
 
   if (reliabilityClassName !== "issue-low") {

@@ -76,18 +76,37 @@ curl -I https://fcoach.fun
 ## 6. 운영 체크리스트
 
 - [ ] `events/summary` 보호 키 주기적 교체
-- [ ] 429 급증 시 `users/search` 캐시 TTL 상향
+- [ ] 429 급증 시 `REDIS_URL` 연결 상태와 Nexon Open API 사용량 확인
 - [ ] 랭커 동기화 배치 주기 점검(일 1회 권장)
 - [ ] 장애 대응용 상태 점검: `/health`
 - [ ] 배포 직후 모바일 동작(검색/탭/선수 리포트) 확인
 
-## 7. 롤백 전략
+## 7. 선택: Upstash Redis 캐시
+
+Redis는 SQLite를 대체하지 않고, Vercel 인스턴스 사이에서 닉네임 조회/경기 데이터 캐시와 중복 분석 방지 락을 공유하는 용도입니다.
+
+적용 절차:
+
+1. Upstash Redis에서 무료 Redis DB를 생성합니다.
+2. Connect 메뉴에서 `rediss://...` 형식의 Redis URL을 복사합니다.
+3. API 프로젝트에 `REDIS_URL` 환경변수로 추가합니다.
+4. API를 재배포합니다.
+
+```bash
+cd apps/api
+pbpaste | npx vercel env add REDIS_URL production
+npx vercel deploy --prod --yes
+```
+
+Redis가 없으면 기존처럼 메모리 캐시로 동작하지만, Vercel 인스턴스가 여러 개일 때 중복 Open API 호출을 막는 효과는 제한됩니다.
+
+## 8. 롤백 전략
 
 - Web: Vercel에서 이전 배포로 즉시 롤백
 - API: Vercel에서 직전 배포 Promote
 - 데이터: SQLite 파일 백업본 기준 복구
 
-## 8. 참고: `render.yaml`
+## 9. 참고: `render.yaml`
 
 - 루트 `render.yaml`은 상태 저장형 Python API 배포 구성을 검토할 때 참고하는 초안입니다.
 - 현재 공개 서비스의 기준 문서는 이 배포 가이드이며, `render.yaml`은 기본 배포 경로로 간주하지 않습니다.

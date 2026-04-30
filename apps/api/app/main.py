@@ -12,10 +12,8 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import (
-    get_analytics_summary,
     get_user_lookup,
     init_db,
-    insert_analytics_event,
     save_user_lookup,
     upsert_matches,
 )
@@ -29,6 +27,7 @@ from app.services.analysis import (
     run_analysis,
 )
 from app.services.cache import CacheClient
+from app.services.analytics_store import get_analytics_summary, record_analytics_event
 from app.services.analysis_utils import normalize_nickname
 from app.services.openapi_client import NexonOpenApiClient, OpenApiRateLimitError
 from app.services.ranker_source import ensure_official_rankers, fetch_official_rankers, list_official_rankers
@@ -54,6 +53,14 @@ def _user_lookup_cache_ttl_sec() -> int:
         return max(3600, min(7776000, int(raw)))
     except Exception:
         return 2592000
+
+
+def _analysis_cache_ttl_sec() -> int:
+    raw = os.getenv("HABIT_LAB_ANALYSIS_RESULT_CACHE_TTL_SEC", "45").strip()
+    try:
+        return max(15, min(300, int(raw)))
+    except Exception:
+        return 45
 
 
 def _user_search_lock(key: str) -> threading.Lock:
@@ -359,6 +366,24 @@ def users_search(request: Request, nickname: str = Query(..., min_length=2)) -> 
                 detail=f"닉네임 조회 호출이 많아 잠시 제한되었습니다. 약 {int(round(cooldown))}초 후 다시 시도해주세요.",
             )
 
+        distributed_lock_key = f"lock:user_search:{normalized_nickname}"
+        distributed_lock_token = cache.acquire_lock(distributed_lock_key, ttl_sec=20)
+        if distributed_lock_token is None:
+            time.sleep(0.25)
+            cached = cache.get_json(cache_key)
+            if cached:
+                return UserSearchResponse(**cached)
+            cached_lookup = get_user_lookup(target_nickname)
+            if cached_lookup and cached_lookup.get("ouid", "").strip():
+                payload = {
+                    "ouid": str(cached_lookup["ouid"]),
+                    "nickname": target_nickname,
+                    "source": "sqlite_user_lookup_cache",
+                }
+                cache.set_json(cache_key, payload, ttl_sec=cache_ttl)
+                return UserSearchResponse(**payload)
+            raise HTTPException(status_code=429, detail="같은 닉네임 조회가 처리 중입니다. 잠시 후 다시 시도해주세요.")
+
         try:
             client = NexonOpenApiClient()
             payload = client.find_user_by_nickname(target_nickname)
@@ -394,6 +419,9 @@ def users_search(request: Request, nickname: str = Query(..., min_length=2)) -> 
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"user search failed: {exc}") from exc
 
+        finally:
+            cache.release_lock(distributed_lock_key, distributed_lock_token)
+
         save_user_lookup(target_nickname, str(payload.get("ouid", "")).strip(), source="nexon_open_api")
         cache.set_json(cache_key, payload, ttl_sec=cache_ttl)
         return UserSearchResponse(**payload)
@@ -402,36 +430,48 @@ def users_search(request: Request, nickname: str = Query(..., min_length=2)) -> 
 @app.post("/analysis/run")
 def analysis_run(request: Request, req: AnalysisRunRequest) -> dict[str, Any]:
     _enforce_rate_limit(request, scope="analysis_run", max_requests=8, window_sec=60)
-    result = run_analysis(
-        ouid=req.ouid,
-        match_type=int(req.match_type),
-        window_size=int(req.window),
-        current_tactic=req.current_tactic,
-        manual_refresh_probe=True,
-    )
-    if int(result.get("sample_count", 0)) <= 0:
-        retry = run_analysis(
+    cache_key = f"latest_analysis:{req.ouid}:{req.match_type}:{req.window}"
+    lock_key = f"lock:analysis_run:{req.ouid}:{req.match_type}:{req.window}"
+    lock_token = cache.acquire_lock(lock_key, ttl_sec=60)
+    if lock_token is None:
+        cached = cache.get_json(cache_key)
+        if cached:
+            cached["refresh_warning"] = "동일한 분석이 처리 중이라 최근 분석 결과를 먼저 보여줍니다."
+            return cached
+        raise HTTPException(status_code=429, detail="동일한 분석이 처리 중입니다. 잠시 후 다시 시도해주세요.")
+    try:
+        result = run_analysis(
             ouid=req.ouid,
             match_type=int(req.match_type),
             window_size=int(req.window),
             current_tactic=req.current_tactic,
-            force_bootstrap_sync=True,
             manual_refresh_probe=True,
         )
-        if int(retry.get("sample_count", 0)) > 0:
-            result = retry
-    else:
-        _trigger_match_sync_async(
-            ouid=req.ouid,
-            match_type=int(req.match_type),
-            desired_matches=max(int(req.window), 12),
+        if int(result.get("sample_count", 0)) <= 0:
+            retry = run_analysis(
+                ouid=req.ouid,
+                match_type=int(req.match_type),
+                window_size=int(req.window),
+                current_tactic=req.current_tactic,
+                force_bootstrap_sync=True,
+                manual_refresh_probe=True,
+            )
+            if int(retry.get("sample_count", 0)) > 0:
+                result = retry
+        else:
+            _trigger_match_sync_async(
+                ouid=req.ouid,
+                match_type=int(req.match_type),
+                desired_matches=max(int(req.window), 12),
+            )
+        cache.set_json(
+            cache_key,
+            result,
+            ttl_sec=_analysis_cache_ttl_sec(),
         )
-    cache.set_json(
-        f"latest_analysis:{req.ouid}:{req.match_type}:{req.window}",
-        result,
-        ttl_sec=600,
-    )
-    return result
+        return result
+    finally:
+        cache.release_lock(lock_key, lock_token)
 
 
 @app.get("/analysis/latest")
@@ -496,7 +536,7 @@ def events_track(request: Request, req: EventTrackRequest) -> dict[str, Any]:
     event_name = req.event_name.strip()
     if not event_name:
         raise HTTPException(status_code=400, detail="event_name is required")
-    insert_analytics_event(
+    record_analytics_event(
         event_name=event_name,
         distinct_id=req.distinct_id,
         session_id=req.session_id,

@@ -5,7 +5,7 @@
 1. Search
 2. Diagnosis Dashboard
 3. Habit Analysis
-4. Action Plan
+4. Tactical Coaching
 5. Improvement Tracking
 
 ## Key UX rules
@@ -25,4 +25,3 @@
 - Single-column card layout.
 - Top issue card pinned at top of diagnosis section.
 - Tracking screen defaults to before/after compact summary.
-

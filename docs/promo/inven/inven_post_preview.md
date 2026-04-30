@@ -10,9 +10,9 @@
 
 ![진단 대시보드](/Users/kmj/Workspace/fc-habit-lab/docs/promo/inven/simple/screenshots/02_dashboard.png)
 
-## 3. 액션 플랜
+## 3. 전술 코칭
 
-![액션 플랜](/Users/kmj/Workspace/fc-habit-lab/docs/promo/inven/simple/screenshots/03_action_plan.png)
+![전술 코칭](/Users/kmj/Workspace/fc-habit-lab/docs/promo/inven/simple/screenshots/03_action_plan.png)
 
 ## 선택. 선수 리포트
 

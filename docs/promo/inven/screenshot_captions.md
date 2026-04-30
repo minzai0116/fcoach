@@ -9,7 +9,7 @@
 2. `simple/screenshots/02_dashboard.png`
    - 최근 경기 핵심 지표
 3. `simple/screenshots/03_action_plan.png`
-   - 다음 경기 액션 플랜
+   - 다음 경기 전술 코칭
 
 ## 선택 이미지
 

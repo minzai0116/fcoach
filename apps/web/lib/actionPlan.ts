@@ -156,7 +156,7 @@ export function fallbackPlanB(actionCode: string, tacticInputKnown: boolean): st
   }
   return [
     "2경기 연속 목표 미달이면 동일 이슈 액션을 1단계 강화",
-    "연패가 이어지면 다음 경기 시작 전 액션 #2로 전환",
+    "연패가 이어지면 다음 경기 시작 전 추천 #2로 전환",
   ];
 }
 
@@ -228,6 +228,6 @@ export function actionGuide(
   return {
     why: "고우선순위 이슈가 없어 현재 전술을 유지해도 됩니다.",
     doNow: "현재 세팅을 유지하고, 데이터가 쌓이면 다시 분석하세요.",
-    verify: "5경기 뒤 승률/실점이 악화되면 그때 액션 플랜을 다시 적용합니다.",
+    verify: "5경기 뒤 승률/실점이 악화되면 그때 전술 코칭을 다시 적용합니다.",
   };
 }

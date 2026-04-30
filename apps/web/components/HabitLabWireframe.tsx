@@ -1103,7 +1103,7 @@ export function HabitLabWireframe() {
       const latestExperiment = await loadLatestExperimentPreview(targetOuid, matchType);
       if (!latestExperiment) {
         setEvaluation(null);
-        setNotice("아직 시작된 실험이 없습니다. 액션 플랜에서 먼저 실험을 시작해주세요.");
+        setNotice("아직 시작된 실험이 없습니다. 전술 코칭에서 먼저 실험을 시작해주세요.");
         return;
       }
       const payload = await requestApi<EvaluationPayload>(`/experiments/evaluation?ouid=${targetOuid}&match_type=${matchType}`);
@@ -1554,7 +1554,7 @@ export function HabitLabWireframe() {
           <article className="panel">
             <h3 className="section-title">코치 요약</h3>
             <div className="coach-summary-stack">
-              {actions.length === 0 && <div className="guide-card">액션 플랜을 생성하려면 먼저 진단을 실행해주세요.</div>}
+              {actions.length === 0 && <div className="guide-card">전술 코칭을 생성하려면 먼저 진단을 실행해주세요.</div>}
               {actions.length > 0 && (
                 <>
                   <div className="guide-card">
@@ -1571,15 +1571,15 @@ export function HabitLabWireframe() {
                     <div className="guide-title">바로 다음 단계</div>
                     <p>
                       {tacticInputKnown
-                        ? "액션 플랜 탭에서 액션 #1을 채택하고 5경기 고정 적용하세요."
-                        : "액션 플랜 탭에서 액션 #1을 채택하고 5경기 테스트 후 고급 전술 입력으로 정밀 조정하세요."}
+                        ? "전술 코칭 탭에서 추천 #1을 채택하고 5경기 고정 적용하세요."
+                        : "전술 코칭 탭에서 추천 #1을 채택하고 5경기 테스트 후 고급 전술 입력으로 정밀 조정하세요."}
                     </p>
                   </div>
                 </>
               )}
               <div className="guide-card">
                 <div className="guide-title">해석 팁</div>
-                <p>습관 분석은 문제 우선순위만 보여줍니다. 실제 전술값은 액션 플랜 탭에서 확정하세요.</p>
+                <p>습관 분석은 문제 우선순위만 보여줍니다. 실제 전술값은 전술 코칭 탭에서 확정하세요.</p>
               </div>
             </div>
           </article>
@@ -1854,11 +1854,11 @@ export function HabitLabWireframe() {
       {screen === "actions" && (
         <section className="grid">
           <article className="panel">
-            <h3 className="section-title">액션 플랜 사용 순서</h3>
+            <h3 className="section-title">전술 코칭 사용 순서</h3>
             <div className="usage-flow">
               <div className="usage-step">
                 <span className="usage-index">1</span>
-                <p>{tacticInputKnown ? "액션 #1을 우선 5경기 고정 적용" : "액션 #1을 우선 5경기 테스트 적용"}</p>
+                <p>{tacticInputKnown ? "추천 #1을 우선 5경기 고정 적용" : "추천 #1을 우선 5경기 테스트 적용"}</p>
               </div>
               <div className="usage-step">
                 <span className="usage-index">2</span>
@@ -1870,7 +1870,7 @@ export function HabitLabWireframe() {
               </div>
             </div>
           </article>
-          {actions.length === 0 && <article className="panel muted">액션 카드가 없습니다. 먼저 진단을 실행하세요.</article>}
+          {actions.length === 0 && <article className="panel muted">전술 추천이 없습니다. 먼저 진단을 실행하세요.</article>}
           {actions.map((action) => {
             const benchmarkCompare = getBenchmarkCompare(action.evidence);
             const metricGapTable = getMetricGapTable(action.evidence);
@@ -1892,7 +1892,7 @@ export function HabitLabWireframe() {
             return (
               <article key={`${action.rank}-${action.actionCode}`} className="panel">
                 <h3 className="section-title">
-                  액션 #{action.rank}{" "}
+                  추천 #{action.rank}{" "}
                   <span className="pill">
                     신뢰도 {formatFixed(action.confidence, 2)} · <span className={confidenceInfo.className}>{confidenceInfo.label}</span>
                   </span>
@@ -1900,7 +1900,7 @@ export function HabitLabWireframe() {
                 <p className="muted">이슈: {ISSUE_LABELS[action.actionCode] ?? action.actionCode}</p>
                 <div className={`coach-focus-grid ${isPrimaryAction ? "" : "compact"}`.trim()}>
                   <div className={`focus-card ${isPrimaryAction ? "primary" : ""}`.trim()}>
-                    <p className="action-title">{isPrimaryAction ? "오늘의 1개 처방" : "보조 액션"}</p>
+                    <p className="action-title">{isPrimaryAction ? "오늘의 1개 처방" : "보조 추천"}</p>
                     <p className="focus-line">{focusPrescription}</p>
                     <p className="muted compact">{coachExplanation?.coach_message || guide.why}</p>
                     {confidenceDetail && (
@@ -2001,7 +2001,7 @@ export function HabitLabWireframe() {
                 )}
                 <div className="button-row">
                   <button className="btn" onClick={() => onAdoptAction(action)} disabled={loading}>
-                    이 액션으로 실험 시작
+                    이 추천으로 실험 시작
                   </button>
                 </div>
               </article>
@@ -2075,7 +2075,7 @@ export function HabitLabWireframe() {
             </p>
             <div className="notice ok">
               {experimentPreviewLoading && "실험 상태를 확인 중입니다..."}
-              {!experimentPreviewLoading && !experimentPreview && "시작된 실험이 없습니다. 액션 플랜에서 먼저 실험 시작을 눌러주세요."}
+              {!experimentPreviewLoading && !experimentPreview && "시작된 실험이 없습니다. 전술 코칭에서 먼저 실험 시작을 눌러주세요."}
               {!experimentPreviewLoading && experimentPreview && (
                 <>
                   <strong>진행 중 실험</strong>: {experimentPreview.action_title} (
@@ -2256,7 +2256,7 @@ export function HabitLabWireframe() {
             <article className="panel">
               <h3 className="section-title">3. 액션/개선 추적</h3>
               <ul className="list compact">
-                <li>액션 #1을 5경기 고정 적용</li>
+                <li>추천 #1을 5경기 고정 적용</li>
                 <li>한 경기 내 전술 변경은 최소화</li>
                 <li>개선 추적 탭에서 적용 전/후 비교</li>
               </ul>

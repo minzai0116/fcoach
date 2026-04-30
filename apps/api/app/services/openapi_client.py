@@ -10,9 +10,12 @@ from typing import Any
 import requests
 
 from app.env import load_local_env
+from app.services.cache import CacheClient
 
 
 BASE_URL = "https://open.api.nexon.com"
+_COOLDOWN_CACHE = CacheClient()
+_COOLDOWN_CACHE_KEY = "nexon_open_api:cooldown_until"
 
 
 class OpenApiRateLimitError(RuntimeError):
@@ -40,13 +43,26 @@ class NexonOpenApiClient:
 
     @classmethod
     def _set_rate_limit_window(cls, wait_seconds: float) -> None:
+        wait_seconds = max(1.0, wait_seconds)
+        limited_until = time.time() + wait_seconds
         with cls._state_lock:
-            cls._rate_limited_until = max(cls._rate_limited_until, time.time() + max(1.0, wait_seconds))
+            cls._rate_limited_until = max(cls._rate_limited_until, limited_until)
+        _COOLDOWN_CACHE.set_json(
+            _COOLDOWN_CACHE_KEY,
+            {"limited_until": limited_until},
+            ttl_sec=int(wait_seconds) + 5,
+        )
 
     @classmethod
     def cooldown_remaining_sec(cls) -> float:
         with cls._state_lock:
             remaining = cls._rate_limited_until - time.time()
+        cached = _COOLDOWN_CACHE.get_json(_COOLDOWN_CACHE_KEY)
+        if isinstance(cached, dict):
+            try:
+                remaining = max(remaining, float(cached.get("limited_until", 0)) - time.time())
+            except Exception:
+                pass
         return max(0.0, remaining)
 
     def _get(self, path: str, params: dict[str, Any]) -> Any:

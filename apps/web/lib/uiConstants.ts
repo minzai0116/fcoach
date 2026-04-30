@@ -5,21 +5,21 @@ export const SCREEN_LABELS: Record<ScreenKey, string> = {
   diagnosis: "진단 대시보드",
   players: "선수 리포트",
   habits: "습관 분석",
-  actions: "액션 플랜",
+  actions: "전술 코칭",
   rankers: "랭커 분석",
   tracking: "개선 추적",
   guide: "이용 가이드",
 };
 
 export const SCREEN_FLOW: { key: ScreenKey; icon: string; hint: string }[] = [
+  { key: "guide", icon: "📘", hint: "서비스 활용법" },
   { key: "search", icon: "🔎", hint: "대상/옵션 선택" },
   { key: "diagnosis", icon: "📊", hint: "핵심 지표 진단" },
   { key: "players", icon: "🧾", hint: "선수별 성과 분석" },
   { key: "habits", icon: "🧩", hint: "문제 습관 분해" },
-  { key: "actions", icon: "🎯", hint: "핵심 액션 실행" },
+  { key: "actions", icon: "🎯", hint: "맞춤 전술 추천" },
   { key: "rankers", icon: "🏅", hint: "랭커 비교 분석" },
   { key: "tracking", icon: "📈", hint: "적용 효과 검증" },
-  { key: "guide", icon: "📘", hint: "서비스 활용법" },
 ];
 
 export const MATCH_LABELS: Record<MatchType, string> = {
