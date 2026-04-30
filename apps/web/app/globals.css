@@ -1370,7 +1370,7 @@ code {
 
 .guide-step-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -1399,14 +1399,20 @@ code {
   gap: 10px;
 }
 
-.guide-tips {
+.guide-flow-panel {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: 14px;
 }
 
-.guide-note {
-  background: #fbfdff;
+.guide-mini-note {
+  margin: 0;
+  border: 1px solid #d7e2f3;
+  background: #f8fbff;
+  border-radius: 12px;
+  padding: 12px 14px;
+  color: #506176;
+  font-size: 14px;
+  line-height: 1.6;
 }
 
 .app-footer {
@@ -1561,7 +1567,6 @@ code {
   .coach-focus-grid,
   .player-chip-list,
   .guide-step-grid,
-  .guide-tips,
   .tracking-insight-list {
     grid-template-columns: 1fr;
   }

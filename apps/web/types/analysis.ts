@@ -274,15 +274,6 @@ export type MetricGapEntry = {
   gapValue: number;
 };
 
-export type ConfidenceDetail = {
-  base: number;
-  sample_factor: number;
-  severity_factor: number;
-  tactic_penalty: number;
-  confidence: number;
-  formula_text: string;
-};
-
 export type CoachKpiTarget = {
   metricName: string;
   label: string;

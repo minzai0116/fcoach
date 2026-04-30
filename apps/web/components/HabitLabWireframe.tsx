@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { FCoachLogo } from "./FCoachLogo";
 import {
   actionGuide,
-  fallbackPlanB,
   oneLinePrescription,
   tacticAdjustmentLines,
   type CurrentTactic,
@@ -339,17 +338,6 @@ type MetricGapEntry = {
   higher_is_better: boolean;
 };
 
-type ConfidenceDetail = {
-  base_score?: number;
-  sample_weight?: number;
-  severity_weight?: number;
-  tactic_missing_penalty?: number;
-  sample_score: number;
-  severity_score: number;
-  tactic_input_known: number;
-  final_confidence: number;
-};
-
 type CoachKpiTarget = {
   metricName: string;
   metricLabel: string;
@@ -432,23 +420,6 @@ function formatMetricValue(metricName: string, value: number): string {
 
 function metricDirectionText(metricName: string): string {
   return LOWER_IS_BETTER_METRICS.has(metricName) ? "낮을수록 좋음" : "높을수록 좋음";
-}
-
-function getConfidenceDetail(evidence: Record<string, unknown> | undefined): ConfidenceDetail | null {
-  if (!evidence) return null;
-  const raw = evidence["confidence_detail"];
-  if (!raw || typeof raw !== "object") return null;
-  const value = raw as Record<string, unknown>;
-  return {
-    base_score: Number(value.base_score ?? 0.35),
-    sample_weight: Number(value.sample_weight ?? 0.4),
-    severity_weight: Number(value.severity_weight ?? 0.25),
-    tactic_missing_penalty: Number(value.tactic_missing_penalty ?? 0.9),
-    sample_score: Number(value.sample_score ?? 0),
-    severity_score: Number(value.severity_score ?? 0),
-    tactic_input_known: Number(value.tactic_input_known ?? 1),
-    final_confidence: Number(value.final_confidence ?? 0),
-  };
 }
 
 function confidenceBand(value: number): { label: string; className: string } {
@@ -1124,6 +1095,14 @@ export function HabitLabWireframe() {
       setLoading(false);
     }
   }
+
+  const primaryActions = useMemo(() => {
+    const topAction = actions.reduce<ActionCard | null>(
+      (best, action) => (best === null || action.rank < best.rank ? action : best),
+      null,
+    );
+    return topAction ? [topAction] : [];
+  }, [actions]);
 
   return (
     <div className="container grid">
@@ -1854,29 +1833,17 @@ export function HabitLabWireframe() {
 
       {screen === "actions" && (
         <section className="grid">
-          <article className="panel">
-            <h3 className="section-title">전술 코칭 사용 순서</h3>
-            <div className="usage-flow">
-              <div className="usage-step">
-                <span className="usage-index">1</span>
-                <p>{tacticInputKnown ? "추천 #1을 우선 5경기 고정 적용" : "추천 #1을 우선 5경기 테스트 적용"}</p>
-              </div>
-              <div className="usage-step">
-                <span className="usage-index">2</span>
-                <p>{tacticInputKnown ? "경기 중 전술은 바꾸지 않고 결과만 기록" : "경기 중 전술 변경은 최소화하고 결과만 기록"}</p>
-              </div>
-              <div className="usage-step">
-                <span className="usage-index">3</span>
-                <p>5경기 후 개선 추적에서 전/후 비교</p>
-              </div>
-            </div>
+          <article className="panel coach-intro">
+            <h3 className="section-title">오늘의 전술 코칭</h3>
+            <p className="muted">
+              가장 우선순위가 높은 추천 1개만 보여줍니다. 경기 전 적용하고 같은 모드로 5경기 플레이한 뒤 개선 추적에서 전/후를 확인하세요.
+            </p>
           </article>
           {actions.length === 0 && <article className="panel muted">전술 추천이 없습니다. 먼저 진단을 실행하세요.</article>}
-          {actions.map((action) => {
+          {primaryActions.map((action) => {
             const benchmarkCompare = getBenchmarkCompare(action.evidence);
             const metricGapTable = getMetricGapTable(action.evidence);
             const similarRankers = getSimilarRankers(action.evidence);
-            const confidenceDetail = getConfidenceDetail(action.evidence);
             const confidenceInfo = confidenceBand(action.confidence);
             const gapValue = Number(benchmarkCompare?.gap_value ?? 0);
             const guide = actionGuide(action.actionCode, gapValue, action.tacticDelta, tacticInputKnown);
@@ -1888,118 +1855,68 @@ export function HabitLabWireframe() {
               tacticInputKnown,
             );
             const kpiTargets = buildCoachTargets(action.actionCode, metricGapTable, benchmarkCompare, similarRankers);
-            const planBItems = fallbackPlanB(action.actionCode, tacticInputKnown);
-            const isPrimaryAction = action.rank === 1;
             return (
               <article key={`${action.rank}-${action.actionCode}`} className="panel">
                 <h3 className="section-title">
-                  추천 #{action.rank}{" "}
+                  {ISSUE_LABELS[action.actionCode] ?? action.actionCode}{" "}
                   <span className="pill">
                     신뢰도 {formatFixed(action.confidence, 2)} · <span className={confidenceInfo.className}>{confidenceInfo.label}</span>
                   </span>
                 </h3>
-                <p className="muted">이슈: {ISSUE_LABELS[action.actionCode] ?? action.actionCode}</p>
-                <div className={`coach-focus-grid ${isPrimaryAction ? "" : "compact"}`.trim()}>
-                  <div className={`focus-card ${isPrimaryAction ? "primary" : ""}`.trim()}>
-                    <p className="action-title">{isPrimaryAction ? "오늘의 1개 처방" : "보조 추천"}</p>
+                <div className="coach-focus-grid single">
+                  <div className="focus-card primary">
+                    <p className="action-title">1개 처방</p>
                     <p className="focus-line">{focusPrescription}</p>
                     <p className="muted compact">{coachExplanation?.coach_message || guide.why}</p>
-                    {confidenceDetail && (
-                      <p className="muted compact">
-                        신뢰도 근거: 기본 {formatFixed(confidenceDetail.base_score ?? 0.35)} + 표본(
-                        {formatFixed(confidenceDetail.sample_score)}×{formatFixed(confidenceDetail.sample_weight ?? 0.4)}) + 이슈강도(
-                        {formatFixed(confidenceDetail.severity_score)}×{formatFixed(confidenceDetail.severity_weight ?? 0.25)})
-                        {confidenceDetail.tactic_input_known < 0.5
-                          ? ` × 전술 미입력 보정(${formatFixed(confidenceDetail.tactic_missing_penalty ?? 0.9)})`
-                          : ""}
-                      </p>
-                    )}
-                    <p className="muted compact">
-                      목표 기준: 랭커 기준치{similarRankers.length > 0 ? ` + 유사 랭커 ${similarRankers.length}명` : ""}.
-                    </p>
+                    {!!coachExplanation?.root_cause && <p className="muted compact">근거: {coachExplanation.root_cause}</p>}
                   </div>
                   <div className="focus-card">
-                    <p className="action-title">5경기 체크리스트(숫자 목표 2개)</p>
+                    <p className="action-title">전술 변경 추천</p>
+                    <ul className="list compact">
+                      {safeAdjustments.slice(0, 4).map((line) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                      {(coachExplanation?.execution_checklist ?? []).slice(0, 2).map((line) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                    </ul>
+                    <p className="muted compact">방향: {TACTIC_DIRECTION_KO[action.actionCode] ?? action.tacticDirection}</p>
+                  </div>
+                  <div className="focus-card">
+                    <p className="action-title">5경기 후 확인할 것</p>
                     {kpiTargets.length === 0 && <p className="muted compact">목표 지표를 계산할 데이터가 부족합니다.</p>}
                     {kpiTargets.length > 0 && (
                       <ul className="list compact">
-                        {kpiTargets.map((target) => (
+                        {kpiTargets.slice(0, 2).map((target) => (
                           <li key={target.metricName}>
                             <strong>
                               {target.metricLabel}: {target.currentText} → {target.targetText}
                             </strong>
-                            <div className="muted compact">
-                              기준 {target.benchmarkText}
-                              {target.similarText ? ` · 유사 랭커 ${target.similarText}` : ""}
-                            </div>
                             <div className="muted compact">{target.reasonText}</div>
-                            <div className="muted compact">{target.formulaText}</div>
                           </li>
                         ))}
                       </ul>
                     )}
-                  </div>
-                  <div className="focus-card">
-                    <p className="action-title">개선 없을 때 플랜B</p>
-                    <ul className="list compact">
-                      {planBItems.map((line) => (
-                        <li key={line}>{line}</li>
-                      ))}
-                    </ul>
+                    <p className="muted compact">{coachExplanation?.expected_effect || guide.verify}</p>
                   </div>
                 </div>
-                {isPrimaryAction && (
                 <details className="detail-block">
-                  <summary>상세 코칭 노트</summary>
+                  <summary>랭커 기준과 세부 근거 보기</summary>
                   <div className="detail-content">
-                    <div className="action-grid">
-                      <div className="action-block">
-                        <p className="action-title">왜 바꾸나</p>
-                        <p>{coachExplanation?.coach_message || guide.why}</p>
-                        {!!coachExplanation?.root_cause && <p className="muted compact">근거: {coachExplanation.root_cause}</p>}
-                      </div>
-                      <div className="action-block">
-                        <p className="action-title">전술 변경 추천</p>
-                        <ul className="list compact">
-                          {safeAdjustments.map((line) => (
-                            <li key={line}>{line}</li>
-                          ))}
-                          {(coachExplanation?.execution_checklist ?? []).slice(0, 3).map((line) => (
-                            <li key={line}>{line}</li>
-                          ))}
-                        </ul>
-                        <p className="muted">방향: {TACTIC_DIRECTION_KO[action.actionCode] ?? action.tacticDirection}</p>
-                      </div>
-                      <div className="action-block">
-                        <p className="action-title">검증 기준</p>
-                        <p>{coachExplanation?.expected_effect || guide.verify}</p>
-                        {(coachExplanation?.in_game_signals ?? []).length > 0 && (
-                          <>
-                            <p className="muted compact">
-                              {tacticInputKnown ? "경기 중 관찰 포인트(전술 고정)" : "경기 중 관찰 포인트(전술 변경 최소화)"}
-                            </p>
-                            <ul className="list compact">
-                              {(coachExplanation?.in_game_signals ?? []).slice(0, 2).map((line) => (
-                                <li key={line}>{line}</li>
-                              ))}
-                            </ul>
-                          </>
-                        )}
-                        {(coachExplanation?.failure_patterns ?? []).length > 0 && (
-                          <>
-                            <p className="muted compact">주의 패턴</p>
-                            <ul className="list compact">
-                              {(coachExplanation?.failure_patterns ?? []).slice(0, 2).map((line) => (
-                                <li key={line}>{line}</li>
-                              ))}
-                            </ul>
-                          </>
-                        )}
-                      </div>
-                    </div>
+                    <p className="muted compact">목표 기준: 랭커 기준치{similarRankers.length > 0 ? ` + 유사 랭커 ${similarRankers.length}명` : ""}</p>
+                    <ul className="list compact">
+                      {kpiTargets.slice(0, 2).map((target) => (
+                        <li key={target.metricName}>
+                          {target.metricLabel}: 내 값 {target.currentText} / 기준 {target.benchmarkText}
+                          {target.similarText ? ` / 유사 랭커 ${target.similarText}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                    {(coachExplanation?.failure_patterns ?? []).length > 0 && (
+                      <p className="muted compact">주의: {(coachExplanation?.failure_patterns ?? []).slice(0, 2).join(" / ")}</p>
+                    )}
                   </div>
                 </details>
-                )}
                 <div className="button-row">
                   <button className="btn" onClick={() => onAdoptAction(action)} disabled={loading}>
                     이 추천으로 실험 시작

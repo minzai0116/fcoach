@@ -127,39 +127,6 @@ export function oneLinePrescription(
   return `${mainAdjustment}를 5경기 고정 적용해 ${issueLabel}를 우선 교정하세요.`;
 }
 
-export function fallbackPlanB(actionCode: string, tacticInputKnown: boolean): string[] {
-  if (actionCode === "CHANCE_CREATION_LOW") {
-    return [
-      "2경기 연속 xG 개선이 없으면 공격 폭을 추가 +1 조정",
-      tacticInputKnown
-        ? "여전히 정체면 다음 3경기는 기회 만들기를 밸런스로 고정"
-        : "여전히 정체면 다음 3경기는 빌드업 플레이 후보(밸런스/짧은 패스) 중 1개를 테스트",
-    ];
-  }
-  if (actionCode === "LOW_FINISHING") {
-    return [
-      "2경기 연속 득점률 정체 시 박스 안 쪽 선수 값을 1단계 더 상향",
-      "중거리 비중 과다 시 다음 경기부터 공격 폭을 1단계 하향",
-    ];
-  }
-  if (actionCode === "OFFSIDE_RISK") {
-    return [
-      "2경기 평균 오프사이드 0.7 이상이면 공격 폭을 추가 -1 조정",
-      "찬스 급감 시 스루패스 비중만 복원하고 전술 수치는 유지",
-    ];
-  }
-  if (actionCode === "HIGH_LATE_CONCEDE") {
-    return [
-      "2경기 연속 후반 실점 발생 시 수비 깊이 추가 -1 조정",
-      "역습 실점 반복이면 풀백 오버랩 빈도를 다음 경기에서 제한",
-    ];
-  }
-  return [
-    "2경기 연속 목표 미달이면 동일 이슈 액션을 1단계 강화",
-    "연패가 이어지면 다음 경기 시작 전 추천 #2로 전환",
-  ];
-}
-
 export function actionGuide(
   actionCode: string,
   gapValue: number,
