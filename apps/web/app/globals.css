@@ -1368,6 +1368,27 @@ code {
   margin: 8px 0 0;
 }
 
+.guide-step-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.guide-step-card {
+  border: 1px solid #cfe0f5;
+  background: linear-gradient(180deg, #f8fbff, #eef6ff);
+  border-radius: 14px;
+  padding: 14px;
+  min-height: 132px;
+}
+
+.guide-step-card p {
+  margin: 10px 0 0;
+  color: #506176;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
 .guide-title {
   font-weight: 700;
   color: #24436b;
@@ -1382,6 +1403,10 @@ code {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+}
+
+.guide-note {
+  background: #fbfdff;
 }
 
 .app-footer {
@@ -1513,6 +1538,10 @@ code {
   .flow-rail {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+
+  .guide-step-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 900px) {
@@ -1531,6 +1560,7 @@ code {
   .action-grid,
   .coach-focus-grid,
   .player-chip-list,
+  .guide-step-grid,
   .guide-tips,
   .tracking-insight-list {
     grid-template-columns: 1fr;

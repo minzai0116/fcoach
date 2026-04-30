@@ -56,6 +56,7 @@ import type {
   WindowSize,
 } from "../types/analysis";
 import { PlayerPortrait } from "./player/PlayerPortrait";
+import { GuideScreen } from "./guide/GuideScreen";
 import {
   buildFormationNodes,
   enhanceLevelClass,
@@ -552,7 +553,7 @@ function normalizeErrorMessage(error: unknown, fallbackMessage: string): string 
 }
 
 export function HabitLabWireframe() {
-  const [screen, setScreen] = useState<ScreenKey>("search");
+  const [screen, setScreen] = useState<ScreenKey>("guide");
   const [matchType, setMatchType] = useState<MatchType>(60);
   const [windowSize, setWindowSize] = useState<WindowSize>(30);
   const [nicknameInput, setNicknameInput] = useState("");
@@ -2004,6 +2005,9 @@ export function HabitLabWireframe() {
                     이 추천으로 실험 시작
                   </button>
                 </div>
+                <p className="muted compact">
+                  실험 시작 후 같은 모드로 5경기를 진행하고, 다시 진단 실행 → 개선 추적에서 평가 갱신 순서로 확인하세요.
+                </p>
               </article>
             );
           })}
@@ -2071,7 +2075,7 @@ export function HabitLabWireframe() {
             <h3 className="section-title">평가 실행</h3>
             <p className="muted">최근 채택한 액션 실험의 전/후 지표를 계산합니다.</p>
             <p className="muted compact">
-              실험 시작 시각 기준으로 PRE/POST를 자동 분리합니다. 새로고침/재접속 후에도 현재 실험 상태를 그대로 확인할 수 있습니다.
+              실험 시작 후 플레이한 경기만 POST로 계산합니다. 새 경기를 마친 뒤에는 먼저 검색/설정에서 다시 진단을 실행하고 평가를 갱신하세요.
             </p>
             <div className="notice ok">
               {experimentPreviewLoading && "실험 상태를 확인 중입니다..."}
@@ -2223,64 +2227,13 @@ export function HabitLabWireframe() {
       )}
 
       {screen === "guide" && (
-        <section className="grid">
-          <article className="panel guide-hero">
-            <h2 className="section-title">FCOACH 이용 가이드</h2>
-            <p className="muted">
-              닉네임만 입력하면 <strong>진단 → 액션 채택 → 5경기 검증</strong> 루프를 한 번에 수행할 수 있습니다.
-            </p>
-            <div className="button-row">
-              <button className="btn" onClick={() => setScreen("search")}>
-                지금 분석 시작하기
-              </button>
-            </div>
-          </article>
-
-          <section className="grid grid-3">
-            <article className="panel">
-              <h3 className="section-title">1. 검색/설정</h3>
-              <ul className="list compact">
-                <li>닉네임 입력 후 빠른 시작 실행</li>
-                <li>공식/친선 및 5·10·30경기 기준 선택</li>
-                <li>필요할 때만 고급 전술 입력 사용</li>
-              </ul>
-            </article>
-            <article className="panel">
-              <h3 className="section-title">2. 진단/습관 분석</h3>
-              <ul className="list compact">
-                <li>핵심 지표와 랭커 기준 차이 확인</li>
-                <li>이슈 점수 상위 3개 우선순위 확인</li>
-                <li>선수 리포트에서 주전 기여도 점검</li>
-              </ul>
-            </article>
-            <article className="panel">
-              <h3 className="section-title">3. 액션/개선 추적</h3>
-              <ul className="list compact">
-                <li>추천 #1을 5경기 고정 적용</li>
-                <li>한 경기 내 전술 변경은 최소화</li>
-                <li>개선 추적 탭에서 적용 전/후 비교</li>
-              </ul>
-            </article>
-          </section>
-
-          <article className="panel">
-            <h3 className="section-title">AI 코치 리포트 해석 팁</h3>
-            <div className="guide-tips">
-              <div className="guide-card">
-                <div className="guide-title">왜 바꾸나</div>
-                <p>랭커 기준 대비 가장 손실이 큰 지표를 먼저 교정합니다.</p>
-              </div>
-              <div className="guide-card">
-                <div className="guide-title">전술 변경 추천</div>
-                <p>경기 중 실시간 변경보다, 경기 전 설정을 고정해 실험 정확도를 높입니다.</p>
-              </div>
-              <div className="guide-card">
-                <div className="guide-title">검증 기준</div>
-                <p>5경기 기준으로 목표 지표가 개선되면 유지, 미개선 시 플랜B를 적용합니다.</p>
-              </div>
-            </div>
-          </article>
-        </section>
+        <GuideScreen
+          hasActions={actions.length > 0}
+          hasExperiment={Boolean(experimentPreview)}
+          onOpenActions={() => setScreen("actions")}
+          onOpenTracking={() => setScreen("tracking")}
+          onStartSearch={() => setScreen("search")}
+        />
       )}
 
       <footer className="app-footer">
