@@ -1,0 +1,10 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="fcoach-favicon-gradient" x1="72" x2="440" y1="72" y2="440" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1d4ed8"/>
+      <stop offset="1" stop-color="#06b6d4"/>
+    </linearGradient>
+  </defs>
+  <rect x="32" y="32" width="448" height="448" rx="112" fill="url(#fcoach-favicon-gradient)"/>
+  <path d="M168 344V168h176v52H220v35h104v52H220v37h-52z" fill="#fff"/>
+</svg>

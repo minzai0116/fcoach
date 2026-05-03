@@ -381,6 +381,19 @@ def get_analytics_summary(hours: int = 24, limit: int = 20) -> dict[str, Any]:
         event_rows = cur.fetchall()
         cur.execute(
             """
+            SELECT event_name, COUNT(*) AS event_count
+            FROM analytics_events
+            WHERE created_at >= ? AND event_name IN ('visitor_first_seen', 'visitor_return')
+            GROUP BY event_name
+            """,
+            (since,),
+        )
+        event_counts = {str(row["event_name"]): int(row["event_count"]) for row in cur.fetchall()}
+        new_visitors = event_counts.get("visitor_first_seen", 0)
+        returning_visitors = event_counts.get("visitor_return", 0)
+        visitor_lifecycle_events = new_visitors + returning_visitors
+        cur.execute(
+            """
             SELECT COUNT(*) AS total_events, COUNT(DISTINCT distinct_id) AS unique_users
             FROM analytics_events
             WHERE created_at >= ?
@@ -417,6 +430,9 @@ def get_analytics_summary(hours: int = 24, limit: int = 20) -> dict[str, Any]:
         "since": since,
         "total_events": int(aggregate["total_events"]) if aggregate else 0,
         "unique_users": int(aggregate["unique_users"]) if aggregate else 0,
+        "new_visitors": new_visitors,
+        "returning_visitors": returning_visitors,
+        "return_rate": returning_visitors / visitor_lifecycle_events if visitor_lifecycle_events else 0.0,
         "events": [
             {
                 "event_name": str(row["event_name"]),

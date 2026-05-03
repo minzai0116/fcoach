@@ -17,7 +17,7 @@ import {
   tacticBandLabel,
   TACTIC_STYLE_OPTIONS,
 } from "../lib/tactic";
-import { requestApi, trackEvent } from "../lib/apiClient";
+import { requestApi, trackEvent, trackVisitorLifecycle } from "../lib/apiClient";
 import {
   BENCHMARK_SOURCE_LABEL,
   ISSUE_DETAIL,
@@ -757,6 +757,10 @@ export function HabitLabWireframe() {
   }, [actions.length, analysis, evaluation, experimentPreview, officialRankers.length, ouidInput, playerRows.length, similarRankersForView.length]);
 
   useEffect(() => {
+    trackVisitorLifecycle(screen);
+  }, [screen]);
+
+  useEffect(() => {
     trackEvent("page_view", {
       screen,
       matchType,
@@ -1108,6 +1112,9 @@ export function HabitLabWireframe() {
     <div className="container grid">
       <header>
         <FCoachLogo />
+        <p className="subtitle">
+          FC온라인 닉네임만 입력하면 최근 경기 로그를 분석해 전술 코칭, 선수 리포트, 개선 추적을 제공합니다.
+        </p>
       </header>
 
       <section className="panel grid">

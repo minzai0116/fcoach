@@ -136,12 +136,18 @@ class RedisAnalyticsStore:
             return get_sqlite_analytics_summary(hours=hours, limit=limit)
 
         failures.sort(key=lambda item: str(item.get("created_at", "")), reverse=True)
+        new_visitors = int(event_counts.get("visitor_first_seen", 0))
+        returning_visitors = int(event_counts.get("visitor_return", 0))
+        visitor_lifecycle_events = new_visitors + returning_visitors
         return {
             "hours": safe_hours,
             "since": since.isoformat(),
             "source": "redis",
             "total_events": int(sum(event_counts.values())),
             "unique_users": len(users),
+            "new_visitors": new_visitors,
+            "returning_visitors": returning_visitors,
+            "return_rate": returning_visitors / visitor_lifecycle_events if visitor_lifecycle_events else 0.0,
             "events": [
                 {"event_name": event_name, "count": count}
                 for event_name, count in event_counts.most_common(safe_limit)

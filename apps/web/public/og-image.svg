@@ -1,0 +1,19 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="fcoach-og-bg" x1="0" x2="1200" y1="0" y2="630" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#eef4ff"/>
+      <stop offset="1" stop-color="#dbeafe"/>
+    </linearGradient>
+    <linearGradient id="fcoach-og-logo" x1="90" x2="250" y1="90" y2="250" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1d4ed8"/>
+      <stop offset="1" stop-color="#06b6d4"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#fcoach-og-bg)"/>
+  <rect x="80" y="80" width="170" height="170" rx="42" fill="url(#fcoach-og-logo)"/>
+  <path d="M132 192V132h70v18h-51v14h43v18h-43v10h-19z" fill="#fff"/>
+  <text x="295" y="157" fill="#172033" font-family="Arial, sans-serif" font-size="72" font-weight="800">FCOACH</text>
+  <text x="295" y="225" fill="#35506f" font-family="Arial, sans-serif" font-size="32" font-weight="600">FC온라인 전술 코칭 · 선수 리포트 · 개선 추적</text>
+  <text x="86" y="392" fill="#172033" font-family="Arial, sans-serif" font-size="54" font-weight="800">닉네임만 입력하면 최근 경기 로그를 분석합니다</text>
+  <text x="88" y="458" fill="#35506f" font-family="Arial, sans-serif" font-size="34">핵심 지표와 전술 코칭을 확인하고 5경기 실험으로 개선을 추적하세요.</text>
+</svg>

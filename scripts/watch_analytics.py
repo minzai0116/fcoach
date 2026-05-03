@@ -14,9 +14,11 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_API_URL = "https://fcoach-api.vercel.app"
+DEFAULT_API_URL = "https://api.fcoach.fun"
 DEFAULT_INTERVAL_SEC = 10
 EVENT_LABELS = {
+    "visitor_first_seen": "신규 방문",
+    "visitor_return": "재방문",
     "page_view": "페이지 방문",
     "tab_click": "탭 클릭",
     "search_user": "닉네임 검색",
@@ -110,6 +112,18 @@ def print_bar(label: str, value: int, max_value: int) -> None:
     print(f"{label:<14} {value:>5}  {bar}")
 
 
+def format_percent(value: float) -> str:
+    return f"{value * 100:.1f}%"
+
+
+def visitor_lifecycle(summary: dict[str, Any]) -> tuple[int, int, float]:
+    new_visitors = int(summary.get("new_visitors") or event_count(summary, "visitor_first_seen"))
+    returning_visitors = int(summary.get("returning_visitors") or event_count(summary, "visitor_return"))
+    total = new_visitors + returning_visitors
+    return_rate = float(summary.get("return_rate") or (returning_visitors / total if total else 0.0))
+    return new_visitors, returning_visitors, return_rate
+
+
 def render_recent_failures(summary: dict[str, Any]) -> None:
     failures = summary.get("recent_failures", [])
     print("최근 실패 원인")
@@ -130,7 +144,8 @@ def render_recent_failures(summary: dict[str, Any]) -> None:
 def render_summary(summary: dict[str, Any], api_url: str, interval_sec: int) -> None:
     events = summary.get("events", [])
     page_views = summary.get("page_views", [])
-    max_event_count = max([int(event.get("count") or 0) for event in events] + [1])
+    new_visitors, returning_visitors, return_rate = visitor_lifecycle(summary)
+    max_event_count = max([int(event.get("count") or 0) for event in events] + [new_visitors, returning_visitors, 1])
 
     print("FCOACH 실시간 이용 현황")
     print("=" * 64)
@@ -140,9 +155,12 @@ def render_summary(summary: dict[str, Any], api_url: str, interval_sec: int) -> 
     print(f"집계 시작: {format_local_time(summary.get('since'))}")
     print("-" * 64)
     print(f"방문자 수: {int(summary.get('unique_users') or 0)}명")
+    print(f"신규/재방문: {new_visitors}명 / {returning_visitors}명 · 재방문률 {format_percent(return_rate)}")
     print(f"전체 이벤트: {int(summary.get('total_events') or 0)}건")
     print()
     print("핵심 이벤트")
+    print_bar("신규 방문", new_visitors, max_event_count)
+    print_bar("재방문", returning_visitors, max_event_count)
     print_bar("페이지 방문", event_count(summary, "page_view"), max_event_count)
     print_bar("닉네임 검색", event_count(summary, "search_user"), max_event_count)
     print_bar("닉네임 실패", event_count(summary, "search_user_failed"), max_event_count)
@@ -200,7 +218,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hours", type=int, default=24, help="조회 시간 범위. 기본값: 24")
     parser.add_argument("--limit", type=int, default=20, help="상세 항목 개수. 기본값: 20")
     parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL_SEC, help="갱신 주기(초). 기본값: 10")
-    parser.add_argument("--timeout", type=float, default=8.0, help="요청 타임아웃(초). 기본값: 8")
+    parser.add_argument("--timeout", type=float, default=30.0, help="요청 타임아웃(초). 기본값: 30")
     parser.add_argument("--env-file", default=None, help="관리자키를 읽을 env 파일 경로")
     parser.add_argument("--once", action="store_true", help="한 번만 조회하고 종료")
     return parser.parse_args()
