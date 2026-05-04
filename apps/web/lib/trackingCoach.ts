@@ -84,30 +84,35 @@ function metricTone(metric: MetricConfig, delta: number): "good" | "bad" | "neut
   return improved ? "good" : "bad";
 }
 
-function reliabilityInfo(postCount: number, windowSize: number): {
+function reliabilityInfo(postCount: number): {
   label: string;
   detail: string;
   className: "issue-low" | "issue-mid" | "issue-high";
 } {
-  const safeWindow = Math.max(1, windowSize);
-  const coverage = postCount / safeWindow;
-  if (postCount < 3) {
+  if (postCount <= 0) {
     return {
-      label: "낮음",
-      detail: `POST 표본 ${postCount}/${safeWindow}경기입니다. 지금은 방향성 참고 단계입니다.`,
+      label: "대기",
+      detail: "실험 시작 후 반영된 경기가 없습니다. 새 경기를 한 뒤 다시 진단하세요.",
       className: "issue-high",
     };
   }
-  if (coverage < 1) {
+  if (postCount < 3) {
     return {
-      label: "보통",
-      detail: `POST 표본 ${postCount}/${safeWindow}경기입니다. 1차 결론 전 추가 표본이 필요합니다.`,
+      label: "참고용",
+      detail: `POST 표본 ${postCount}경기입니다. 아직은 방향만 확인하고 같은 플랜을 조금 더 유지하세요.`,
+      className: "issue-high",
+    };
+  }
+  if (postCount < 5) {
+    return {
+      label: "초기 신호",
+      detail: `POST 표본 ${postCount}경기입니다. 1차 평가는 가능하지만 5경기 이상이면 더 안정적입니다.`,
       className: "issue-mid",
     };
   }
   return {
-    label: "높음",
-    detail: `POST 표본 ${postCount}/${safeWindow}경기를 채워 1차 검증 신뢰도가 확보되었습니다.`,
+    label: "평가 가능",
+    detail: `POST 표본 ${postCount}경기로 1차 평가가 가능합니다.`,
     className: "issue-low",
   };
 }
@@ -119,7 +124,6 @@ function recommendationForOutcome(
   issueLabelMap: Record<string, string>,
   actions: TrackingActionCandidate[],
   postCount: number,
-  windowSize: number,
 ): { title: string; description: string; reason: string } {
   const currentLabel = issueLabelMap[actionCode] ?? actionCode;
   const fallback = {
@@ -131,7 +135,7 @@ function recommendationForOutcome(
   if (reliabilityClassName !== "issue-low") {
     return {
       title: "현재 실험 유지",
-      description: `아직 POST 표본이 ${postCount}/${Math.max(1, windowSize)}경기입니다. 동일 플랜으로 표본을 먼저 채우세요.`,
+      description: `아직 POST 표본이 ${postCount}경기입니다. 최소 3경기 이상, 가능하면 5경기 이상 같은 플랜을 유지하세요.`,
       reason: "표본 부족 상태에서 전술을 바꾸면 실험 결과 해석이 어려워집니다.",
     };
   }
@@ -159,7 +163,7 @@ function recommendationForOutcome(
 
   return {
     title: `전환 권장: ${issueLabelMap[nextAction.actionCode] ?? nextAction.actionCode}`,
-    description: `${nextAction.title} 액션으로 5경기 재실험을 권장합니다.`,
+    description: `${nextAction.title} 액션으로 다음 실험을 권장합니다.`,
     reason: "현재 액션의 개선 폭이 제한적이거나 일부 지표가 악화되었습니다.",
   };
 }
@@ -207,7 +211,7 @@ export function buildTrackingCoachInsight(input: {
   if (goodCount >= 3 && badCount === 0) outcome = "good";
   else if (badCount >= 2) outcome = "bad";
 
-  const reliability = reliabilityInfo(postCount, windowSize);
+  const reliability = reliabilityInfo(postCount);
   const issueLabel = actionCode ? issueLabelMap[actionCode] ?? actionCode : "현재 실험";
 
   const headline =
@@ -231,7 +235,6 @@ export function buildTrackingCoachInsight(input: {
     issueLabelMap,
     input.actions ?? [],
     postCount,
-    windowSize,
   );
 
   const worstMetric = [...metricInsights].sort((left, right) => left.qualityDelta - right.qualityDelta)[0];

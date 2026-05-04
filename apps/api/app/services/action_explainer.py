@@ -39,10 +39,10 @@ def _baseline_explanation(
 
     coach_message = (
         f"{issue_label} 기준 지표가 랭커 기준 대비 {_fmt(gap_value)} 차이입니다. "
-        "다음 5경기 동안 단일 플랜으로 고정 운영하고, 한 경기 내 전술 변경은 하지 마세요."
+        "다음 플레이 구간 동안 단일 플랜으로 고정 운영하고, 한 경기 내 전술 변경은 하지 마세요."
         if tactic_input_known
         else f"{issue_label} 기준 지표가 랭커 기준 대비 {_fmt(gap_value)} 차이입니다. "
-        "현재 전술 입력이 없어 권장 방향 테스트안으로 제시합니다. 다음 5경기는 1개 플랜만 유지해 추세를 확인하세요."
+        "현재 전술 입력이 없어 권장 방향 테스트안으로 제시합니다. 최소 3경기 이상 같은 플랜을 유지해 추세를 확인하세요."
     )
 
     execution_checklist = (
@@ -54,7 +54,7 @@ def _baseline_explanation(
         ]
         if tactic_input_known
         else [
-            "권장 방향 중 1개 플랜만 선택해 5경기 유지",
+            "권장 방향 중 1개 플랜만 선택해 최소 3경기 이상 유지",
             "경기 중 실시간 전술 변경은 최소화",
             "첫 2경기는 승패보다 xG/유효슈팅 추세를 확인",
             f"권장 테스트 포인트: {', '.join(primary_change[:3])}",
@@ -62,9 +62,9 @@ def _baseline_explanation(
     )
 
     expected_effect = (
-        "5경기 내 핵심 지표가 기준에 30~50% 수준으로 근접하면 플랜 유지"
+        "다음 진단에서 핵심 지표가 기준에 30~50% 수준으로 근접하면 플랜 유지"
         if tactic_input_known
-        else "5경기 내 핵심 지표가 개선 추세를 보이면, 그때 고급 전술 입력 기반 정밀 조정으로 전환"
+        else "다음 진단에서 핵심 지표가 개선 추세를 보이면, 그때 고급 전술 입력 기반 정밀 조정으로 전환"
     )
 
     generic = {

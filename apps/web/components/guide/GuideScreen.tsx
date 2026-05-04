@@ -18,12 +18,12 @@ const experimentSteps = [
     body: "전술 코칭에서 가장 납득되는 추천 1개로 실험을 시작합니다.",
   },
   {
-    title: "3. 5경기 적용",
-    body: "같은 모드에서 추천 전술을 5경기 동안 고정 적용합니다.",
+    title: "3. 같은 전술로 플레이",
+    body: "같은 모드에서 추천 전술을 유지하고 최소 3경기, 가능하면 5경기 이상 플레이합니다.",
   },
   {
-    title: "4. 개선 확인",
-    body: "다시 진단한 뒤 개선 추적에서 적용 전/후를 비교합니다.",
+    title: "4. 다시 진단/평가",
+    body: "플레이 후 빠른 시작을 다시 누르고 개선 추적에서 적용 전/후를 비교합니다.",
   },
 ];
 
@@ -38,7 +38,7 @@ export function GuideScreen({
     <section className="grid">
       <article className="panel guide-hero">
         <p className="eyebrow">처음 오셨다면 여기부터</p>
-        <h2 className="section-title">FCOACH는 “진단 → 5경기 실험 → 개선 확인” 도구입니다</h2>
+        <h2 className="section-title">FCOACH는 “진단 → 전술 실험 → 개선 확인” 도구입니다</h2>
         <p className="muted">
           자동으로 승률을 올려주는 서비스가 아니라, 최근 경기 로그에서 문제를 찾고 한 번에 하나씩 검증하도록 도와주는 개인 코치입니다.
         </p>
@@ -70,7 +70,7 @@ export function GuideScreen({
           ))}
         </div>
         <p className="guide-mini-note">
-          핵심은 단순합니다. 전술은 한 번에 하나만 바꾸고, 새 경기를 한 뒤에는 다시 진단해야 최신 로그가 반영됩니다.
+          전술은 한 번에 하나만 바꾸세요. 1~2경기는 참고용, 3~4경기는 초기 신호, 5경기 이상이면 더 안정적으로 해석합니다.
         </p>
       </article>
     </section>

@@ -1558,8 +1558,8 @@ export function HabitLabWireframe() {
                     <div className="guide-title">바로 다음 단계</div>
                     <p>
                       {tacticInputKnown
-                        ? "전술 코칭 탭에서 추천 #1을 채택하고 5경기 고정 적용하세요."
-                        : "전술 코칭 탭에서 추천 #1을 채택하고 5경기 테스트 후 고급 전술 입력으로 정밀 조정하세요."}
+                        ? "전술 코칭 탭에서 추천 #1을 채택하고 같은 전술로 플레이하세요."
+                        : "전술 코칭 탭에서 추천 #1을 채택해 테스트한 뒤, 필요하면 고급 전술 입력으로 정밀 조정하세요."}
                     </p>
                   </div>
                 </>
@@ -1843,7 +1843,7 @@ export function HabitLabWireframe() {
           <article className="panel coach-intro">
             <h3 className="section-title">오늘의 전술 코칭</h3>
             <p className="muted">
-              가장 우선순위가 높은 추천 1개만 보여줍니다. 경기 전 적용하고 같은 모드로 5경기 플레이한 뒤 개선 추적에서 전/후를 확인하세요.
+              가장 우선순위가 높은 추천 1개만 보여줍니다. 경기 전 적용하고 같은 모드에서 원하는 만큼 플레이한 뒤 다시 진단하면 개선 추적에서 전/후를 비교합니다.
             </p>
           </article>
           {actions.length === 0 && <article className="panel muted">전술 추천이 없습니다. 먼저 진단을 실행하세요.</article>}
@@ -1890,7 +1890,7 @@ export function HabitLabWireframe() {
                     <p className="muted compact">방향: {TACTIC_DIRECTION_KO[action.actionCode] ?? action.tacticDirection}</p>
                   </div>
                   <div className="focus-card">
-                    <p className="action-title">5경기 후 확인할 것</p>
+                    <p className="action-title">다음 진단 때 확인할 것</p>
                     {kpiTargets.length === 0 && <p className="muted compact">목표 지표를 계산할 데이터가 부족합니다.</p>}
                     {kpiTargets.length > 0 && (
                       <ul className="list compact">
@@ -1930,7 +1930,7 @@ export function HabitLabWireframe() {
                   </button>
                 </div>
                 <p className="muted compact">
-                  실험 시작 후 같은 모드로 5경기를 진행하고, 다시 진단 실행 → 개선 추적에서 평가 갱신 순서로 확인하세요.
+                  실험 시작 후 같은 모드로 최소 3경기, 가능하면 5경기 이상 플레이하고 다시 진단 실행 → 개선 추적에서 평가 갱신 순서로 확인하세요.
                 </p>
               </article>
             );
@@ -2008,7 +2008,7 @@ export function HabitLabWireframe() {
                 <>
                   <strong>진행 중 실험</strong>: {experimentPreview.action_title} (
                   {ISSUE_LABELS[experimentPreview.action_code] ?? experimentPreview.action_code}) · 시작{" "}
-                  {formatDate(experimentPreview.started_at)} · 기준 {experimentPreview.window_size}경기 · 상태 {experimentPreview.status}
+                  {formatDate(experimentPreview.started_at)} · 평가 기준 최대 {experimentPreview.window_size}경기 · 상태 {experimentPreview.status}
                   {experimentPreview.latest_evaluated_at ? ` · 최근 평가 ${formatDate(experimentPreview.latest_evaluated_at)}` : " · 아직 평가 기록 없음"}
                 </>
               )}
@@ -2020,7 +2020,7 @@ export function HabitLabWireframe() {
             {evaluation && (
               <p className="muted">
                 비교 표본: PRE {Number(evaluation.pre_match_count ?? 0)}경기 / POST {Number(evaluation.post_match_count ?? 0)}경기
-                {" · "}실험 기준 {Number(evaluation.window_size ?? 0)}경기
+                {" · "}평가 기준 최대 {Number(evaluation.window_size ?? 0)}경기
                 {evaluation.sample_scope === "playable_only" ? " (키보드/패드 기준)" : ""}
               </p>
             )}

@@ -615,7 +615,7 @@ def _maintain_action(metrics: dict[str, float], benchmark_source: str, metric_ga
         "rank": 1,
         "action_code": "MAINTAIN_PERFORMANCE",
         "title": _issue_label("MAINTAIN_PERFORMANCE"),
-        "description": "고우선순위 이슈가 없어 현재 전술 유지 후 다음 5경기를 모니터링하세요.",
+        "description": "고우선순위 이슈가 없어 현재 전술 유지 후 다음 플레이 구간을 모니터링하세요.",
         "evidence": {
             "issue_score": 0.0,
             "benchmark_compare": {
@@ -638,7 +638,7 @@ def _maintain_action(metrics: dict[str, float], benchmark_source: str, metric_ga
                 "coach_message": "고우선순위 리스크가 없어 전술을 유지하고 표본을 추가 확보하세요.",
                 "root_cause": "현재 핵심 지표가 급격히 이탈하지 않았습니다.",
                 "execution_checklist": [
-                    "현재 전술을 5경기 유지",
+                    "현재 전술을 다음 플레이 구간 동안 유지",
                     "경기당 실점/득점 추세만 모니터링",
                     "연패 시점에만 재분석",
                 ],
@@ -1975,9 +1975,9 @@ def run_analysis(
                     tactic_input_known=tactic_input_known,
                 )
                 description = (
-                    f"다음 5경기 동안 '{_issue_label(issue_code)}' 개선을 최우선으로 적용하세요."
+                    f"다음 플레이 구간 동안 '{_issue_label(issue_code)}' 개선을 최우선으로 적용하세요."
                     if tactic_input_known
-                    else f"다음 5경기 동안 '{_issue_label(issue_code)}' 개선을 위한 테스트 플랜으로 적용하세요."
+                    else f"다음 플레이 구간에서 '{_issue_label(issue_code)}' 개선을 위한 테스트 플랜으로 적용하세요."
                 )
                 actions.append(
                     {
