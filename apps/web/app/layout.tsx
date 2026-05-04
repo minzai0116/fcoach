@@ -63,7 +63,7 @@ export default function RootLayout({
     <html lang="ko">
       <body>
         <Script
-          src="https://openapi.nexon.com/js/analytics.js?app_id=289946"
+          src="https://openapi.nexon.com/analytics.js?app_id=289946"
           strategy="beforeInteractive"
         />
         {children}
