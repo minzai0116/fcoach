@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 
@@ -61,6 +62,10 @@ export default function RootLayout({
   return (
     <html lang="ko">
       <body>
+        <Script
+          src="https://openapi.nexon.com/js/analytics.js?app_id=289946"
+          strategy="afterInteractive"
+        />
         {children}
         <Analytics />
       </body>
