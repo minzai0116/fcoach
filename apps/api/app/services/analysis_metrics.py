@@ -185,7 +185,9 @@ def goal_profile_summary(rows: list[MatchStats]) -> dict[str, Any]:
 
 
 def _is_in_box(x_value: float, y_value: float) -> bool:
-    return 13.0 <= x_value <= 87.0 and y_value >= 73.0
+    if x_value > 1.5 or y_value > 1.5:
+        return x_value >= 83.0 and 18.0 <= y_value <= 82.0
+    return x_value >= 0.83 and 0.18 <= y_value <= 0.82
 
 
 def _goal_type_label(type_code: int) -> str:

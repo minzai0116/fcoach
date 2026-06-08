@@ -9,7 +9,7 @@ from typing import Any
 import requests
 from bs4 import BeautifulSoup
 
-from app.db import connect, upsert_matches, utc_now_iso
+from app.db import connect, nexon_api_data_cutoff_iso, upsert_matches, utc_now_iso
 from app.services.openapi_client import NexonOpenApiClient
 
 
@@ -86,6 +86,7 @@ def fetch_official_rankers(mode: str = OFFICIAL_MODE_DEFAULT, pages: int = 2, ti
 
 
 def list_official_rankers(mode: str = OFFICIAL_MODE_DEFAULT, limit: int = 100) -> list[dict[str, Any]]:
+    cutoff = nexon_api_data_cutoff_iso()
     conn = connect()
     try:
         cur = conn.cursor()
@@ -93,11 +94,11 @@ def list_official_rankers(mode: str = OFFICIAL_MODE_DEFAULT, limit: int = 100) -
             """
             SELECT mode, rank_no, nickname, ouid, elo, win_rate, win_count, draw_count, loss_count, formation, team_color, fetched_at, source
             FROM official_rankers
-            WHERE mode = ?
+            WHERE mode = ? AND fetched_at >= ?
             ORDER BY rank_no ASC
             LIMIT ?
             """,
-            (mode, max(1, limit)),
+            (mode, cutoff, max(1, limit)),
         )
         rows = cur.fetchall()
         return [dict(row) for row in rows]
@@ -106,12 +107,13 @@ def list_official_rankers(mode: str = OFFICIAL_MODE_DEFAULT, limit: int = 100) -
 
 
 def _latest_fetched_at(mode: str) -> str | None:
+    cutoff = nexon_api_data_cutoff_iso()
     conn = connect()
     try:
         cur = conn.cursor()
         cur.execute(
-            "SELECT fetched_at FROM official_rankers WHERE mode = ? ORDER BY fetched_at DESC LIMIT 1",
-            (mode,),
+            "SELECT fetched_at FROM official_rankers WHERE mode = ? AND fetched_at >= ? ORDER BY fetched_at DESC LIMIT 1",
+            (mode, cutoff),
         )
         row = cur.fetchone()
         if row is None:

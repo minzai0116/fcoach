@@ -102,8 +102,12 @@ export type PlayerReportEntry = {
   goal_involvements: number;
   shots: number;
   effective_shots: number;
+  tackles?: number;
+  intercepts?: number;
+  blocks?: number;
   pass_success_rate: number;
   tackle_success_rate: number;
+  dribble_success_rate?: number;
   avg_rating: number;
   impact_score: number;
   role_group?: string;
@@ -117,6 +121,36 @@ export type FormationNode = PlayerReportEntry & {
   slot_top: number;
 };
 
+export type PlayerChemistryPair = {
+  players: Array<
+    Pick<
+      PlayerReportEntry,
+      | "sp_id"
+      | "player_name"
+      | "season_name"
+      | "season_img"
+      | "face_img"
+      | "action_img"
+      | "fallback_img"
+      | "position_name"
+      | "sp_grade"
+    >
+  >;
+  appearances: number;
+  connection_count?: number;
+  goal_connection_count?: number;
+  connection_per_match?: number;
+  goals: number;
+  assists: number;
+  goal_involvements: number;
+  goal_involvements_per_match: number;
+  avg_rating: number;
+  chemistry_score: number;
+  evidence_type?: string;
+  direction?: string;
+  summary: string;
+};
+
 export type PlayerReportSummary = {
   sample_matches: number;
   controller_breakdown?: Record<string, number>;
@@ -126,6 +160,7 @@ export type PlayerReportSummary = {
   top_scorer?: PlayerReportEntry | null;
   top_assister?: PlayerReportEntry | null;
   most_used?: PlayerReportEntry | null;
+  chemistry_pairs?: PlayerChemistryPair[];
 };
 
 export type PlayerReport = PlayerReportSummary;

@@ -37,3 +37,4 @@ class MatchStats:
     goals_out_penalty: float = 0.0
     controller: str = ""
     player_stats: list[dict[str, float | int]] = field(default_factory=list)
+    shot_links: list[dict[str, float | int | bool]] = field(default_factory=list)

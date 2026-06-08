@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { FCoachLogo } from "./FCoachLogo";
 import {
   actionGuide,
@@ -40,6 +40,7 @@ import type {
   MatchType,
   MetricMap,
   OfficialRanker,
+  PlayerChemistryPair,
   PlayerReportEntry,
   PlayerSortDirection,
   PlayerSortMetric,
@@ -68,6 +69,42 @@ import {
   tablePositionGroup,
   tablePositionOrder,
 } from "../lib/playerReport";
+
+const SCREEN_PATHS: Record<ScreenKey, string> = {
+  guide: "/guide",
+  search: "/search",
+  diagnosis: "/diagnosis",
+  players: "/players",
+  habits: "/habits",
+  actions: "/coaching",
+  rankers: "/rankers",
+  tracking: "/tracking",
+};
+
+const PATH_TO_SCREEN = Object.fromEntries(
+  Object.entries(SCREEN_PATHS).map(([screenKey, path]) => [path, screenKey]),
+) as Record<string, ScreenKey>;
+
+function normalizePathname(pathname: string | null): string {
+  if (!pathname || pathname === "/") return "/guide";
+  return pathname.endsWith("/") && pathname.length > 1 ? pathname.slice(0, -1) : pathname;
+}
+
+function screenFromPath(pathname: string | null): ScreenKey | null {
+  return PATH_TO_SCREEN[normalizePathname(pathname)] ?? null;
+}
+
+type HabitLabWireframeProps = {
+  initialScreen?: ScreenKey;
+};
+
+type PlayerSpotlight = {
+  title: string;
+  player: PlayerReportEntry;
+  primaryMetric: string;
+  stats: Array<{ label: string; value: string }>;
+  detail: string;
+};
 
 function toActionCards(raw: RawActionCard[] | undefined): ActionCard[] {
   if (!raw || raw.length === 0) return [];
@@ -103,6 +140,198 @@ function formatDate(value: string | undefined): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString("ko-KR", { hour12: false });
+}
+
+function perAppearance(value: number | undefined, appearances: number): number {
+  return appearances > 0 ? Number(value ?? 0) / appearances : 0;
+}
+
+function playerStableKey(player: Pick<PlayerReportEntry, "sp_id" | "sp_grade">): string {
+  return `${player.sp_id}:${player.sp_grade}`;
+}
+
+function playerDefenseActions(player: PlayerReportEntry | null | undefined): number {
+  return Number(player?.tackles ?? 0) + Number(player?.intercepts ?? 0) + Number(player?.blocks ?? 0);
+}
+
+function playerGoalShare(player: PlayerReportEntry | null | undefined, totalGoalInvolvements: number): number {
+  return totalGoalInvolvements > 0 ? Number(player?.goal_involvements ?? 0) / totalGoalInvolvements : 0;
+}
+
+function pickMaxPlayer(players: PlayerReportEntry[], score: (player: PlayerReportEntry) => number): PlayerReportEntry | null {
+  let best: PlayerReportEntry | null = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  for (const player of players) {
+    const value = score(player);
+    if (!Number.isFinite(value)) continue;
+    if (best === null || value > bestScore) {
+      best = player;
+      bestScore = value;
+    }
+  }
+  return best;
+}
+
+function buildPlayerSpotlights(players: PlayerReportEntry[]): PlayerSpotlight[] {
+  if (players.length === 0) return [];
+  const eligible = players.filter((player) => player.appearances > 0);
+  const totalGoalInvolvements = eligible.reduce((sum, player) => sum + Number(player.goal_involvements ?? 0), 0);
+  const used = new Set<string>();
+  const spotlights: PlayerSpotlight[] = [];
+  const unused = (candidates = eligible) => candidates.filter((player) => !used.has(playerStableKey(player)));
+  const pickUnused = (candidates: PlayerReportEntry[], score: (player: PlayerReportEntry) => number) => pickMaxPlayer(unused(candidates), score);
+  const add = (
+    title: string,
+    player: PlayerReportEntry | null,
+    primaryMetric: string,
+    stats: Array<{ label: string; value: string }>,
+    detail: string,
+  ) => {
+    if (!player) return;
+    const key = playerStableKey(player);
+    if (used.has(key)) return;
+    used.add(key);
+    spotlights.push({ title, player, primaryMetric, stats: stats.slice(0, 4), detail });
+  };
+
+  const mvp = pickMaxPlayer(eligible, (player) => player.impact_score);
+  add(
+    "우리 팀 MVP",
+    mvp,
+    `종합 ${formatFixed(mvp?.impact_score ?? 0, 1)}`,
+    [
+      { label: "출전", value: `${mvp?.appearances ?? 0}경기` },
+      { label: "평점", value: formatFixed(mvp?.avg_rating ?? 0, 2) },
+      Number(mvp?.goal_involvements ?? 0) > 0
+        ? { label: "골관여", value: `${formatFixed(Number(mvp?.goal_involvements ?? 0), 0)}회` }
+        : { label: "수비액션", value: `${formatFixed(perAppearance(playerDefenseActions(mvp), mvp?.appearances ?? 0), 2)}/경기` },
+      Number(mvp?.goal_involvements ?? 0) > 0
+        ? { label: "팀 관여", value: formatPercent(playerGoalShare(mvp, totalGoalInvolvements)) }
+        : { label: "신뢰도", value: formatPercent(mvp?.impact_confidence ?? 0) },
+    ],
+    "출전 빈도, 평점, 포지션별 핵심 기록을 함께 본 종합 1순위입니다.",
+  );
+
+  const finisher = pickUnused(
+    eligible.filter((player) => player.shots > 0 && player.goals > 0),
+    (player) => perAppearance(player.goals, player.appearances) * 2 + player.goals / Math.max(1, player.shots),
+  );
+  add(
+    "해결사",
+    finisher,
+    `${formatFixed(finisher?.goals ?? 0, 0)}골`,
+    [
+      { label: "경기당", value: `${formatFixed(perAppearance(finisher?.goals, finisher?.appearances ?? 0), 2)}골` },
+      { label: "득점 전환", value: formatPercent((finisher?.goals ?? 0) / Math.max(1, finisher?.shots ?? 0)) },
+      { label: "유효슛", value: `${formatFixed(finisher?.effective_shots ?? 0, 0)}회` },
+      { label: "골관여", value: `${formatFixed(finisher?.goal_involvements ?? 0, 0)}회` },
+    ],
+    "슈팅을 실제 득점으로 바꾸는 힘이 가장 좋은 선수입니다.",
+  );
+
+  const creator = pickUnused(
+    eligible.filter((player) => player.assists > 0),
+    (player) => perAppearance(player.assists, player.appearances) * 2 + player.pass_success_rate,
+  );
+  add(
+    "찬스메이커",
+    creator,
+    `${formatFixed(creator?.assists ?? 0, 0)}도움`,
+    [
+      { label: "경기당", value: `${formatFixed(perAppearance(creator?.assists, creator?.appearances ?? 0), 2)}도움` },
+      { label: "패스", value: formatPercent(creator?.pass_success_rate ?? 0) },
+      { label: "골관여", value: `${formatFixed(creator?.goal_involvements ?? 0, 0)}회` },
+      { label: "평점", value: formatFixed(creator?.avg_rating ?? 0, 2) },
+    ],
+    "마무리 전 찬스를 가장 꾸준히 만들어주는 선수입니다.",
+  );
+
+  const defender = pickUnused(
+    eligible.filter((player) => ["DEF", "MID", "GK"].includes(String(player.role_group ?? ""))),
+    (player) =>
+      perAppearance(Number(player.tackles ?? 0) + Number(player.intercepts ?? 0) + Number(player.blocks ?? 0), player.appearances)
+      + player.tackle_success_rate,
+  );
+  add(
+    "수비 핵심",
+    defender,
+    `${formatFixed(perAppearance(playerDefenseActions(defender), defender?.appearances ?? 0), 2)}/경기`,
+    [
+      { label: "태클", value: formatPercent(defender?.tackle_success_rate ?? 0) },
+      { label: "인터셉트", value: `${formatFixed(defender?.intercepts ?? 0, 0)}회` },
+      { label: "블록", value: `${formatFixed(defender?.blocks ?? 0, 0)}회` },
+      { label: "평점", value: formatFixed(defender?.avg_rating ?? 0, 2) },
+    ],
+    "태클, 차단, 블록을 합쳐 수비 관여가 가장 뚜렷한 선수입니다.",
+  );
+
+  const ironman = pickUnused(eligible, (player) => player.appearances);
+  add(
+    "붙박이 주전",
+    ironman,
+    `${ironman?.appearances ?? 0}경기`,
+    [
+      { label: "평점", value: formatFixed(ironman?.avg_rating ?? 0, 2) },
+      { label: "골관여", value: `${formatFixed(ironman?.goal_involvements ?? 0, 0)}회` },
+      { label: "종합", value: formatFixed(ironman?.impact_score ?? 0, 1) },
+      { label: "포지션", value: ironman?.position_name ?? "-" },
+    ],
+    "최근 표본에서 가장 자주 기용된 핵심 로테이션입니다.",
+  );
+
+  const fallbackTitles = ["숨은 기여자", "컨디션 좋은 카드"];
+  while (spotlights.length < Math.min(4, eligible.length)) {
+    const player = pickUnused(eligible, (candidate) => candidate.impact_score);
+    const title = fallbackTitles[spotlights.length - 3] ?? "핵심 선수";
+    add(
+      title,
+      player,
+      `종합 ${formatFixed(player?.impact_score ?? 0, 1)}`,
+      [
+        { label: "출전", value: `${player?.appearances ?? 0}경기` },
+        { label: "평점", value: formatFixed(player?.avg_rating ?? 0, 2) },
+        { label: "골관여", value: `${formatFixed(player?.goal_involvements ?? 0, 0)}회` },
+        { label: "수비액션", value: `${formatFixed(perAppearance(playerDefenseActions(player), player?.appearances ?? 0), 2)}/경기` },
+      ],
+      "주요 역할 카드에 들지는 않았지만 최근 표본에서 기여도가 높은 선수입니다.",
+    );
+  }
+
+  return spotlights.slice(0, 4);
+}
+
+function normalizeChemistryPair(item: unknown): PlayerChemistryPair | null {
+  if (!item || typeof item !== "object") return null;
+  const value = item as PlayerChemistryPair;
+  if (!Array.isArray(value.players) || value.players.length < 2) return null;
+  const players = value.players.slice(0, 2).map((player) => ({
+    sp_id: Number(player.sp_id ?? 0),
+    player_name: String(player.player_name ?? ""),
+    season_name: String(player.season_name ?? ""),
+    season_img: String(player.season_img ?? ""),
+    face_img: String(player.face_img ?? ""),
+    action_img: String(player.action_img ?? ""),
+    fallback_img: String(player.fallback_img ?? ""),
+    position_name: String(player.position_name ?? "-"),
+    sp_grade: Number(player.sp_grade ?? 0),
+  }));
+  if (players.some((player) => player.sp_id <= 0 || !player.player_name)) return null;
+  return {
+    players,
+    appearances: Number(value.appearances ?? 0),
+    connection_count: Number(value.connection_count ?? value.assists ?? 0),
+    goal_connection_count: Number(value.goal_connection_count ?? value.goals ?? 0),
+    connection_per_match: Number(value.connection_per_match ?? value.goal_involvements_per_match ?? 0),
+    goals: Number(value.goals ?? 0),
+    assists: Number(value.assists ?? 0),
+    goal_involvements: Number(value.goal_involvements ?? 0),
+    goal_involvements_per_match: Number(value.goal_involvements_per_match ?? 0),
+    avg_rating: Number(value.avg_rating ?? 0),
+    chemistry_score: Number(value.chemistry_score ?? 0),
+    evidence_type: String(value.evidence_type ?? ""),
+    direction: String(value.direction ?? ""),
+    summary: String(value.summary ?? ""),
+  };
 }
 
 function getBenchmarkCompare(evidence: Record<string, unknown> | undefined): Record<string, unknown> | null {
@@ -261,6 +490,36 @@ function normalizeWindowSize(value: unknown, fallback: WindowSize): WindowSize {
   const numeric = Number(value);
   if (numeric === 5 || numeric === 10 || numeric === 30) return numeric;
   return fallback;
+}
+
+type ExperimentTarget = {
+  ouid: string;
+  matchType: MatchType;
+};
+
+const LAST_EXPERIMENT_TARGET_KEY = "fcoach:last-experiment-target";
+
+function readExperimentTarget(): ExperimentTarget | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(LAST_EXPERIMENT_TARGET_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ExperimentTarget>;
+    const ouid = String(parsed.ouid ?? "").trim();
+    if (ouid.length < 8) return null;
+    return { ouid, matchType: normalizeMatchType(parsed.matchType, 60) };
+  } catch {
+    return null;
+  }
+}
+
+function saveExperimentTarget(target: ExperimentTarget): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LAST_EXPERIMENT_TARGET_KEY, JSON.stringify(target));
+  } catch {
+    return;
+  }
 }
 
 type VisualMetricItem = {
@@ -511,20 +770,63 @@ function buildCoachTargets(
   });
 }
 
+const EXPERIMENT_CONTINUITY_NOTICE =
+  "같은 브라우저에서 이어서 확인하면 가장 안정적입니다.";
+
 function normalizeErrorMessage(error: unknown, fallbackMessage: string): string {
   if (!(error instanceof Error)) return fallbackMessage;
   const message = error.message.trim();
+  const lowerMessage = message.toLowerCase();
+  if (!message) return fallbackMessage;
+  if (message.includes("잠시 제한") || message.includes("다시 시도")) {
+    return message;
+  }
   if (message === "Load failed" || message === "Failed to fetch") {
-    return "API 서버 연결에 실패했습니다. `make api`를 실행한 뒤 새로고침해주세요.";
+    return "서비스 응답을 받지 못했습니다. 잠시 후 다시 시도해주세요. 계속 반복되면 새로고침 후 다시 실행해주세요.";
+  }
+  if (lowerMessage.includes("timeout") || lowerMessage.includes("abort") || message.includes("시간 초과")) {
+    return "응답 시간이 길어 요청을 중단했습니다. 잠시 후 다시 시도해주세요.";
+  }
+  if (message.includes("429") || lowerMessage.includes("too many requests") || lowerMessage.includes("rate limit")) {
+    return "현재 요청이 몰려 잠시 대기 중입니다. 잠시 후 다시 시도해주세요.";
   }
   if (message.includes("CORS")) {
-    return "브라우저 CORS 오류입니다. API 서버를 재시작(`make api`)해주세요.";
+    return "서비스 연결 설정 문제로 요청이 차단되었습니다. 잠시 후 다시 시도해주세요.";
   }
-  return message || fallbackMessage;
+  if (lowerMessage.includes("no experiment found")) {
+    return "아직 시작된 실험이 없습니다. 전술 코칭에서 먼저 실험을 시작해주세요.";
+  }
+  return message;
 }
 
-export function HabitLabWireframe() {
-  const [screen, setScreen] = useState<ScreenKey>("guide");
+export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframeProps) {
+  const [screen, setScreen] = useState<ScreenKey>(initialScreen);
+  const goToScreen = useCallback((nextScreen: ScreenKey) => {
+    const nextPath = SCREEN_PATHS[nextScreen];
+
+    if (typeof window !== "undefined" && normalizePathname(window.location.pathname) !== nextPath) {
+      window.history.pushState({ screen: nextScreen }, "", nextPath);
+    }
+
+    setScreen(nextScreen);
+  }, []);
+
+  useEffect(() => {
+    const nextScreen = typeof window === "undefined" ? null : screenFromPath(window.location.pathname);
+    if (nextScreen && nextScreen !== initialScreen) {
+      setScreen(nextScreen);
+    }
+
+    const handlePopState = () => {
+      const screenFromHistory = screenFromPath(window.location.pathname);
+      if (screenFromHistory) {
+        setScreen(screenFromHistory);
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [initialScreen]);
   const [matchType, setMatchType] = useState<MatchType>(60);
   const [windowSize, setWindowSize] = useState<WindowSize>(30);
   const [nicknameInput, setNicknameInput] = useState("");
@@ -539,6 +841,7 @@ export function HabitLabWireframe() {
   const [evaluation, setEvaluation] = useState<EvaluationPayload | null>(null);
   const [experimentPreview, setExperimentPreview] = useState<ExperimentPreview | null>(null);
   const [experimentPreviewLoading, setExperimentPreviewLoading] = useState(false);
+  const [experimentTarget, setExperimentTarget] = useState<ExperimentTarget | null>(null);
   const [officialRankers, setOfficialRankers] = useState<OfficialRanker[]>([]);
   const [rankerMeta, setRankerMeta] = useState<{ mode: string; count: number; mapped: number } | null>(null);
 
@@ -563,6 +866,12 @@ export function HabitLabWireframe() {
     setPlayerSortMetric(metric);
     setPlayerSortDirection("desc");
   };
+
+  function rememberExperimentTarget(target: ExperimentTarget): void {
+    setExperimentTarget(target);
+    saveExperimentTarget(target);
+  }
+
   const analysisMatchType = useMemo(() => normalizeMatchType(analysis?.match_type, matchType), [analysis?.match_type, matchType]);
   const analysisWindowSize = useMemo(
     () => normalizeWindowSize(analysis?.window_size, windowSize),
@@ -697,6 +1006,15 @@ export function HabitLabWireframe() {
         .slice(0, Math.min(4, playerRows.length)),
     [playerRows],
   );
+  const playerSpotlights = useMemo(() => buildPlayerSpotlights(playerRows), [playerRows]);
+  const chemistryPairs = useMemo(() => {
+    const raw = playerReport?.chemistry_pairs;
+    if (!Array.isArray(raw)) return [] as PlayerChemistryPair[];
+    return raw
+      .map(normalizeChemistryPair)
+      .filter((item): item is PlayerChemistryPair => item !== null && item.appearances > 0)
+      .slice(0, 4);
+  }, [playerReport?.chemistry_pairs]);
   const playerRowsForTable = useMemo(
     () =>
       [...playerRows].sort((left, right) => {
@@ -765,9 +1083,8 @@ export function HabitLabWireframe() {
       screen,
       matchType,
       windowSize,
-      ouid: ouidInput,
     });
-  }, [screen, matchType, windowSize, ouidInput]);
+  }, [screen, matchType, windowSize]);
 
   async function loadOfficialRankers(limit = 30, silent = true) {
     try {
@@ -794,13 +1111,18 @@ export function HabitLabWireframe() {
       setExperimentPreview(null);
       return null;
     }
+    const safeMatchType = normalizeMatchType(targetMatchType, matchType);
     setExperimentPreviewLoading(true);
     try {
       const payload = await requestApi<ExperimentPreviewPayload>(
-        `/experiments/latest?ouid=${encodeURIComponent(safeOuid)}&match_type=${targetMatchType}`,
+        `/experiments/latest?ouid=${encodeURIComponent(safeOuid)}&match_type=${safeMatchType}`,
       );
       if (payload.exists) {
         setExperimentPreview(payload);
+        rememberExperimentTarget({
+          ouid: String(payload.ouid || safeOuid),
+          matchType: normalizeMatchType(payload.match_type, safeMatchType),
+        });
         return payload;
       }
       setExperimentPreview(null);
@@ -814,19 +1136,29 @@ export function HabitLabWireframe() {
   }
 
   useEffect(() => {
+    const storedTarget = readExperimentTarget();
+    if (!storedTarget) return;
+    setExperimentTarget(storedTarget);
+    void loadLatestExperimentPreview(storedTarget.ouid, storedTarget.matchType);
+  }, []);
+
+  useEffect(() => {
     if (screen === "rankers" && officialRankers.length === 0) {
       void loadOfficialRankers(30, true);
     }
   }, [officialRankers.length, screen]);
 
   useEffect(() => {
-    if (screen !== "tracking") return;
-    if (ouidInput.trim().length < 8) {
-      setExperimentPreview(null);
+    const targetOuid = ouidInput.trim() || experimentTarget?.ouid || "";
+    const targetMatchType = experimentTarget?.matchType ?? matchType;
+    if (targetOuid.length < 8) {
+      if (!experimentTarget?.ouid) {
+        setExperimentPreview(null);
+      }
       return;
     }
-    void loadLatestExperimentPreview(ouidInput, matchType);
-  }, [screen, ouidInput, matchType]);
+    void loadLatestExperimentPreview(targetOuid, targetMatchType);
+  }, [experimentTarget?.matchType, experimentTarget?.ouid, matchType, ouidInput]);
 
   async function resolveOuidFromNickname(mode: "quick" | "advanced"): Promise<string> {
     const targetNickname = nicknameInput.trim();
@@ -914,7 +1246,7 @@ export function HabitLabWireframe() {
       });
       void loadOfficialRankers(30, true);
       setNotice(syncNoticeText(payload, "분석이 완료되었습니다."));
-      setScreen("diagnosis");
+      goToScreen("diagnosis");
       void loadLatestExperimentPreview(targetOuid, matchType);
       trackEvent("run_analysis", {
         screen: "search",
@@ -980,7 +1312,7 @@ export function HabitLabWireframe() {
       setActions(payload.actions ? toActionCards(payload.actions) : []);
       void loadOfficialRankers(30, true);
       setNotice(syncNoticeText(payload, "완료: 진단 실행"));
-      setScreen("diagnosis");
+      goToScreen("diagnosis");
       void loadLatestExperimentPreview(targetOuid, matchType);
       trackEvent("run_analysis", {
         screen: "search",
@@ -1038,8 +1370,9 @@ export function HabitLabWireframe() {
           notes: "웹 대시보드에서 채택",
         }),
       });
-      setNotice(`실험 생성 완료: ${payload.experiment_id} (기준 ${experimentWindow}경기)`);
-      setScreen("tracking");
+      setNotice(`실험을 시작했습니다. 기준은 최대 ${experimentWindow}경기입니다. 같은 모드로 플레이한 뒤 다시 진단하고 평가를 갱신하세요.`);
+      rememberExperimentTarget({ ouid: targetOuid, matchType });
+      goToScreen("tracking");
       void loadLatestExperimentPreview(targetOuid, matchType);
       trackEvent("adopt_action", {
         screen: "actions",
@@ -1053,7 +1386,7 @@ export function HabitLabWireframe() {
         },
       });
     } catch (experimentError) {
-      setError(experimentError instanceof Error ? experimentError.message : "실험 생성 실패");
+      setError(normalizeErrorMessage(experimentError, "실험을 시작하지 못했습니다. 잠시 후 다시 시도해주세요."));
       trackEvent("adopt_action_failed", {
         screen: "actions",
         matchType,
@@ -1066,34 +1399,41 @@ export function HabitLabWireframe() {
   }
 
   async function onEvaluateExperiment() {
-    const targetOuid = ouidInput.trim();
+    const targetOuid = ouidInput.trim() || experimentPreview?.ouid || experimentTarget?.ouid || "";
+    const targetMatchType = normalizeMatchType(experimentPreview?.match_type ?? experimentTarget?.matchType ?? matchType, matchType);
     if (targetOuid.length < 8) {
-      setError("먼저 검색/설정에서 닉네임으로 진단을 실행해주세요.");
+      setError("진행 중인 실험을 찾을 수 없습니다. 전술 코칭에서 실험을 시작한 뒤 다시 평가해주세요.");
       return;
     }
 
+    if (targetMatchType !== matchType) {
+      setMatchType(targetMatchType);
+    }
+    rememberExperimentTarget({ ouid: targetOuid, matchType: targetMatchType });
     setLoading(true);
     setError("");
     setNotice("");
     try {
-      const latestExperiment = await loadLatestExperimentPreview(targetOuid, matchType);
+      const latestExperiment = await loadLatestExperimentPreview(targetOuid, targetMatchType);
       if (!latestExperiment) {
         setEvaluation(null);
         setNotice("아직 시작된 실험이 없습니다. 전술 코칭에서 먼저 실험을 시작해주세요.");
         return;
       }
-      const payload = await requestApi<EvaluationPayload>(`/experiments/evaluation?ouid=${targetOuid}&match_type=${matchType}`);
+      const payload = await requestApi<EvaluationPayload>(
+        `/experiments/evaluation?ouid=${encodeURIComponent(targetOuid)}&match_type=${targetMatchType}`,
+      );
       setEvaluation(payload);
-      setNotice("실험 평가를 갱신했습니다.");
-      void loadLatestExperimentPreview(targetOuid, matchType);
+      setNotice("실험 평가를 갱신했습니다. 적용 후 경기가 부족하면 몇 경기 더 플레이한 뒤 다시 평가하세요.");
+      void loadLatestExperimentPreview(targetOuid, targetMatchType);
       trackEvent("view_evaluation", {
         screen: "tracking",
-        matchType,
+        matchType: targetMatchType,
         windowSize,
         ouid: targetOuid,
       });
     } catch (evaluationError) {
-      setError(evaluationError instanceof Error ? evaluationError.message : "실험 평가 실패");
+      setError(normalizeErrorMessage(evaluationError, "실험 평가를 갱신하지 못했습니다. 잠시 후 다시 시도해주세요."));
       setEvaluation(null);
     } finally {
       setLoading(false);
@@ -1107,6 +1447,19 @@ export function HabitLabWireframe() {
     );
     return topAction ? [topAction] : [];
   }, [actions]);
+  const topRecommendedAction = primaryActions[0] ?? null;
+  const topRecommendedAdjustmentLines = useMemo(
+    () => (topRecommendedAction ? tacticAdjustmentLines(topRecommendedAction.tacticDelta, appliedTactic) : []),
+    [appliedTactic, topRecommendedAction],
+  );
+  const topRecommendedPrescription = topRecommendedAction
+    ? oneLinePrescription(
+        ISSUE_LABELS[topRecommendedAction.actionCode] ?? topRecommendedAction.actionCode,
+        topRecommendedAdjustmentLines,
+        tacticInputKnown,
+      )
+    : "";
+  const emphasizeExperimentReturn = Boolean(experimentPreview && (screen === "guide" || screen === "search"));
 
   return (
     <div className="container grid">
@@ -1124,7 +1477,7 @@ export function HabitLabWireframe() {
               key={item.key}
               className={`flow-step ${screen === item.key ? "active" : ""} ${completedScreenSet.has(item.key) ? "done" : ""}`}
               onClick={() => {
-                setScreen(item.key);
+                goToScreen(item.key);
                 trackEvent("tab_click", {
                   screen: item.key,
                   matchType,
@@ -1143,6 +1496,31 @@ export function HabitLabWireframe() {
         {screen !== "search" && <div className="context-banner">현재 분석 기준: {currentContextLabel}</div>}
         {!!notice && <div className="notice ok">{notice}</div>}
         {!!error && <div className="notice error">{error}</div>}
+        {experimentPreview && screen !== "tracking" && (
+          <div className={`notice warn experiment-return ${emphasizeExperimentReturn ? "priority" : ""}`}>
+            <div>
+              <strong>{emphasizeExperimentReturn ? "진행 중인 실험, 이제 결과를 확인할 차례예요" : "진행 중인 실험이 있어요"}</strong>
+              <p className="muted compact">
+                {experimentPreview.action_title} · 시작 {formatDate(experimentPreview.started_at)} · 최대 {experimentPreview.window_size}경기 기준
+              </p>
+              <p className="muted compact">
+                {emphasizeExperimentReturn
+                  ? "새 경기를 했다면 다시 진단하고 평가를 갱신해 전술 효과를 확인하세요."
+                  : "새 경기를 했다면 다시 진단한 뒤 평가를 갱신하세요."}
+              </p>
+            </div>
+            <div className="button-row">
+              {emphasizeExperimentReturn && screen !== "search" && (
+                <button className="btn secondary" type="button" onClick={() => goToScreen("search")}>
+                  다시 진단하기
+                </button>
+              )}
+              <button className="btn" type="button" onClick={() => goToScreen("tracking")}>
+                실험 평가하기
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       {screen === "search" && (
@@ -1344,6 +1722,26 @@ export function HabitLabWireframe() {
 
       {screen === "diagnosis" && (
         <section className="grid grid-3">
+          {topRecommendedAction && (
+            <article className="panel span-3 diagnosis-action-cta">
+              <div>
+                <p className="action-title">이번 분석의 1순위 처방</p>
+                <h3>{topRecommendedAction.title}</h3>
+                <p className="focus-line">{topRecommendedPrescription}</p>
+                <p className="muted compact">
+                  분석을 끝냈다면 여기서 바로 추천 내용을 확인하고, 같은 모드로 몇 경기 실험해 개선 추적에서 검증하세요.
+                </p>
+              </div>
+              <div className="button-row">
+                <button className="btn secondary" type="button" onClick={() => goToScreen("actions")}>
+                  추천 1개 바로 보기
+                </button>
+                <button className="btn" type="button" onClick={() => onAdoptAction(topRecommendedAction)} disabled={loading}>
+                  이 추천으로 실험 시작
+                </button>
+              </div>
+            </article>
+          )}
           <article className="panel">
             <h3 className="section-title">승률</h3>
               <div className="kpi-value">{formatPercent(toKpiValue(metrics, "win_rate"))}</div>
@@ -1558,8 +1956,8 @@ export function HabitLabWireframe() {
                     <div className="guide-title">바로 다음 단계</div>
                     <p>
                       {tacticInputKnown
-                        ? "전술 코칭 탭에서 추천 #1을 채택하고 같은 전술로 플레이하세요."
-                        : "전술 코칭 탭에서 추천 #1을 채택해 테스트한 뒤, 필요하면 고급 전술 입력으로 정밀 조정하세요."}
+                        ? "전술 코칭 탭에서 지금 표시된 추천을 채택하고 같은 전술로 플레이하세요."
+                        : "전술 코칭 탭에서 지금 표시된 추천을 테스트한 뒤, 필요하면 고급 전술 입력으로 정밀 조정하세요."}
                     </p>
                   </div>
                 </>
@@ -1627,6 +2025,79 @@ export function HabitLabWireframe() {
                   </p>
                 </article>
               </section>
+
+              {playerSpotlights.length > 0 && (
+                <section className="grid grid-4 player-spotlight-grid">
+                  {playerSpotlights.map((item) => (
+                    <article key={`${item.title}-${playerStableKey(item.player)}`} className="panel player-spotlight-card">
+                      <div className="player-spotlight-head">
+                        <PlayerPortrait player={item.player} alt={`${item.player.player_name} 미니페이스온`} className="player-face spotlight" />
+                        <div>
+                          <p className="action-title">{item.title}</p>
+                          <h4>{item.player.player_name}</h4>
+                          <p className="muted compact">
+                            {item.player.position_name} · +{normalizedGrade(item.player.sp_grade)} · {item.player.season_name}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="spotlight-metric">{item.primaryMetric}</div>
+                      <div className="spotlight-stat-grid">
+                        {item.stats.map((stat) => (
+                          <div key={`${item.title}-${stat.label}`} className="spotlight-stat">
+                            <span>{stat.label}</span>
+                            <strong>{stat.value}</strong>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="muted compact">{item.detail}</p>
+                    </article>
+                  ))}
+                </section>
+              )}
+
+              {chemistryPairs.length > 0 && (
+                <article className="panel">
+                  <h4 className="section-title">골 찬스 콤비</h4>
+                  <p className="muted compact">
+                    최근 경기에서 왼쪽 선수가 찬스를 만들고 오른쪽 선수가 슛으로 마무리한 장면을 모았습니다. 자주 나온 공격 루트를 보는 참고용이에요.
+                  </p>
+                  <div className="chemistry-grid">
+                    {chemistryPairs.map((pair) => {
+                      const [left, right] = pair.players;
+                      const connectionCount = Number(pair.connection_count ?? pair.assists ?? 0);
+                      const goalConnectionCount = Number(pair.goal_connection_count ?? pair.goals ?? 0);
+                      const connectionPerMatch = Number(pair.connection_per_match ?? pair.goal_involvements_per_match ?? 0);
+                      return (
+                        <article key={`${left.sp_id}-${left.sp_grade}-${right.sp_id}-${right.sp_grade}`} className="chemistry-card">
+                          <div className="chemistry-player-row">
+                            {[left, right].map((player) => (
+                              <div key={`${player.sp_id}-${player.sp_grade}`} className="chemistry-player">
+                                <PlayerPortrait player={player} alt={`${player.player_name} 미니페이스온`} className="player-face chemistry" />
+                                <strong>{player.player_name}</strong>
+                                <span>
+                                  {player.position_name} · +{normalizedGrade(player.sp_grade)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="chemistry-score-row">
+                            <span>호흡 점수 {formatFixed(pair.chemistry_score, 1)}</span>
+                            <span>찬스 {formatFixed(connectionCount, 0)}회</span>
+                          </div>
+                          <div className="chemistry-meter">
+                            <div className="chemistry-meter-fill" style={{ width: `${Math.max(0, Math.min(100, pair.chemistry_score))}%` }} />
+                          </div>
+                          <p className="muted compact">
+                            골로 연결 {formatFixed(goalConnectionCount, 0)}회 · 나온 경기 {pair.appearances}경기 · 경기당 {formatFixed(connectionPerMatch, 2)}회 ·
+                            평균평점 {formatFixed(pair.avg_rating, 2)}
+                          </p>
+                          <p className="muted compact">{pair.summary}</p>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </article>
+              )}
 
               <article className="panel">
                 <h4 className="section-title">주전 후보 Top 11 (포메이션 배치)</h4>
@@ -1843,7 +2314,7 @@ export function HabitLabWireframe() {
           <article className="panel coach-intro">
             <h3 className="section-title">오늘의 전술 코칭</h3>
             <p className="muted">
-              가장 우선순위가 높은 추천 1개만 보여줍니다. 경기 전 적용하고 같은 모드에서 원하는 만큼 플레이한 뒤 다시 진단하면 개선 추적에서 전/후를 비교합니다.
+              현재 진단에서 바로 실험해볼 추천 1개를 보여줍니다. 경기 전에 적용하고 같은 모드에서 최소 3경기(권장 5경기+) 플레이한 뒤 다시 진단해 개선 추적에서 전/후를 비교하세요.
             </p>
           </article>
           {actions.length === 0 && <article className="panel muted">전술 추천이 없습니다. 먼저 진단을 실행하세요.</article>}
@@ -1930,7 +2401,8 @@ export function HabitLabWireframe() {
                   </button>
                 </div>
                 <p className="muted compact">
-                  실험 시작 후 같은 모드로 최소 3경기, 가능하면 5경기 이상 플레이하고 다시 진단 실행 → 개선 추적에서 평가 갱신 순서로 확인하세요.
+                  실험 시작 후 같은 모드로 몇 경기 플레이하고 검색/설정에서 다시 진단 실행 → 개선 추적에서 평가 갱신 순서로 확인하세요.{" "}
+                  {EXPERIMENT_CONTINUITY_NOTICE}
                 </p>
               </article>
             );
@@ -1997,29 +2469,30 @@ export function HabitLabWireframe() {
         <section className="grid grid-2">
           <article className="panel span-2">
             <h3 className="section-title">평가 실행</h3>
-            <p className="muted">최근 채택한 액션 실험의 전/후 지표를 계산합니다.</p>
-            <p className="muted compact">
-              실험 시작 후 플레이한 경기만 POST로 계산합니다. 새 경기를 마친 뒤에는 먼저 검색/설정에서 다시 진단을 실행하고 평가를 갱신하세요.
-            </p>
+            <p className="muted">실험 시작 전과 후의 경기 성과를 비교합니다.</p>
+            <div className="notice warn">
+              새 경기를 했다면 <strong>검색/설정에서 다시 진단</strong>한 뒤, 여기서 <strong>평가 갱신</strong>을 누르세요.{" "}
+              {EXPERIMENT_CONTINUITY_NOTICE}
+            </div>
             <div className="notice ok">
-              {experimentPreviewLoading && "실험 상태를 확인 중입니다..."}
-              {!experimentPreviewLoading && !experimentPreview && "시작된 실험이 없습니다. 전술 코칭에서 먼저 실험 시작을 눌러주세요."}
+              {experimentPreviewLoading && "진행 중인 실험을 확인하고 있습니다..."}
+              {!experimentPreviewLoading && !experimentPreview && "아직 진행 중인 실험이 없습니다. 전술 코칭에서 추천을 선택해 실험을 시작하세요."}
               {!experimentPreviewLoading && experimentPreview && (
                 <>
                   <strong>진행 중 실험</strong>: {experimentPreview.action_title} (
                   {ISSUE_LABELS[experimentPreview.action_code] ?? experimentPreview.action_code}) · 시작{" "}
-                  {formatDate(experimentPreview.started_at)} · 평가 기준 최대 {experimentPreview.window_size}경기 · 상태 {experimentPreview.status}
+                  {formatDate(experimentPreview.started_at)} · 최대 {experimentPreview.window_size}경기 기준
                   {experimentPreview.latest_evaluated_at ? ` · 최근 평가 ${formatDate(experimentPreview.latest_evaluated_at)}` : " · 아직 평가 기록 없음"}
                 </>
               )}
             </div>
             <button className="btn" onClick={onEvaluateExperiment} disabled={loading}>
-              {loading ? "평가 중..." : "최신 실험 평가 갱신"}
+              {loading ? "평가 중..." : "평가 갱신"}
             </button>
             <p className="muted">평가 시각: {formatDate(evaluation?.evaluated_at)}</p>
             {evaluation && (
               <p className="muted">
-                비교 표본: PRE {Number(evaluation.pre_match_count ?? 0)}경기 / POST {Number(evaluation.post_match_count ?? 0)}경기
+                비교 표본: 적용 전 {Number(evaluation.pre_match_count ?? 0)}경기 / 적용 후 {Number(evaluation.post_match_count ?? 0)}경기
                 {" · "}평가 기준 최대 {Number(evaluation.window_size ?? 0)}경기
                 {evaluation.sample_scope === "playable_only" ? " (키보드/패드 기준)" : ""}
               </p>
@@ -2082,7 +2555,7 @@ export function HabitLabWireframe() {
             </ul>
           </article>
           <article className="panel">
-            <h3 className="section-title">변화량 (POST - PRE)</h3>
+            <h3 className="section-title">변화량</h3>
             <ul className="list">
               <li>승률 Δ: {formatFixed(toKpiValue(evaluation?.delta ?? {}, "win_rate"))}</li>
               <li>xG For Δ: {formatFixed(toKpiValue(evaluation?.delta ?? {}, "xg_for"))}</li>
@@ -2154,9 +2627,9 @@ export function HabitLabWireframe() {
         <GuideScreen
           hasActions={actions.length > 0}
           hasExperiment={Boolean(experimentPreview)}
-          onOpenActions={() => setScreen("actions")}
-          onOpenTracking={() => setScreen("tracking")}
-          onStartSearch={() => setScreen("search")}
+          onOpenActions={() => goToScreen("actions")}
+          onOpenTracking={() => goToScreen("tracking")}
+          onStartSearch={() => goToScreen("search")}
         />
       )}
 
@@ -2164,7 +2637,7 @@ export function HabitLabWireframe() {
         <div className="footer-top">
           <strong>© 2026 FCOACH</strong>
           <div className="footer-links">
-            <button className="link-like" onClick={() => setScreen("guide")}>
+            <button className="link-like" onClick={() => goToScreen("guide")}>
               이용 가이드
             </button>
             <a href="/privacy" target="_blank" rel="noreferrer">

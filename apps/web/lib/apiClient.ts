@@ -18,6 +18,15 @@ function ensureStorageId(storage: Storage, key: string): string {
   return generated;
 }
 
+function resolveTrackingPath(screen?: string): string {
+  if (typeof window === "undefined") return "/";
+  const basePath = window.location.pathname || "/";
+  if (basePath !== "/") return basePath;
+  if (!screen) return basePath;
+  const normalizedScreen = String(screen).trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+  return normalizedScreen ? `/screen/${normalizedScreen}` : basePath;
+}
+
 function maskOuid(ouid: string): string {
   const value = ouid.trim();
   if (value.length < 10) return value;
@@ -42,7 +51,7 @@ export function trackEvent(
       event_name: eventName,
       distinct_id: distinctId,
       session_id: sessionId,
-      path: window.location.pathname,
+      path: resolveTrackingPath(payload.screen),
       screen: payload.screen ?? null,
       referrer: document.referrer || null,
       properties: {

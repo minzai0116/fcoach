@@ -12,10 +12,45 @@ from typing import Any, Iterable, Iterator
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 DEFAULT_DB_PATH = BASE_DIR / "data" / "habit_lab.sqlite3"
+MAX_NEXON_API_DATA_TTL_DAYS = 30
 
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _clamp_nexon_api_data_ttl_days(value: Any = None) -> int:
+    try:
+        days = int(value if value is not None else os.getenv("NEXON_API_DATA_TTL_DAYS", "30"))
+    except (TypeError, ValueError):
+        days = MAX_NEXON_API_DATA_TTL_DAYS
+    return max(1, min(MAX_NEXON_API_DATA_TTL_DAYS, days))
+
+
+def nexon_api_data_ttl_days() -> int:
+    return _clamp_nexon_api_data_ttl_days()
+
+
+def nexon_api_data_cutoff_iso(days: int | None = None) -> str:
+    safe_days = _clamp_nexon_api_data_ttl_days(days)
+    return (datetime.now(timezone.utc) - timedelta(days=safe_days)).isoformat()
+
+
+def purge_stale_nexon_api_data(days: int | None = None) -> dict[str, int | str]:
+    cutoff = nexon_api_data_cutoff_iso(days)
+    with db_cursor() as cur:
+        cur.execute("DELETE FROM matches_raw WHERE created_at < ?", (cutoff,))
+        matches_deleted = max(0, cur.rowcount)
+        cur.execute("DELETE FROM user_lookup_cache WHERE updated_at < ?", (cutoff,))
+        lookups_deleted = max(0, cur.rowcount)
+        cur.execute("DELETE FROM official_rankers WHERE fetched_at < ?", (cutoff,))
+        rankers_deleted = max(0, cur.rowcount)
+    return {
+        "cutoff": cutoff,
+        "matches_raw": matches_deleted,
+        "user_lookup_cache": lookups_deleted,
+        "official_rankers": rankers_deleted,
+    }
 
 
 def _lookup_key(value: str) -> str:
@@ -163,6 +198,9 @@ def init_db() -> None:
     CREATE INDEX IF NOT EXISTS idx_matches_raw_ouid_type_match
       ON matches_raw (ouid, match_type, match_id);
 
+    CREATE INDEX IF NOT EXISTS idx_matches_raw_created_at
+      ON matches_raw (created_at DESC);
+
     CREATE INDEX IF NOT EXISTS idx_metrics_latest
       ON user_metrics_snapshot (ouid, match_type, window_size, created_at DESC);
 
@@ -177,6 +215,9 @@ def init_db() -> None:
 
     CREATE INDEX IF NOT EXISTS idx_official_rankers_mode_ouid
       ON official_rankers (mode, ouid);
+
+    CREATE INDEX IF NOT EXISTS idx_official_rankers_mode_fetched_at
+      ON official_rankers (mode, fetched_at DESC, rank_no);
 
     CREATE INDEX IF NOT EXISTS idx_user_lookup_updated_at
       ON user_lookup_cache (updated_at DESC);
@@ -199,6 +240,7 @@ def init_db() -> None:
             )
             """
         )
+    purge_stale_nexon_api_data()
 
 
 def upsert_matches(

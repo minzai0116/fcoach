@@ -1,6 +1,7 @@
 import unittest
 
 from app.services.analysis import MatchStats, _compute_metrics, _issue_scores, _player_report_summary
+from app.services.analysis_metrics import shot_zone_summary
 
 
 def _sample_match(result: str, goals_for: float, goals_against: float, late_concede: float, shots: float, sot: float) -> MatchStats:
@@ -42,6 +43,15 @@ class AnalysisTest(unittest.TestCase):
         self.assertEqual(metrics["match_count"], 2.0)
         self.assertEqual(metrics["win_rate"], 0.5)
         self.assertAlmostEqual(metrics["shot_on_target_rate"], 5 / 12, places=4)
+
+    def test_shot_zone_summary_uses_normalized_box_coordinates(self) -> None:
+        summary = shot_zone_summary(
+            [
+                {"x": 0.9, "y": 0.5, "is_goal": True},
+                {"x": 0.4, "y": 0.5, "is_goal": False},
+            ]
+        )
+        self.assertAlmostEqual(summary["in_box_ratio"], 0.5, places=4)
 
     def test_issue_scores_non_negative(self) -> None:
         metrics = {
@@ -316,6 +326,94 @@ class AnalysisTest(unittest.TestCase):
         self.assertGreater(cb["impact_score"], 0.0)
         self.assertGreaterEqual(st["impact_confidence"], 0.35)
         self.assertGreaterEqual(cb["impact_confidence"], 0.35)
+
+    def test_player_report_connections_use_actual_assisted_shots(self) -> None:
+        rows = []
+        for index in range(3):
+            rows.append(
+                MatchStats(
+                    match_date=f"2026-03-0{index + 1}T12:00:00+00:00",
+                    result="승",
+                    opponent_nickname="상대",
+                    goals_for=2,
+                    goals_against=1,
+                    shots=8,
+                    shots_on_target=5,
+                    offside=0,
+                    xg_for=1.8,
+                    xg_against=1.0,
+                    late_goals_against=0,
+                    in_box_shots=6,
+                    total_shots_detail=8,
+                    possession=52,
+                    pass_try=120,
+                    pass_success=102,
+                    through_pass_try=16,
+                    through_pass_success=6,
+                    tackle_try=18,
+                    tackle_success=9,
+                    shots_for_points=[],
+                    goals_for_minutes=[],
+                    goals_against_minutes=[],
+                    goals_for_types=[],
+                    player_stats=[
+                        {
+                            "sp_id": 100000001,
+                            "sp_position": 0,
+                            "sp_grade": 8,
+                            "goals": 0,
+                            "assists": 0,
+                            "shots": 0,
+                            "effective_shots": 0,
+                            "pass_try": 12,
+                            "pass_success": 10,
+                            "rating": 6.8,
+                        },
+                        {
+                            "sp_id": 100000010,
+                            "sp_position": 21,
+                            "sp_grade": 8,
+                            "goals": 0,
+                            "assists": 1,
+                            "shots": 1,
+                            "effective_shots": 1,
+                            "pass_try": 24,
+                            "pass_success": 20,
+                            "rating": 7.4,
+                        },
+                        {
+                            "sp_id": 100000020,
+                            "sp_position": 25,
+                            "sp_grade": 8,
+                            "goals": 1,
+                            "assists": 0,
+                            "shots": 4,
+                            "effective_shots": 2,
+                            "pass_try": 16,
+                            "pass_success": 12,
+                            "rating": 7.6,
+                        },
+                    ],
+                    shot_links=[
+                        {
+                            "from_sp_id": 100000010,
+                            "from_sp_grade": 8,
+                            "to_sp_id": 100000020,
+                            "to_sp_grade": 8,
+                            "is_goal": index < 2,
+                        }
+                    ],
+                )
+            )
+
+        report = _player_report_summary(rows)
+        pairs = report["chemistry_pairs"]
+        self.assertEqual(len(pairs), 1)
+        pair = pairs[0]
+        self.assertEqual(pair["connection_count"], 3)
+        self.assertEqual(pair["goal_connection_count"], 2)
+        self.assertEqual([player["sp_id"] for player in pair["players"]], [100000010, 100000020])
+        self.assertNotIn(100000001, [player["sp_id"] for player in pair["players"]])
 
 if __name__ == "__main__":
     unittest.main()

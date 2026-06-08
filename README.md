@@ -125,6 +125,13 @@ cd apps/web && npm install && npm run dev
 - 장기 운영 기준에서는 관리형 DB 또는 persistent volume이 있는 환경으로 전환이 필요합니다.
 - 자세한 배포 절차는 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)에 정리했습니다.
 
+## 데이터 보관 정책
+
+- Nexon Open API 및 FC Online DataCenter에서 가져온 원천 데이터는 최대 30일 이내 데이터만 저장·조회합니다.
+- 대상은 경기 원본(`matches_raw`), 닉네임 조회 캐시(`user_lookup_cache`), 공식 랭커 원천 데이터(`official_rankers`)입니다.
+- `NEXON_API_DATA_TTL_DAYS` 기본값은 30이며, 정책 준수를 위해 30일을 초과하지 않도록 제한합니다.
+- 서비스 이용 로그와 실험 기록은 Open API 원천 데이터가 아니므로 별도 운영 데이터로 관리합니다.
+
 ## 라이선스 및 고지
 
 - 소스코드 라이선스: MIT ([LICENSE](LICENSE))

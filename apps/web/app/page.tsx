@@ -1,5 +1,5 @@
-import { HabitLabWireframe } from "../components/HabitLabWireframe";
+import { redirect } from "next/navigation";
 
 export default function HomePage() {
-  return <HabitLabWireframe />;
+  redirect("/guide");
 }

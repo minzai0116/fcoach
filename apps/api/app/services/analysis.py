@@ -11,7 +11,7 @@ from typing import Any
 
 import requests
 
-from app.db import connect, upsert_matches, utc_now_iso
+from app.db import connect, nexon_api_data_cutoff_iso, purge_stale_nexon_api_data, upsert_matches, utc_now_iso
 from app.services.action_explainer import build_action_explanation
 from app.services.analysis_constants import (
     BENCHMARKS,
@@ -298,10 +298,19 @@ def _extract_user_match(payload: dict[str, Any], ouid: str) -> MatchStats | None
     user_shot_detail = user.get("shootDetail") if isinstance(user.get("shootDetail"), list) else []
     opp_shot_detail = opp.get("shootDetail") if isinstance(opp.get("shootDetail"), list) else []
     user_players = user.get("player") if isinstance(user.get("player"), list) else []
+    player_grade_by_spid: dict[int, int] = {}
+    for player in user_players:
+        if not isinstance(player, dict):
+            continue
+        sp_id = _to_int(player.get("spId"))
+        if sp_id is None:
+            continue
+        player_grade_by_spid[sp_id] = _to_int(player.get("spGrade")) or 0
 
     in_box_shots = 0.0
     total_shots_detail = 0.0
     shots_for_points: list[dict[str, float | bool]] = []
+    shot_links: list[dict[str, float | int | bool]] = []
     goals_for_minutes: list[float] = []
     goals_for_types: list[int] = []
     for shot in user_shot_detail:
@@ -313,8 +322,30 @@ def _extract_user_match(payload: dict[str, Any], ouid: str) -> MatchStats | None
         if _is_in_box(shot_x, shot_y):
             in_box_shots += 1
         norm_x, norm_y = _normalize_xy(shot.get("x"), shot.get("y"))
-        is_goal = _to_float(shot.get("result")) == 3 or str(shot.get("spResult", "")) in {"goal", "3"}
+        result_code = _to_float(shot.get("result"))
+        is_goal = result_code == 3 or str(shot.get("spResult", "")) in {"goal", "3"}
         shots_for_points.append({"x": norm_x, "y": norm_y, "is_goal": bool(is_goal)})
+        shooter_sp_id = _to_int(shot.get("spId"))
+        assist_sp_id = _to_int(shot.get("assistSpId"))
+        if (
+            _is_truthy(shot.get("assist"))
+            and shooter_sp_id is not None
+            and assist_sp_id is not None
+            and assist_sp_id > 0
+            and assist_sp_id != shooter_sp_id
+        ):
+            shot_links.append(
+                {
+                    "from_sp_id": int(assist_sp_id),
+                    "from_sp_grade": int(player_grade_by_spid.get(assist_sp_id, 0)),
+                    "to_sp_id": int(shooter_sp_id),
+                    "to_sp_grade": int(_to_int(shot.get("spGrade")) or player_grade_by_spid.get(shooter_sp_id, 0)),
+                    "is_goal": bool(is_goal),
+                    "result": int(result_code),
+                    "x": norm_x,
+                    "y": norm_y,
+                }
+            )
         if is_goal:
             goals_for_minutes.append(_goal_time_to_minute(shot.get("goalTime")))
             shot_type = _to_int(shot.get("type"))
@@ -402,6 +433,7 @@ def _extract_user_match(payload: dict[str, Any], ouid: str) -> MatchStats | None
         goals_out_penalty=_to_float(user_shoot.get("goalOutPenalty")),
         controller=str(user_detail.get("controller", "")),
         player_stats=player_stats,
+        shot_links=shot_links,
     )
 
 
@@ -800,6 +832,7 @@ def _player_report_summary(rows: list[MatchStats]) -> dict[str, Any]:
         return any(_to_float(player.get(key)) > 0 for key in activity_keys)
 
     aggregates: dict[tuple[int, int], dict[str, Any]] = {}
+    link_aggregates: dict[tuple[tuple[int, int], tuple[int, int]], dict[str, float]] = {}
     controller_breakdown: dict[str, int] = defaultdict(int)
     for row in rows:
         controller = row.controller.strip() or "unknown"
@@ -868,6 +901,31 @@ def _player_report_summary(rows: list[MatchStats]) -> dict[str, Any]:
                     position_counts[sp_position] = _to_float(position_counts.get(sp_position)) + 1.0
                 seen_keys.add(key)
 
+        match_link_keys: set[tuple[tuple[int, int], tuple[int, int]]] = set()
+        for link in row.shot_links:
+            if not isinstance(link, dict):
+                continue
+            from_sp_id = _to_int(link.get("from_sp_id"))
+            to_sp_id = _to_int(link.get("to_sp_id"))
+            if from_sp_id is None or to_sp_id is None or from_sp_id == to_sp_id:
+                continue
+            from_key = (from_sp_id, _to_int(link.get("from_sp_grade")) or 0)
+            to_key = (to_sp_id, _to_int(link.get("to_sp_grade")) or 0)
+            link_key = (from_key, to_key)
+            if link_key not in link_aggregates:
+                link_aggregates[link_key] = {
+                    "connected_matches": 0.0,
+                    "shot_connections": 0.0,
+                    "goal_connections": 0.0,
+                }
+            target = link_aggregates[link_key]
+            target["shot_connections"] += 1.0
+            if bool(link.get("is_goal")):
+                target["goal_connections"] += 1.0
+            if link_key not in match_link_keys:
+                target["connected_matches"] += 1.0
+                match_link_keys.add(link_key)
+
     spid_names = _spid_name_map()
     position_names = _position_name_map()
     season_meta = _season_meta_map()
@@ -933,8 +991,12 @@ def _player_report_summary(rows: list[MatchStats]) -> dict[str, Any]:
                 "goal_involvements": round(value["goals"] + value["assists"], 2),
                 "shots": round(value["shots"], 2),
                 "effective_shots": round(value["effective_shots"], 2),
+                "tackles": round(value["tackle_success"], 2),
+                "intercepts": round(value["intercept"], 2),
+                "blocks": round(value["block_success"], 2),
                 "pass_success_rate": round(pass_success_rate, 4),
                 "tackle_success_rate": round(tackle_success_rate, 4),
+                "dribble_success_rate": round(_safe_divide(value["dribble_success"], value["dribble_try"]), 4),
                 "avg_rating": round(avg_rating, 3),
                 "_role_group": role_group,
                 "_appearances_actual": appearances_actual,
@@ -995,6 +1057,96 @@ def _player_report_summary(rows: list[MatchStats]) -> dict[str, Any]:
     top_scorer = max(players, key=lambda item: float(item["goals"]), default=None)
     top_assister = max(players, key=lambda item: float(item["assists"]), default=None)
     most_used = max(players, key=lambda item: int(item["appearances"]), default=None)
+    player_lookup = {(int(player["sp_id"]), int(player["sp_grade"])): player for player in players}
+    player_lookup_by_spid: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for player in players:
+        player_lookup_by_spid[int(player["sp_id"])].append(player)
+    for candidates in player_lookup_by_spid.values():
+        candidates.sort(key=lambda item: (-int(item.get("appearances", 0)), -_to_float(item.get("impact_score"))))
+
+    def resolve_player(key: tuple[int, int]) -> dict[str, Any] | None:
+        exact = player_lookup.get(key)
+        if exact is not None:
+            return exact
+        candidates = player_lookup_by_spid.get(key[0], [])
+        return candidates[0] if candidates else None
+
+    chemistry_pairs: list[dict[str, Any]] = []
+    min_link_connections = 1 if len(rows) <= 3 else 2
+    for (left_key, right_key), value in link_aggregates.items():
+        connection_count = int(value["shot_connections"])
+        goal_connection_count = int(value["goal_connections"])
+        if connection_count < min_link_connections and goal_connection_count <= 0:
+            continue
+        left = resolve_player(left_key)
+        right = resolve_player(right_key)
+        if left is None or right is None:
+            continue
+        connected_matches = int(value["connected_matches"])
+        connection_per_match = _safe_divide(connection_count, len(rows))
+        goal_rate = _safe_divide(goal_connection_count, connection_count)
+        avg_rating = (_to_float(left.get("avg_rating")) + _to_float(right.get("avg_rating"))) / 2
+        avg_impact = (_to_float(left.get("impact_score")) + _to_float(right.get("impact_score"))) / 2
+        chemistry_score = (
+            min(1.0, connection_count / max(2.0, float(len(rows)) * 0.35)) * 48.0
+            + min(1.0, goal_rate) * 24.0
+            + min(1.0, avg_rating / 8.0) * 16.0
+            + min(1.0, avg_impact / 100.0) * 12.0
+        )
+        if goal_connection_count > 0:
+            summary = f"{left['player_name']}가 만든 찬스가 {right['player_name']}의 골로 {goal_connection_count}번 이어졌어요."
+        elif connection_count >= 3:
+            summary = f"{left['player_name']}가 {right['player_name']}에게 슛 찬스를 {connection_count}번 만들어줬어요."
+        else:
+            summary = "최근 경기에서 실제로 슛까지 이어진 조합이에요."
+        chemistry_pairs.append(
+            {
+                "players": [
+                    {
+                        "sp_id": int(left["sp_id"]),
+                        "player_name": str(left["player_name"]),
+                        "season_name": str(left["season_name"]),
+                        "season_img": str(left.get("season_img", "")),
+                        "face_img": str(left.get("face_img", "")),
+                        "action_img": str(left.get("action_img", "")),
+                        "fallback_img": str(left.get("fallback_img", "")),
+                        "position_name": str(left["position_name"]),
+                        "sp_grade": int(left["sp_grade"]),
+                    },
+                    {
+                        "sp_id": int(right["sp_id"]),
+                        "player_name": str(right["player_name"]),
+                        "season_name": str(right["season_name"]),
+                        "season_img": str(right.get("season_img", "")),
+                        "face_img": str(right.get("face_img", "")),
+                        "action_img": str(right.get("action_img", "")),
+                        "fallback_img": str(right.get("fallback_img", "")),
+                        "position_name": str(right["position_name"]),
+                        "sp_grade": int(right["sp_grade"]),
+                    },
+                ],
+                "appearances": connected_matches,
+                "connection_count": connection_count,
+                "goal_connection_count": goal_connection_count,
+                "connection_per_match": round(connection_per_match, 3),
+                "goals": round(float(goal_connection_count), 2),
+                "assists": round(float(connection_count), 2),
+                "goal_involvements": round(float(goal_connection_count), 2),
+                "goal_involvements_per_match": round(_safe_divide(goal_connection_count, len(rows)), 3),
+                "avg_rating": round(avg_rating, 3),
+                "chemistry_score": round(chemistry_score, 3),
+                "evidence_type": "assisted_shot",
+                "direction": "assist_to_shooter",
+                "summary": summary,
+            }
+        )
+    chemistry_pairs.sort(
+        key=lambda item: (
+            -_to_float(item.get("chemistry_score")),
+            -int(item.get("connection_count", 0)),
+            -int(item.get("goal_connection_count", 0)),
+        )
+    )
 
     return {
         "sample_matches": len(rows),
@@ -1005,6 +1157,7 @@ def _player_report_summary(rows: list[MatchStats]) -> dict[str, Any]:
         "top_scorer": top_scorer,
         "top_assister": top_assister,
         "most_used": most_used,
+        "chemistry_pairs": chemistry_pairs[:6],
     }
 
 
@@ -1108,6 +1261,7 @@ def _participant_row(user: dict[str, Any], opp: dict[str, Any]) -> dict[str, Any
 
 
 def _collect_user_profiles(match_type: int, limit_rows: int = 3000) -> list[dict[str, Any]]:
+    cutoff = nexon_api_data_cutoff_iso()
     conn = connect()
     try:
         cur = conn.cursor()
@@ -1115,11 +1269,11 @@ def _collect_user_profiles(match_type: int, limit_rows: int = 3000) -> list[dict
             """
             SELECT payload_json
             FROM matches_raw
-            WHERE match_type = ?
+            WHERE match_type = ? AND created_at >= ?
             ORDER BY match_date DESC, id DESC
             LIMIT ?
             """,
-            (match_type, limit_rows),
+            (match_type, cutoff, limit_rows),
         )
         aggregates: dict[str, dict[str, Any]] = defaultdict(
             lambda: {
@@ -1618,6 +1772,7 @@ def _similar_rankers(
 
 
 def list_match_stats(ouid: str, match_type: int) -> list[MatchStats]:
+    cutoff = nexon_api_data_cutoff_iso()
     conn = connect()
     try:
         cur = conn.cursor()
@@ -1628,13 +1783,13 @@ def list_match_stats(ouid: str, match_type: int) -> list[MatchStats]:
             INNER JOIN (
               SELECT match_id, MAX(id) AS latest_id
               FROM matches_raw
-              WHERE ouid = ? AND match_type = ?
+              WHERE ouid = ? AND match_type = ? AND created_at >= ?
               GROUP BY match_id
             ) latest
               ON latest.latest_id = mr.id
             ORDER BY mr.match_date DESC, mr.id DESC
             """,
-            (ouid, match_type),
+            (ouid, match_type, cutoff),
         )
         stats: list[MatchStats] = []
         for row in cur.fetchall():
@@ -1690,6 +1845,7 @@ def _save_match_rows_to_cache(ouid: str, match_type: int, match_rows: list[dict[
 
 
 def _latest_known_match_ids(ouid: str, match_type: int, limit: int) -> list[str]:
+    cutoff = nexon_api_data_cutoff_iso()
     conn = connect()
     try:
         cur = conn.cursor()
@@ -1697,12 +1853,12 @@ def _latest_known_match_ids(ouid: str, match_type: int, limit: int) -> list[str]
             """
             SELECT match_id
             FROM matches_raw
-            WHERE ouid = ? AND match_type = ?
+            WHERE ouid = ? AND match_type = ? AND created_at >= ?
             GROUP BY match_id
             ORDER BY MAX(match_date) DESC, MAX(id) DESC
             LIMIT ?
             """,
-            (ouid, match_type, limit),
+            (ouid, match_type, cutoff, limit),
         )
         return [str(row["match_id"]) for row in cur.fetchall() if row["match_id"]]
     finally:
@@ -1880,6 +2036,7 @@ def run_analysis(
     force_bootstrap_sync: bool = False,
     manual_refresh_probe: bool = False,
 ) -> dict[str, Any]:
+    purge_stale_nexon_api_data()
     tactic_input_known = isinstance(current_tactic, dict) and len(current_tactic) > 0
     live_sync_enabled = (
         force_bootstrap_sync

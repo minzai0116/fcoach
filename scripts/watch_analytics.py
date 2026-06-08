@@ -21,8 +21,8 @@ EVENT_LABELS = {
     "visitor_return": "재방문",
     "page_view": "페이지 방문",
     "tab_click": "탭 클릭",
-    "search_user": "닉네임 검색",
-    "search_user_failed": "닉네임 조회 실패",
+    "search_user": "사용자 검색",
+    "search_user_failed": "사용자 검색 실패",
     "run_analysis": "분석 실행",
     "run_analysis_failed": "분석 실패",
     "adopt_action": "액션 실험 시작",
@@ -95,6 +95,13 @@ def event_count(summary: dict[str, Any], event_name: str) -> int:
     return 0
 
 
+def event_unique_user_count(summary: dict[str, Any], event_name: str) -> int:
+    for event in summary.get("event_users", []):
+        if event.get("event_name") == event_name:
+            return int(event.get("unique_users") or 0)
+    return 0
+
+
 def format_local_time(value: str | None) -> str:
     if not value:
         return "-"
@@ -162,8 +169,8 @@ def render_summary(summary: dict[str, Any], api_url: str, interval_sec: int) -> 
     print_bar("신규 방문", new_visitors, max_event_count)
     print_bar("재방문", returning_visitors, max_event_count)
     print_bar("페이지 방문", event_count(summary, "page_view"), max_event_count)
-    print_bar("닉네임 검색", event_count(summary, "search_user"), max_event_count)
-    print_bar("닉네임 실패", event_count(summary, "search_user_failed"), max_event_count)
+    print_bar("사용자 검색", event_count(summary, "search_user"), max_event_count)
+    print_bar("검색 실패", event_count(summary, "search_user_failed"), max_event_count)
     print_bar("분석 실행", event_count(summary, "run_analysis"), max_event_count)
     print_bar("분석 실패", event_count(summary, "run_analysis_failed"), max_event_count)
     print_bar("실험 시작", event_count(summary, "adopt_action"), max_event_count)
@@ -185,7 +192,25 @@ def render_summary(summary: dict[str, Any], api_url: str, interval_sec: int) -> 
     else:
         print("- 아직 페이지 방문 기록이 없습니다.")
     print()
+    if summary.get("event_users"):
+        funnel = summary.get("funnel_users") if isinstance(summary.get("funnel_users"), dict) else {}
+        print("사람 기준 퍼널(익명 브라우저 기준)")
+        print(f"- 검색한 사람: {event_unique_user_count(summary, 'search_user')}명")
+        print(f"- 분석한 사람: {event_unique_user_count(summary, 'run_analysis')}명")
+        print(f"- 실험 시작한 사람: {event_unique_user_count(summary, 'adopt_action')}명")
+        print(f"- 검증 조회한 사람: {event_unique_user_count(summary, 'view_evaluation')}명")
+        if funnel:
+            analysis_to_experiment = float(funnel.get("analysis_to_experiment_rate") or 0)
+            experiment_to_evaluation = float(funnel.get("experiment_to_evaluation_rate") or 0)
+            print(f"- 분석→실험 전환: {format_percent(analysis_to_experiment)}")
+            print(f"- 실험→검증 전환: {format_percent(experiment_to_evaluation)}")
+        print()
     render_recent_failures(summary)
+    print()
+    print("해석 메모")
+    print("- 사용자 검색은 사람이 닉네임 검색/빠른 시작을 누른 횟수입니다.")
+    print("- Nexon /id 원시 호출량은 랭커 OUID 매핑, 캐시 미스, 재시도가 섞이므로 방문자/검색자 수로 보지 않습니다.")
+    print("- 사람 기준 퍼널은 로그인 ID가 아니라 브라우저 익명 ID 기준입니다.")
     print()
     print(f"{interval_sec}초마다 자동 갱신됩니다. 종료: Ctrl+C")
 

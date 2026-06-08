@@ -2,14 +2,31 @@ import type { MetadataRoute } from "next";
 
 const baseUrl = "https://fcoach.fun";
 
+const routes = [
+  { path: "/guide", frequency: "weekly", priority: 1 },
+  { path: "/search", frequency: "weekly", priority: 0.8 },
+  { path: "/diagnosis", frequency: "weekly", priority: 0.8 },
+  { path: "/players", frequency: "weekly", priority: 0.8 },
+  { path: "/habits", frequency: "weekly", priority: 0.8 },
+  { path: "/coaching", frequency: "weekly", priority: 0.8 },
+  { path: "/rankers", frequency: "weekly", priority: 0.8 },
+  { path: "/tracking", frequency: "weekly", priority: 0.8 },
+  { path: "/privacy", frequency: "monthly", priority: 0.5 },
+  { path: "/terms", frequency: "monthly", priority: 0.5 },
+  { path: "/license", frequency: "monthly", priority: 0.5 },
+] satisfies Array<{
+  path: string;
+  frequency: MetadataRoute.Sitemap[number]["changeFrequency"];
+  priority: number;
+}>;
+
 export default function sitemap(): MetadataRoute.Sitemap {
-  const routes = ["", "/privacy", "/terms", "/license"];
   const lastModified = new Date();
 
   return routes.map((route) => ({
-    url: `${baseUrl}${route}`,
+    url: `${baseUrl}${route.path}`,
     lastModified,
-    changeFrequency: route ? "monthly" : "weekly",
-    priority: route ? 0.5 : 1,
+    changeFrequency: route.frequency,
+    priority: route.priority,
   }));
 }
