@@ -1,6 +1,13 @@
 import unittest
 
-from app.services.analysis import MatchStats, _compute_metrics, _issue_scores, _player_report_summary
+from app.services.analysis import (
+    MatchStats,
+    _benchmark_compare,
+    _completed_match_rows,
+    _compute_metrics,
+    _issue_scores,
+    _player_report_summary,
+)
 from app.services.analysis_metrics import shot_zone_summary
 
 
@@ -34,6 +41,20 @@ def _sample_match(result: str, goals_for: float, goals_against: float, late_conc
 
 
 class AnalysisTest(unittest.TestCase):
+    def test_final_score_and_shooting_goals_have_separate_denominators(self):
+        row = _sample_match('승', 1, 0, 0, 5, 3)
+        row.coaching_data = {'shoot': {'goalTotalDisplay': 2}, 'opponent_shoot': {'goalTotalDisplay': 1}}
+        metrics = _compute_metrics([row])
+        self.assertEqual(metrics['goals_for'], 2)
+        self.assertEqual(metrics['goals_against'], 1)
+        self.assertEqual(metrics['goals_against_per_match'], 1)
+        self.assertAlmostEqual(metrics['goals_per_sot'], 1 / 3)
+
+    def test_late_concession_uses_only_goals_with_confirmed_times(self):
+        row = _sample_match('패', 0, 3, 1, 5, 3)
+        row.goals_against_minutes = [10, 70]
+        self.assertEqual(_compute_metrics([row])['late_concede_ratio'], .5)
+
     def test_compute_metrics_window(self) -> None:
         rows = [
             _sample_match("승", 2, 1, 1, 8, 4),
@@ -43,6 +64,15 @@ class AnalysisTest(unittest.TestCase):
         self.assertEqual(metrics["match_count"], 2.0)
         self.assertEqual(metrics["win_rate"], 0.5)
         self.assertAlmostEqual(metrics["shot_on_target_rate"], 5 / 12, places=4)
+
+    def test_completed_match_rows_excludes_forfeit_results(self) -> None:
+        completed = _sample_match("승", 2, 1, 0, 8, 4)
+        forfeit_win = _sample_match("승", 3, 0, 0, 0, 0)
+        forfeit_loss = _sample_match("패", 0, 3, 0, 0, 0)
+        forfeit_win.match_end_type = 1
+        forfeit_loss.match_end_type = 2
+
+        self.assertEqual(_completed_match_rows([forfeit_win, completed, forfeit_loss]), [completed])
 
     def test_shot_zone_summary_uses_normalized_box_coordinates(self) -> None:
         summary = shot_zone_summary(
@@ -106,6 +136,17 @@ class AnalysisTest(unittest.TestCase):
         }
         issues = _issue_scores(metrics, benchmark)
         self.assertEqual(issues.get("MAINTAIN_PERFORMANCE"), 0.0)
+
+    def test_benchmark_compare_uses_worst_composite_metric(self) -> None:
+        comparison = _benchmark_compare(
+            "DEFENSE_DUEL_WEAKNESS",
+            {"tackle_success_rate": 0.47, "goals_against_per_match": 2.2},
+            {"tackle_success_rate": 0.41, "goals_against_per_match": 1.2},
+            "test",
+        )
+
+        self.assertEqual(comparison["metric_name"], "goals_against_per_match")
+        self.assertFalse(comparison["higher_is_better"])
 
     def test_player_report_summary_aggregates(self) -> None:
         rows = [

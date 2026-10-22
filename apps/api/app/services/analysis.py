@@ -43,6 +43,14 @@ from app.services.cache import CacheClient
 from app.services.openapi_client import NexonOpenApiClient, OpenApiRateLimitError
 from app.services.ranker_source import fetch_official_rankers, list_official_rankers
 from app.services.tactic_recommendation import get_issue_tactic_mapping
+from app.services.position_coaching import build_position_coaching
+from app.services.passing_coaching import extract_pass_breakdown
+from app.services.coaching_data import extract_coaching_data, extract_player_coaching, is_shootout, shot_minute
+from app.services.squad_feed import SquadFeedError, get_public_feed
+from app.services.feed_coaching import build_feed_coaching
+from app.services.match_selection import select_match_sample
+from app.services.comparison_evidence import previous_matches
+from app.services.team_history_coaching import VERSION as COACHING_VERSION, build_team_history_coaching
 
 _MATCH_CACHE = CacheClient()
 _OFFICIAL_RANKER_FALLBACK_CACHE_AT: datetime | None = None
@@ -108,12 +116,9 @@ def _load_official_rankers(limit: int = 80) -> list[dict[str, Any]]:
     return fallback_rows[:safe_limit]
 
 
-def _sync_fetch_limits(window_size: int, has_cached_rows: bool) -> list[int]:
-    if has_cached_rows:
-        return [max(window_size, 12)]
-    # Cold-start 환경(예: 서버리스 새 인스턴스)에서는 작은 배치부터 시도해 429 가능성을 낮춘다.
-    primary = min(12, max(5, window_size))
-    return [primary, 5]
+def _sync_fetch_limit(window_size: int) -> int:
+    # 몰수 경기가 섞여도 정상 종료 표본을 채울 수 있도록 ID 후보만 넓게 조회한다.
+    return min(100, max(12, window_size * 3))
 
 
 def _safe_get_json(url: str) -> Any:
@@ -194,26 +199,7 @@ def _clamp_tactic_1_10(value: Any, fallback: int) -> int:
 
 
 def _goal_time_to_minute(raw_value: Any) -> float:
-    try:
-        value = int(float(raw_value))
-    except Exception:
-        return 0.0
-    if value <= 0:
-        return 0.0
-    second_half_marker = 1 << 24
-    second_half_offset = 0
-    if value >= second_half_marker:
-        value -= second_half_marker
-        second_half_offset = 45
-    minute_in_half = value // 100 if value >= 100 else value
-    minute_in_half = max(0, minute_in_half)
-    # FC Online goalTime can be logged in a compressed half-time scale (0~30).
-    # Expand to football minute scale (0~45) so late-game buckets are visible.
-    if minute_in_half <= 30:
-        expanded_minute = minute_in_half * 1.5
-    else:
-        expanded_minute = float(minute_in_half)
-    return float(second_half_offset + expanded_minute)
+    return shot_minute(raw_value) or 0.0
 
 
 def _normalize_xy(x_value: Any, y_value: Any) -> tuple[float, float]:
@@ -289,6 +275,7 @@ def _extract_user_match(payload: dict[str, Any], ouid: str) -> MatchStats | None
     user_defence = user.get("defence", {}) if isinstance(user.get("defence"), dict) else {}
 
     result = str(user_detail.get("matchResult", ""))
+    match_end_type = _to_int(user_detail.get("matchEndType"))
     goals_for = _to_float(user_shoot.get("goalTotal"))
     goals_against = _to_float(opp_shoot.get("goalTotal"))
     shots = _to_float(user_shoot.get("shootTotal"))
@@ -314,7 +301,7 @@ def _extract_user_match(payload: dict[str, Any], ouid: str) -> MatchStats | None
     goals_for_minutes: list[float] = []
     goals_for_types: list[int] = []
     for shot in user_shot_detail:
-        if not isinstance(shot, dict):
+        if not isinstance(shot, dict) or is_shootout(shot.get('goalTime')):
             continue
         total_shots_detail += 1
         shot_x = _to_float(shot.get("x"))
@@ -324,8 +311,11 @@ def _extract_user_match(payload: dict[str, Any], ouid: str) -> MatchStats | None
         norm_x, norm_y = _normalize_xy(shot.get("x"), shot.get("y"))
         result_code = _to_float(shot.get("result"))
         is_goal = result_code == 3 or str(shot.get("spResult", "")) in {"goal", "3"}
-        shots_for_points.append({"x": norm_x, "y": norm_y, "is_goal": bool(is_goal)})
         shooter_sp_id = _to_int(shot.get("spId"))
+        shots_for_points.append({"x": norm_x, "y": norm_y, "is_goal": bool(is_goal),
+                                 "sp_id": shooter_sp_id, "sp_grade": _to_int(shot.get("spGrade")),
+                                 "minute": shot_minute(shot.get("goalTime")), "type": _to_int(shot.get("type")),
+                                 "result": int(result_code)})
         assist_sp_id = _to_int(shot.get("assistSpId"))
         if (
             _is_truthy(shot.get("assist"))
@@ -347,7 +337,9 @@ def _extract_user_match(payload: dict[str, Any], ouid: str) -> MatchStats | None
                 }
             )
         if is_goal:
-            goals_for_minutes.append(_goal_time_to_minute(shot.get("goalTime")))
+            minute = shot_minute(shot.get("goalTime"))
+            if minute is not None:
+                goals_for_minutes.append(minute)
             shot_type = _to_int(shot.get("type"))
             if shot_type is not None:
                 goals_for_types.append(shot_type)
@@ -355,12 +347,14 @@ def _extract_user_match(payload: dict[str, Any], ouid: str) -> MatchStats | None
     late_goals_against = 0.0
     goals_against_minutes: list[float] = []
     for shot in opp_shot_detail:
-        if not isinstance(shot, dict):
+        if not isinstance(shot, dict) or is_shootout(shot.get('goalTime')):
             continue
         is_goal = _to_float(shot.get("result")) == 3 or str(shot.get("spResult", "")) in {"goal", "3"}
         if not is_goal:
             continue
-        goal_time = _goal_time_to_minute(shot.get("goalTime"))
+        goal_time = shot_minute(shot.get("goalTime"))
+        if goal_time is None:
+            continue
         goals_against_minutes.append(goal_time)
         if goal_time >= 60:
             late_goals_against += 1
@@ -397,11 +391,15 @@ def _extract_user_match(payload: dict[str, Any], ouid: str) -> MatchStats | None
                 "dribble_success": _to_float(status.get("dribbleSuccess")),
                 "defending_actions": _to_float(status.get("defending")),
                 "rating": _to_float(status.get("spRating")),
+                **extract_player_coaching(status),
+
             }
         )
 
+    # 넥슨의 시간대 없는 matchDate는 명세상 UTC0이다.
+    match_date = _parse_iso_datetime(str(payload.get("matchDate") or utc_now_iso()))
     return MatchStats(
-        match_date=str(payload.get("matchDate", utc_now_iso())),
+        match_date=match_date.isoformat() if match_date else str(payload.get("matchDate", "")),
         result=result,
         opponent_nickname=str(opp.get("nickname", "")).strip(),
         goals_for=goals_for,
@@ -434,6 +432,10 @@ def _extract_user_match(payload: dict[str, Any], ouid: str) -> MatchStats | None
         controller=str(user_detail.get("controller", "")),
         player_stats=player_stats,
         shot_links=shot_links,
+        pass_breakdown=extract_pass_breakdown(user_pass),
+        coaching_data=extract_coaching_data(user, opp),
+        user_nickname=str(user.get('nickname') or '').strip(),
+        match_end_type=match_end_type if match_end_type is not None else -1,
     )
 
 
@@ -554,45 +556,55 @@ def _confidence_detail(match_count: float, issue_score: float, tactic_input_know
 
 
 def _benchmark_compare(issue_code: str, metrics: dict[str, float], benchmark: dict[str, float], benchmark_source: str) -> dict[str, Any]:
-    if issue_code == "HIGH_LATE_CONCEDE":
-        user_value = metrics["late_concede_ratio"]
-        benchmark_value = benchmark["late_concede_ratio"]
-        metric_name = "late_concede_ratio"
-    elif issue_code == "LOW_FINISHING":
-        user_value = metrics.get("goals_per_sot", 0.0)
-        benchmark_value = benchmark.get("goals_per_sot", 0.4)
-        metric_name = "goals_per_sot"
-    elif issue_code == "POOR_SHOT_SELECTION":
-        user_value = metrics.get("in_box_shot_ratio", 0.0)
-        benchmark_value = benchmark.get("in_box_shot_ratio", 0.56)
-        metric_name = "in_box_shot_ratio"
-    elif issue_code == "OFFSIDE_RISK":
-        user_value = metrics["offside_avg"]
-        benchmark_value = benchmark["offside_avg"]
-        metric_name = "offside_avg"
-    elif issue_code == "BUILDUP_INEFFICIENCY":
-        user_value = metrics.get("through_pass_success_rate", 0.0)
-        benchmark_value = benchmark.get("through_pass_success_rate", 0.29)
-        metric_name = "through_pass_success_rate"
-    elif issue_code == "DEFENSE_DUEL_WEAKNESS":
-        user_value = metrics.get("tackle_success_rate", 0.0)
-        benchmark_value = benchmark.get("tackle_success_rate", 0.39)
-        metric_name = "tackle_success_rate"
-    elif issue_code == "CHANCE_CREATION_LOW":
-        user_value = metrics.get("xg_for_per_match", 0.0)
-        benchmark_value = benchmark.get("xg_for_per_match", 1.45)
-        metric_name = "xg_for_per_match"
-    elif issue_code == "POSSESSION_CONTROL_RISK":
-        user_value = metrics.get("possession_avg", 0.0)
-        benchmark_value = benchmark.get("possession_avg", 50.0)
-        metric_name = "possession_avg"
-    else:
-        user_value = metrics["win_rate"]
-        benchmark_value = benchmark["win_rate"]
-        metric_name = "win_rate"
+    candidates: dict[str, list[tuple[str, bool, float]]] = {
+        "HIGH_LATE_CONCEDE": [("late_concede_ratio", False, 0.18)],
+        "LOW_FINISHING": [("goals_per_sot", True, 0.16)],
+        "POOR_SHOT_SELECTION": [
+            ("in_box_shot_ratio", True, 0.13),
+            ("shot_on_target_rate", True, 0.13),
+        ],
+        "OFFSIDE_RISK": [("offside_avg", False, 0.65)],
+        "BUILDUP_INEFFICIENCY": [
+            ("pass_success_rate", True, 0.10),
+            ("through_pass_success_rate", True, 0.10),
+        ],
+        "DEFENSE_DUEL_WEAKNESS": [
+            ("tackle_success_rate", True, 0.20),
+            ("goals_against_per_match", False, 0.50),
+        ],
+        "CHANCE_CREATION_LOW": [
+            ("shots_per_match", True, 2.0),
+            ("xg_for_per_match", True, 0.55),
+        ],
+        "POSSESSION_CONTROL_RISK": [("possession_avg", True, 6.0)],
+    }
+    defaults = {
+        "goals_per_sot": 0.4,
+        "in_box_shot_ratio": 0.56,
+        "pass_success_rate": 0.81,
+        "through_pass_success_rate": 0.29,
+        "tackle_success_rate": 0.39,
+        "goals_against_per_match": 1.28,
+        "shots_per_match": 7.3,
+        "xg_for_per_match": 1.45,
+        "possession_avg": 50.0,
+    }
+    issue_candidates = candidates.get(issue_code, [("win_rate", True, 0.20)])
+
+    def adverse_gap(candidate: tuple[str, bool, float]) -> float:
+        name, higher_is_better, scale = candidate
+        user = metrics.get(name, 0.0)
+        reference = benchmark.get(name, defaults.get(name, 0.0))
+        gap = reference - user if higher_is_better else user - reference
+        return max(0.0, gap) / max(scale, 1e-6)
+
+    metric_name, higher_is_better, _ = max(issue_candidates, key=adverse_gap)
+    user_value = metrics.get(metric_name, 0.0)
+    benchmark_value = benchmark.get(metric_name, defaults.get(metric_name, 0.0))
 
     return {
         "metric_name": metric_name,
+        "higher_is_better": higher_is_better,
         "user_value": round(user_value, 4),
         "benchmark_value": round(benchmark_value, 4),
         "gap_value": round(user_value - benchmark_value, 4),
@@ -1162,12 +1174,14 @@ def _player_report_summary(rows: list[MatchStats]) -> dict[str, Any]:
 
 
 def _build_visual_summary(rows: list[MatchStats]) -> dict[str, Any]:
-    shot_points: list[dict[str, float | bool]] = []
+    shot_points: list[dict[str, Any]] = []
+    player_names = _spid_name_map()
     goals_for_minutes: list[float] = []
     goals_against_minutes: list[float] = []
     goals_for_types: list[int] = []
     for row in rows:
-        shot_points.extend(row.shots_for_points)
+        shot_points.extend({**point, "player_name": player_names.get(point.get("sp_id")),
+                            "date": row.match_date, "match_id": row.match_id} for point in row.shots_for_points)
         goals_for_minutes.extend(row.goals_for_minutes)
         goals_against_minutes.extend(row.goals_against_minutes)
         goals_for_types.extend(row.goals_for_types)
@@ -1181,18 +1195,22 @@ def _build_visual_summary(rows: list[MatchStats]) -> dict[str, Any]:
         "goal_profile": _goal_profile_summary(rows),
         "player_report": _player_report_summary(rows),
         "goal_type_for": _goal_type_summary(goals_for_types),
-        "goal_type_note": "공식 Open API shootDetail.type 코드(1~12) 기준으로 라벨링하며, 문서에 없는 코드는 미정의 타입으로 표시합니다. 왼발/오른발 직접 필드는 제공되지 않습니다.",
+        "goal_type_note": "공식 문서에 정의된 1~12번 유형을 사용합니다. 코드 14는 실제 경기에서도 반환되지만 공식 이름이 공개되지 않아 종류 미확인으로 구분합니다.",
     }
 
 
 def _recent_match_summary(rows: list[MatchStats], limit: int = 5) -> list[dict[str, Any]]:
     return [
         {
+            "match_id": row.match_id,
+            "match_end_type": row.match_end_type,
             "match_date": row.match_date,
             "opponent_nickname": row.opponent_nickname or "알 수 없음",
             "result": row.result or "-",
             "score_for": round(row.goals_for, 2),
             "score_against": round(row.goals_against, 2),
+            "score_for_display": row.coaching_data.get("shoot", {}).get("goalTotalDisplay"),
+            "score_against_display": row.coaching_data.get("opponent_shoot", {}).get("goalTotalDisplay"),
             "controller": row.controller or "unknown",
         }
         for row in rows[:limit]
@@ -1221,13 +1239,13 @@ def _participant_row(user: dict[str, Any], opp: dict[str, Any]) -> dict[str, Any
     in_box_shots = 0.0
     total_shots_detail = 0.0
     for shot in user_shot_detail:
-        if not isinstance(shot, dict):
+        if not isinstance(shot, dict) or is_shootout(shot.get('goalTime')):
             continue
         total_shots_detail += 1
         if _is_in_box(_to_float(shot.get("x")), _to_float(shot.get("y"))):
             in_box_shots += 1
     for shot in opp_shot_detail:
-        if not isinstance(shot, dict):
+        if not isinstance(shot, dict) or is_shootout(shot.get('goalTime')):
             continue
         is_goal = _to_float(shot.get("result")) == 3 or str(shot.get("spResult", "")) in {"goal", "3"}
         if not is_goal:
@@ -1547,48 +1565,7 @@ def _similar_rankers(
     if len(pool) < 5:
         pool = [profile for profile in ranker_profiles if float(profile["match_count"]) >= 1.0]
     if not pool:
-        fallback_candidates: list[dict[str, Any]] = []
-        target_win_rate = float(target_metrics.get("win_rate", 0.0))
-        for row in official_rankers:
-            nickname = str(row.get("nickname", "")).strip()
-            if not nickname:
-                continue
-            rank_no = int(row.get("rank_no", 999999))
-            candidate_win_rate = float(row.get("win_rate", 0.0))
-            win_gap = round(target_win_rate - candidate_win_rate, 4)
-            sample_matches = int(row.get("win_count", 0)) + int(row.get("draw_count", 0)) + int(row.get("loss_count", 0))
-            sample_matches = max(1, sample_matches)
-            distance = abs(target_win_rate - candidate_win_rate)
-            similarity = 1.0 / (1.0 + distance * 4.0)
-            fallback_candidates.append(
-                {
-                    "ranker_proxy_rank": rank_no,
-                    "ouid": str(row.get("ouid") or f"nickname:{_normalize_nickname(nickname)}"),
-                    "nickname": nickname,
-                    "similarity": round(similarity, 4),
-                    "match_count": sample_matches,
-                    "win_rate": round(candidate_win_rate, 4),
-                    "reliability": round(min(0.45, sample_matches / 40.0), 2),
-                    "source": f"{OFFICIAL_BENCHMARK_SOURCE}_meta_only",
-                    "formation": str(row.get("formation", "")),
-                    "team_color": str(row.get("team_color", "")),
-                    "gaps": {
-                        "win_rate": win_gap,
-                    },
-                    "metric_comparisons": [
-                        {
-                            "metric_name": "win_rate",
-                            "metric_label": "승률",
-                            "higher_is_better": True,
-                            "user_value": round(target_win_rate, 4),
-                            "candidate_value": round(candidate_win_rate, 4),
-                            "gap_value": win_gap,
-                        }
-                    ],
-                }
-            )
-        fallback_candidates.sort(key=lambda row: (-row["similarity"], row["ranker_proxy_rank"]))
-        return fallback_candidates[:top_k]
+        return []
 
     def feature_vector(profile: dict[str, Any]) -> list[float]:
         return [
@@ -1778,7 +1755,7 @@ def list_match_stats(ouid: str, match_type: int) -> list[MatchStats]:
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT mr.payload_json
+            SELECT mr.match_id, mr.payload_json
             FROM matches_raw mr
             INNER JOIN (
               SELECT match_id, MAX(id) AS latest_id
@@ -1796,6 +1773,7 @@ def list_match_stats(ouid: str, match_type: int) -> list[MatchStats]:
             payload = json.loads(row["payload_json"])
             parsed = _extract_user_match(payload, ouid)
             if parsed is not None:
+                parsed.match_id = row['match_id']
                 stats.append(parsed)
         return stats
     finally:
@@ -1819,20 +1797,56 @@ def _list_match_stats_from_cache(ouid: str, match_type: int) -> list[MatchStats]
             continue
         parsed = _extract_user_match(raw_payload, ouid)
         if parsed is not None:
+            parsed.match_id = match_id
             stats.append(parsed)
             if match_id:
                 seen_match_ids.add(match_id)
     return stats
 
 
+def _merge_match_stats(db_rows: list[MatchStats], cached_rows: list[MatchStats]) -> list[MatchStats]:
+    seen, rows = set(), []
+    for row in [*db_rows, *cached_rows]:
+        if row.match_id and row.match_id in seen:
+            continue
+        if row.match_id:
+            seen.add(row.match_id)
+        rows.append(row)
+    return sorted(rows, key=lambda row: _parse_iso_datetime(row.match_date) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+
+
+def _available_match_stats(ouid: str, match_type: int) -> list[MatchStats]:
+    return _merge_match_stats(list_match_stats(ouid, match_type), _list_match_stats_from_cache(ouid, match_type))
+
+
+def _completed_match_rows(rows: list[MatchStats]) -> list[MatchStats]:
+    return [row for row in rows if row.match_end_type == 0]
+
+
+def _cached_match_ids(ouid: str, match_type: int) -> set[str]:
+    payload = _MATCH_CACHE.get_json(_match_cache_key(ouid, match_type))
+    if not isinstance(payload, list):
+        return set()
+    return {
+        match_id
+        for row in payload
+        if isinstance(row, dict)
+        if (match_id := str(row.get("match_id", "")).strip())
+    }
+
+
 def _save_match_rows_to_cache(ouid: str, match_type: int, match_rows: list[dict[str, Any]]) -> None:
     if not match_rows:
         return
+    cached = _MATCH_CACHE.get_json(_match_cache_key(ouid, match_type))
+    candidates = [*match_rows, *(cached if isinstance(cached, list) else [])]
     deduped: list[dict[str, Any]] = []
     seen_match_ids: set[str] = set()
-    for row in match_rows:
-        if not isinstance(row, dict):
-            continue
+    for row in sorted(
+        (row for row in candidates if isinstance(row, dict)),
+        key=lambda row: str(row.get("match_date", "")),
+        reverse=True,
+    ):
         match_id = str(row.get("match_id", "")).strip()
         if match_id and match_id in seen_match_ids:
             continue
@@ -1892,11 +1906,19 @@ def _refresh_match_rows(
     existing_rows: list[MatchStats],
 ) -> tuple[list[MatchStats], int]:
     api = NexonOpenApiClient(timeout_sec=15, retries=2)
-    has_enough_rows = len(existing_rows) >= max(window_size, 12)
-    known_match_ids = set(_latest_known_match_ids(ouid, match_type, limit=max(window_size, 12))) if existing_rows else set()
+    existing_completed_count = len(_completed_match_rows(existing_rows))
+    has_enough_rows = existing_completed_count >= window_size
+    base_candidate_limit = _sync_fetch_limit(window_size)
+    candidate_limit = (
+        base_candidate_limit
+        if has_enough_rows
+        else min(100, max(base_candidate_limit, len(existing_rows) + window_size * 3))
+    )
+    known_match_ids = set(_latest_known_match_ids(ouid, match_type, limit=candidate_limit)) if existing_rows else set()
+    known_match_ids.update(_cached_match_ids(ouid, match_type))
     refreshed_match_rows = 0
     sync_error: Exception | None = None
-    for fetch_limit in _sync_fetch_limits(window_size=window_size, has_cached_rows=bool(existing_rows)):
+    for fetch_limit in [candidate_limit]:
         try:
             if known_match_ids and has_enough_rows:
                 match_rows = api.collect_incremental_match_rows(
@@ -1906,13 +1928,18 @@ def _refresh_match_rows(
                     limit=fetch_limit,
                 )
             else:
-                match_rows = api.collect_match_rows(ouid=ouid, match_type=match_type, limit=fetch_limit)
+                match_rows = api.collect_match_rows(
+                    ouid=ouid,
+                    match_type=match_type,
+                    limit=fetch_limit,
+                    known_match_ids=known_match_ids,
+                    completed_match_target=window_size,
+                    existing_completed_count=existing_completed_count,
+                )
             if match_rows:
                 refreshed_match_rows = upsert_matches(ouid=ouid, match_type=match_type, rows=match_rows)
                 _save_match_rows_to_cache(ouid, match_type, match_rows)
-            rows = list_match_stats(ouid, match_type)
-            if not rows:
-                rows = _list_match_stats_from_cache(ouid, match_type)
+            rows = _available_match_stats(ouid, match_type)
             sync_error = None
             return rows, refreshed_match_rows
         except requests.HTTPError as exc:
@@ -1934,8 +1961,8 @@ def _load_rows_for_analysis(
     manual_refresh_probe: bool = False,
 ) -> tuple[list[MatchStats], int, str | None, bool]:
     db_rows = list_match_stats(ouid, match_type)
-    cache_rows = _list_match_stats_from_cache(ouid, match_type) if not db_rows else []
-    rows = db_rows or cache_rows
+    cache_rows = _list_match_stats_from_cache(ouid, match_type)
+    rows = _merge_match_stats(db_rows, cache_rows)
     refreshed_match_rows = 0
     refresh_warning: str | None = None
     using_cache_only = not db_rows and bool(cache_rows)
@@ -1946,7 +1973,7 @@ def _load_rows_for_analysis(
         should_refresh = should_refresh or (datetime.now(timezone.utc) - latest_before_dt >= MATCH_REFRESH_THRESHOLD)
     if rows and latest_before_dt is None:
         should_refresh = True
-    if len(rows) < max(window_size, 12):
+    if len(_completed_match_rows(rows)) < window_size:
         should_refresh = True
     if manual_refresh_probe and rows and live_sync_enabled and not should_refresh:
         try:
@@ -1979,9 +2006,7 @@ def _load_rows_for_analysis(
                 if wait_seconds > 0
                 else "Nexon Open API 호출 제한으로 최신 동기화에 실패했습니다. 잠시 후 다시 시도해주세요."
             )
-            rows = list_match_stats(ouid, match_type)
-            if not rows:
-                rows = _list_match_stats_from_cache(ouid, match_type)
+            rows = _available_match_stats(ouid, match_type)
         except requests.HTTPError as exc:
             status_code = exc.response.status_code if exc.response is not None else None
             api_error_name = ""
@@ -2007,34 +2032,41 @@ def _load_rows_for_analysis(
             if api_error_name or api_error_message:
                 detail_parts = [part for part in (api_error_name, api_error_message) if part]
                 refresh_warning = f"{refresh_warning} [{' / '.join(detail_parts)}]"
-            rows = list_match_stats(ouid, match_type)
-            if not rows:
-                rows = _list_match_stats_from_cache(ouid, match_type)
+            rows = _available_match_stats(ouid, match_type)
         except Exception as exc:
             refresh_warning = (
                 "최신 경기 동기화에 실패해 저장된 데이터로 분석했습니다."
                 f" ({type(exc).__name__})"
             )
-            rows = list_match_stats(ouid, match_type)
-            if not rows:
-                rows = _list_match_stats_from_cache(ouid, match_type)
+            rows = _available_match_stats(ouid, match_type)
     elif should_refresh and not rows:
         refresh_warning = "저장된 경기 데이터가 없어 최신 동기화가 필요합니다. 잠시 후 다시 시도해주세요."
 
     if not rows and refresh_warning:
         refresh_warning = f"{refresh_warning} 해당 모드에서 저장된 경기 데이터가 없습니다."
     if not rows and not refresh_warning:
-        refresh_warning = "해당 모드에서 조회 가능한 경기 데이터가 없습니다."
+        refresh_warning = "이 경기 모드에서 조회할 수 있는 경기 내역이 없습니다. 다른 모드를 선택해보세요."
     return rows, refreshed_match_rows, refresh_warning, should_refresh
+
+
+def get_recent_matches(ouid: str, match_type: int, limit: int = 100) -> dict:
+    rows, new_rows, warning, _ = _load_rows_for_analysis(ouid, match_type, 30, True, manual_refresh_probe=True)
+    return {'items': _recent_match_summary(rows, limit), 'fetched_at': utc_now_iso(),
+            'sync_new_rows': new_rows, 'sync_warning': warning}
 
 
 def run_analysis(
     ouid: str,
     match_type: int,
-    window_size: int,
+    window_size: int | None,
     current_tactic: dict[str, Any] | None = None,
     force_bootstrap_sync: bool = False,
     manual_refresh_probe: bool = False,
+    squad_feed_id: str | None = None,
+    include_forfeit_wins: bool = False,
+    include_forfeit_losses: bool = False,
+    start_match_id: str | None = None,
+    end_match_id: str | None = None,
 ) -> dict[str, Any]:
     purge_stale_nexon_api_data()
     tactic_input_known = isinstance(current_tactic, dict) and len(current_tactic) > 0
@@ -2046,17 +2078,37 @@ def run_analysis(
     rows, refreshed_match_rows, refresh_warning, should_refresh = _load_rows_for_analysis(
         ouid=ouid,
         match_type=match_type,
-        window_size=window_size,
+        window_size=window_size or 30,
         live_sync_enabled=live_sync_enabled,
         manual_refresh_probe=manual_refresh_probe,
     )
-    playable_controllers = {"keyboard", "gamepad"}
-    playable_rows = [row for row in rows if row.controller.strip().lower() in playable_controllers]
-    use_playable_only = len(playable_rows) >= min(5, window_size)
-    base_rows = playable_rows if use_playable_only else rows
-    selected = base_rows[:window_size]
+    selected, selection = select_match_sample(rows, window_size, include_forfeit_wins=include_forfeit_wins,
+                                             include_forfeit_losses=include_forfeit_losses, start_match_id=start_match_id, end_match_id=end_match_id)
+    if not selected:
+        if not rows and refresh_warning:
+            raise ValueError(refresh_warning)
+        raise ValueError('선택한 범위와 몰수 포함 조건에 맞는 경기 내역이 없습니다. 경기 범위나 포함 조건을 바꿔주세요.')
+    if window_size is not None and len(selected) < window_size:
+        sample_warning = f"선택한 조건에 맞는 경기 {len(selected)}경기만 확인되어 해당 경기만 분석했습니다."
+        refresh_warning = f"{refresh_warning} {sample_warning}".strip() if refresh_warning else sample_warning
+    if selection['forfeit_win_count'] or selection['forfeit_loss_count']:
+        warning = '몰수승·몰수패를 포함한 분석입니다. 경기 길이와 통계가 정상 종료 경기와 달라 수치를 직접 비교하기 어렵습니다.'
+        refresh_warning = f'{refresh_warning} {warning}'.strip() if refresh_warning else warning
+    window_size = window_size if window_size is not None else len(selected)
     metrics = _compute_metrics(selected)
     visuals = _build_visual_summary(selected)
+    history = previous_matches(rows, selected)
+    coaching = build_position_coaching(
+        selected, visuals.get("player_report", {}), _position_name_map(), match_type=match_type,
+        include_forfeits=include_forfeit_wins or include_forfeit_losses,
+        player_names=_spid_name_map(), history_rows=history,
+    )
+    if squad_feed_id:
+        try:
+            snapshot = get_public_feed(squad_feed_id, refresh=True)
+            coaching['squad_feed'] = build_feed_coaching(snapshot, coaching, [row for row in selected if row.match_end_type == 0], match_type, history_rows=history)
+        except SquadFeedError as error:
+            coaching['squad_feed'] = {'status': 'unavailable', 'requested_feed_id': squad_feed_id, 'message': str(error)}
     official_rankers = _load_official_rankers(limit=80)
     official_ranker_ouids = {str(row["ouid"]) for row in official_rankers if row.get("ouid")}
     official_ranker_nicknames = set()
@@ -2065,7 +2117,7 @@ def run_analysis(
         if normalized_nickname:
             official_ranker_nicknames.add(normalized_nickname)
     ranker_profiles: list[dict[str, Any]] = []
-    if official_ranker_ouids or official_ranker_nicknames:
+    if match_type == 50 and (official_ranker_ouids or official_ranker_nicknames):
         profiles = _collect_user_profiles(match_type=50, limit_rows=3000)
         ranker_profiles = [
             profile
@@ -2074,91 +2126,46 @@ def run_analysis(
             or _normalize_nickname(str(profile.get("nickname", ""))) in official_ranker_nicknames
         ]
 
-    benchmark, benchmark_meta = _resolve_benchmark(
-        match_type=match_type,
-        official_rankers=official_rankers,
-        ranker_profiles=ranker_profiles,
-    )
-    benchmark_source = str(benchmark_meta.get("source", STATIC_BENCHMARK_SOURCE))
-    metric_gap_table = _metric_gap_table(metrics, benchmark, benchmark_source)
-    issues = _issue_scores(metrics, benchmark)
+    empirical = build_team_history_coaching(selected, history, match_type)
+    benchmark, benchmark_meta = empirical['benchmark'], empirical['benchmark_meta']
+    metric_gap_table, issues = empirical['metric_gap_table'], empirical['issues']
     similar_rankers = _similar_rankers(
         target_metrics=metrics,
         top_k=3,
         official_rankers=official_rankers,
         ranker_profiles=ranker_profiles,
-    )
+    ) if match_type == 50 else []
     created_at = utc_now_iso()
 
-    actions = []
-    if metrics["match_count"] < 5:
-        actions.append(
-            {
-                "rank": 1,
-                "action_code": "INSUFFICIENT_DATA",
-                "title": "안정 진단을 위한 표본 부족",
-                "description": "선택한 모드에서 최소 5경기 이상 수집 후 전술 변경을 권장합니다.",
-                "evidence": {
-                    "required_match_count": 5,
-                    "current_match_count": metrics["match_count"],
-                    "metric_gap_table": metric_gap_table,
-                    "benchmark_meta": benchmark_meta,
-                    "similar_rankers": similar_rankers,
-                },
-                "tactic_direction": "표본 확보 우선",
-                "tactic_delta": {},
-                "confidence": 0.0,
-            }
-        )
-    else:
-        ranked = sorted(issues.items(), key=lambda item: item[1], reverse=True)
-        actionable = [(issue_code, score) for issue_code, score in ranked if score >= ISSUE_MIN_ACTION_SCORE][:3]
-        if not actionable:
-            actions.append(_maintain_action(metrics, benchmark_source, metric_gap_table))
-        else:
-            for idx, (issue_code, issue_score) in enumerate(actionable, start=1):
-                direction, delta = _apply_tactic_delta(issue_code, current_tactic)
-                confidence_detail = _confidence_detail(
-                    metrics["match_count"],
-                    issue_score,
-                    tactic_input_known=tactic_input_known,
-                )
-                benchmark_compare = _benchmark_compare(issue_code, metrics, benchmark, benchmark_source)
-                coach_explanation = build_action_explanation(
-                    issue_code=issue_code,
-                    issue_label=_issue_label(issue_code),
-                    benchmark_compare=benchmark_compare,
-                    tactic_delta=delta,
-                    tactic_input_known=tactic_input_known,
-                )
-                description = (
-                    f"다음 플레이 구간 동안 '{_issue_label(issue_code)}' 개선을 최우선으로 적용하세요."
-                    if tactic_input_known
-                    else f"다음 플레이 구간에서 '{_issue_label(issue_code)}' 개선을 위한 테스트 플랜으로 적용하세요."
-                )
-                actions.append(
-                    {
-                        "rank": idx,
-                        "action_code": issue_code,
-                        "title": _issue_label(issue_code),
-                        "description": description,
-                        "evidence": {
-                            "issue_score": issue_score,
-                            "benchmark": benchmark,
-                            "benchmark_meta": benchmark_meta,
-                            "benchmark_compare": benchmark_compare,
-                            "metric_gap_table": metric_gap_table,
-                            "confidence_detail": confidence_detail,
-                            "coach_explanation": coach_explanation,
-                            "similar_rankers": similar_rankers,
-                            "metrics": metrics,
-                            "tactic_input_mode": "provided" if tactic_input_known else "missing",
-                        },
-                        "tactic_direction": direction,
-                        "tactic_delta": delta,
-                        "confidence": confidence_detail["final_confidence"],
-                    }
-                )
+    actions = empirical['actions']
+
+    result = {
+        "coaching_version": COACHING_VERSION,
+        "comparisons": empirical["comparisons"],
+        "ouid": ouid,
+        "match_type": match_type,
+        "window_size": window_size,
+        "sample_scope": "including_forfeits" if include_forfeit_wins or include_forfeit_losses else "completed_only",
+        "sample_selection": selection,
+        "sample_count": len(selected),
+        "tactic_input_mode": "provided" if tactic_input_known else "missing",
+        "latest_match_date": selected[0].match_date if selected else None,
+        "recent_matches": _recent_match_summary(selected),
+        "selected_matches": _recent_match_summary(selected, len(selected)),
+        "sync_attempted": should_refresh,
+        "sync_new_rows": refreshed_match_rows,
+        "sync_warning": refresh_warning,
+        "created_at": created_at,
+        "benchmark": benchmark,
+        "benchmark_meta": benchmark_meta,
+        "metric_gap_table": metric_gap_table,
+        "similar_rankers": similar_rankers,
+        "metrics": metrics,
+        "visuals": visuals,
+        "coaching": coaching,
+        "issues": issues,
+        "actions": actions,
+    }
 
     conn = connect()
     try:
@@ -2167,8 +2174,8 @@ def run_analysis(
             """
             INSERT INTO user_metrics_snapshot (
                 ouid, match_type, window_size, match_count, win_rate, goals_for, goals_against,
-                xg_for, xg_against, issue_scores_json, kpis_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                xg_for, xg_against, issue_scores_json, kpis_json, created_at, coaching_json, analysis_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 ouid,
@@ -2183,6 +2190,8 @@ def run_analysis(
                 json.dumps(issues, ensure_ascii=True),
                 json.dumps(metrics, ensure_ascii=True),
                 created_at,
+                json.dumps(coaching, ensure_ascii=True),
+                json.dumps({key: value for key, value in result.items() if key != 'coaching'}, ensure_ascii=True),
             ),
         )
         cur.execute(
@@ -2216,32 +2225,7 @@ def run_analysis(
     finally:
         conn.close()
 
-    return {
-        "ouid": ouid,
-        "match_type": match_type,
-        "window_size": window_size,
-        "sample_scope": "playable_only" if use_playable_only else "all_controllers",
-        "sample_count": len(selected),
-        "tactic_input_mode": "provided" if tactic_input_known else "missing",
-        "latest_match_date": (
-            selected[0].match_date
-            if selected
-            else (base_rows[0].match_date if base_rows else (rows[0].match_date if rows else None))
-        ),
-        "recent_matches": _recent_match_summary(selected if selected else base_rows),
-        "sync_attempted": should_refresh,
-        "sync_new_rows": refreshed_match_rows,
-        "sync_warning": refresh_warning,
-        "created_at": created_at,
-        "benchmark": benchmark,
-        "benchmark_meta": benchmark_meta,
-        "metric_gap_table": metric_gap_table,
-        "similar_rankers": similar_rankers,
-        "metrics": metrics,
-        "visuals": visuals,
-        "issues": issues,
-        "actions": actions,
-    }
+    return result
 
 
 def get_latest_analysis(ouid: str, match_type: int, window_size: int) -> dict[str, Any] | None:
@@ -2250,49 +2234,61 @@ def get_latest_analysis(ouid: str, match_type: int, window_size: int) -> dict[st
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT *
+            SELECT *, CASE WHEN created_at >= ? THEN coaching_json END AS fresh_coaching_json,
+                   CASE WHEN created_at >= ? THEN analysis_json END AS fresh_analysis_json
             FROM user_metrics_snapshot
             WHERE ouid = ? AND match_type = ? AND window_size = ?
             ORDER BY created_at DESC, id DESC
             LIMIT 1
             """,
-            (ouid, match_type, window_size),
+            (nexon_api_data_cutoff_iso(), nexon_api_data_cutoff_iso(), ouid, match_type, window_size),
         )
         row = cur.fetchone()
         if row is None:
             return None
+        if row['fresh_analysis_json']:
+            saved = json.loads(row['fresh_analysis_json'])
+            if saved.get('coaching_version') != COACHING_VERSION:
+                return {**saved, 'coaching': None, 'benchmark': {}, 'benchmark_meta': {'source': 'unavailable'},
+                        'metric_gap_table': [], 'issues': {}, 'issue_scores': {}, 'actions': []}
+            return {**saved, 'coaching': json.loads(row['fresh_coaching_json']) if row['fresh_coaching_json'] else None}
         rows = list_match_stats(ouid, match_type)
         if not rows:
             rows = _list_match_stats_from_cache(ouid, match_type)
-        playable_controllers = {"keyboard", "gamepad"}
-        playable_rows = [item for item in rows if item.controller.strip().lower() in playable_controllers]
-        base_rows = playable_rows if len(playable_rows) >= min(5, window_size) else rows
+        base_rows = _completed_match_rows(rows)
         selected = base_rows[:window_size]
         return {
             "ouid": row["ouid"],
             "match_type": row["match_type"],
             "window_size": row["window_size"],
+            "sample_scope": "completed_only",
+            "sample_count": len(selected),
             "match_count": row["match_count"],
             "win_rate": row["win_rate"],
             "goals_for": row["goals_for"],
             "goals_against": row["goals_against"],
             "xg_for": row["xg_for"],
             "xg_against": row["xg_against"],
-            "issue_scores": json.loads(row["issue_scores_json"]),
+            "issue_scores": {},
             "kpis": json.loads(row["kpis_json"]),
             "created_at": row["created_at"],
+            "coaching": None,
             "latest_match_date": (
                 selected[0].match_date
                 if selected
                 else (base_rows[0].match_date if base_rows else (rows[0].match_date if rows else None))
             ),
             "recent_matches": _recent_match_summary(selected if selected else base_rows),
+            "selected_matches": _recent_match_summary(selected, len(selected)),
         }
     finally:
         conn.close()
 
 
 def get_latest_actions(ouid: str, match_type: int, window_size: int) -> list[dict[str, Any]]:
+    latest = get_latest_analysis(ouid, match_type, window_size)
+    if not latest or latest.get("coaching_version") != COACHING_VERSION:
+        return []
     conn = connect()
     try:
         cur = conn.cursor()
@@ -2440,10 +2436,7 @@ def evaluate_latest_experiment(ouid: str, match_type: int) -> dict[str, Any] | N
             manual_refresh_probe=True,
         )
 
-        playable_controllers = {"keyboard", "gamepad"}
-        playable_rows = [row for row in rows if row.controller.strip().lower() in playable_controllers]
-        use_playable_only = len(playable_rows) >= min(5, window_size)
-        base_rows = playable_rows if use_playable_only else rows
+        base_rows = _completed_match_rows(rows)
 
         started_at_dt = _parse_iso_datetime(started_at)
         if started_at_dt is None:
@@ -2464,7 +2457,7 @@ def evaluate_latest_experiment(ouid: str, match_type: int) -> dict[str, Any] | N
             post_rows = post_rows[:window_size]
 
         if not post_rows:
-            missing_post_message = "실험 시작 이후 수집된 경기가 아직 없어 POST 구간 지표가 0으로 표시됩니다."
+            missing_post_message = "실험 시작 이후의 정상 종료 경기가 없습니다. 새 경기를 플레이한 뒤 다시 비교하세요."
             refresh_warning = f"{refresh_warning} {missing_post_message}".strip() if refresh_warning else missing_post_message
 
         pre = _compute_metrics(pre_rows)
@@ -2496,7 +2489,7 @@ def evaluate_latest_experiment(ouid: str, match_type: int) -> dict[str, Any] | N
             "experiment_id": run["id"],
             "window_size": window_size,
             "started_at": started_at,
-            "sample_scope": "playable_only" if use_playable_only else "all_controllers",
+            "sample_scope": "completed_only",
             "pre_match_count": len(pre_rows),
             "post_match_count": len(post_rows),
             "sync_attempted": should_refresh,

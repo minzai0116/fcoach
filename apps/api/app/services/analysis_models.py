@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -25,7 +26,7 @@ class MatchStats:
     through_pass_success: float
     tackle_try: float
     tackle_success: float
-    shots_for_points: list[dict[str, float | bool]]
+    shots_for_points: list[dict[str, Any]]
     goals_for_minutes: list[float]
     goals_against_minutes: list[float]
     goals_for_types: list[int]
@@ -38,3 +39,8 @@ class MatchStats:
     controller: str = ""
     player_stats: list[dict[str, float | int]] = field(default_factory=list)
     shot_links: list[dict[str, float | int | bool]] = field(default_factory=list)
+    match_end_type: int = 0
+    pass_breakdown: dict[str, dict[str, float]] = field(default_factory=dict)
+    coaching_data: dict = field(default_factory=dict)
+    user_nickname: str = ''
+    match_id: str = ''

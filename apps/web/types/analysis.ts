@@ -22,11 +22,20 @@ export type UserSearchResponse = {
   source: string;
 };
 
+export type MatchSampleOptions = { include_forfeit_wins: boolean; include_forfeit_losses: boolean; start_match_id: string | null; end_match_id: string | null };
+export type MatchSampleSelection = MatchSampleOptions & {
+  start_match_date: string | null; end_match_date?: string | null; normal_count: number; forfeit_win_count: number; forfeit_loss_count: number;
+  available_count: number; eligible_count: number;
+};
+
 export type AnalysisPayload = {
+  coaching_version?: string;
+  coaching?: import("./coaching").PositionCoaching | null;
   ouid: string;
   match_type: number;
   window_size: number;
   sample_scope?: string;
+  sample_selection?: MatchSampleSelection;
   sample_count?: number;
   tactic_input_mode?: "provided" | "missing";
   latest_match_date?: string | null;
@@ -35,8 +44,10 @@ export type AnalysisPayload = {
   sync_warning?: string | null;
   created_at: string;
   recent_matches?: RecentMatchSummary[];
+  selected_matches?: RecentMatchSummary[];
   benchmark?: MetricMap;
   benchmark_meta?: Record<string, unknown>;
+  metric_gap_table?: Array<Record<string, unknown>>;
   similar_rankers?: unknown[];
   metrics?: MetricMap;
   visuals?: VisualSummary;
@@ -63,7 +74,11 @@ export type VisualSummary = {
   goal_type_note?: string;
 };
 
-export type ShotPoint = { x: number; y: number; is_goal: boolean };
+export type ShotPoint = {
+  x: number; y: number; is_goal?: boolean; result?: number;
+  sp_id?: number | null; sp_grade?: number | null; player_name?: string | null;
+  minute?: number | null; date?: string; match_id?: string; type?: number | null;
+};
 export type TimingBucket = { label: string; count: number };
 export type GoalTypeBucket = { type_code: number; label: string; count: number; ratio: number };
 
@@ -76,11 +91,15 @@ export type ImpactComponent = {
 };
 
 export type RecentMatchSummary = {
+  match_id?: string;
+  match_end_type?: number;
   match_date: string;
   opponent_nickname: string;
   result: string;
   score_for: number;
   score_against: number;
+  score_for_display?: number | null;
+  score_against_display?: number | null;
   controller?: string;
 };
 
@@ -262,6 +281,9 @@ export type SimilarMetricComparison = {
 export type CoachExplanation = {
   coach_message: string;
   root_cause?: string;
+  problem_detail?: string;
+  improvement_goal?: string;
+  progress_check?: string;
   execution_checklist?: string[];
   in_game_signals?: string[];
   failure_patterns?: string[];

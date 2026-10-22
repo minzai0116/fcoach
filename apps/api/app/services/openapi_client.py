@@ -24,6 +24,10 @@ class OpenApiRateLimitError(RuntimeError):
         self.wait_seconds = wait_seconds
 
 
+class UserNotFoundError(LookupError):
+    pass
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -102,10 +106,20 @@ class NexonOpenApiClient:
         return None
 
     def find_user_by_nickname(self, nickname: str) -> dict[str, str]:
-        data = self._get("/fconline/v1/id", {"nickname": nickname})
+        try:
+            data = self._get("/fconline/v1/id", {"nickname": nickname})
+        except requests.HTTPError as error:
+            response = error.response
+            try:
+                code = response.json().get('error', {}).get('name') if response is not None else None
+            except (ValueError, AttributeError):
+                code = None
+            if response is not None and response.status_code == 400 and code in {'OPENAPI00003', 'OPENAPI00004'}:
+                raise UserNotFoundError('해당 닉네임의 구단주를 찾을 수 없습니다. 닉네임을 다시 확인해주세요.') from error
+            raise
         if isinstance(data, dict) and data.get("ouid"):
             return {"ouid": str(data["ouid"]), "nickname": nickname}
-        raise RuntimeError("Failed to resolve ouid from nickname")
+        raise RuntimeError("닉네임 조회 응답을 확인할 수 없습니다. 잠시 후 다시 시도해주세요.")
 
     def fetch_match_ids(self, ouid: str, match_type: int, limit: int = 100) -> list[str]:
         payload = self._get(
@@ -152,12 +166,46 @@ class NexonOpenApiClient:
             "payload": payload,
         }
 
-    def collect_match_rows(self, ouid: str, match_type: int, limit: int = 100) -> list[dict[str, Any]]:
+    @staticmethod
+    def _is_completed_match(payload: dict[str, Any], ouid: str) -> bool:
+        match_info = payload.get("matchInfo")
+        if not isinstance(match_info, list):
+            return False
+        for player in match_info:
+            if not isinstance(player, dict) or str(player.get("ouid", "")) != ouid:
+                continue
+            detail = player.get("matchDetail")
+            if not isinstance(detail, dict):
+                return False
+            try:
+                return int(detail.get("matchEndType")) == 0
+            except (TypeError, ValueError):
+                return False
+        return False
+
+    def collect_match_rows(
+        self,
+        ouid: str,
+        match_type: int,
+        limit: int = 100,
+        *,
+        known_match_ids: set[str] | None = None,
+        completed_match_target: int | None = None,
+        existing_completed_count: int = 0,
+    ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
+        known_ids = known_match_ids or set()
+        completed_count = max(0, existing_completed_count)
         match_ids = self.fetch_match_ids(ouid, match_type, limit=limit)
         for idx, match_id in enumerate(match_ids):
+            if match_id in known_ids:
+                continue
             payload = self.fetch_match_detail(match_id)
             rows.append(self._build_match_row(match_id=match_id, ouid=ouid, match_type=match_type, payload=payload))
+            if self._is_completed_match(payload, ouid):
+                completed_count += 1
+            if completed_match_target is not None and completed_count >= completed_match_target:
+                break
             if idx + 1 < len(match_ids):
                 time.sleep(0.08)
         return rows

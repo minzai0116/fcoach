@@ -4,6 +4,8 @@ from collections import defaultdict
 from typing import Any, Iterable
 
 from app.services.analysis_models import MatchStats
+from app.services.coaching_data import number
+from app.services.shot_types import shot_type_label as _goal_type_label
 
 
 def compute_metrics(matches: Iterable[MatchStats]) -> dict[str, float]:
@@ -35,14 +37,16 @@ def compute_metrics(matches: Iterable[MatchStats]) -> dict[str, float]:
         }
 
     wins = sum(1 for row in rows if row.result == "승")
-    goals_for = sum(row.goals_for for row in rows)
-    goals_against = sum(row.goals_against for row in rows)
+    recorded_goals = sum(row.goals_for for row in rows)
+    goals_for = sum(value if (value := number(row.coaching_data.get('shoot', {}), 'goalTotalDisplay')) is not None else row.goals_for for row in rows)
+    goals_against = sum(value if (value := number(row.coaching_data.get('opponent_shoot', {}), 'goalTotalDisplay')) is not None else row.goals_against for row in rows)
     xg_for = sum(row.xg_for for row in rows)
     xg_against = sum(row.xg_against for row in rows)
     total_shots = sum(row.shots for row in rows)
     total_sot = sum(row.shots_on_target for row in rows)
     total_offside = sum(row.offside for row in rows)
     late_concede = sum(row.late_goals_against for row in rows)
+    timed_conceded = sum(len(row.goals_against_minutes) for row in rows)
     in_box_shots = sum(row.in_box_shots for row in rows)
     detailed_shots = sum(row.total_shots_detail for row in rows)
     pass_try_total = sum(row.pass_try for row in rows)
@@ -63,13 +67,13 @@ def compute_metrics(matches: Iterable[MatchStats]) -> dict[str, float]:
         "xg_for": xg_for,
         "xg_against": xg_against,
         "shot_on_target_rate": total_sot / total_shots if total_shots > 0 else 0.0,
-        "goals_per_sot": goals_for / total_sot if total_sot > 0 else 0.0,
-        "goals_per_shot": goals_for / total_shots if total_shots > 0 else 0.0,
+        "goals_per_sot": recorded_goals / total_sot if total_sot > 0 else 0.0,
+        "goals_per_shot": recorded_goals / total_shots if total_shots > 0 else 0.0,
         "pass_success_rate": pass_success_total / pass_try_total if pass_try_total > 0 else 0.0,
         "through_pass_success_rate": through_pass_success_total / through_pass_try_total if through_pass_try_total > 0 else 0.0,
         "tackle_success_rate": tackle_success_total / tackle_try_total if tackle_try_total > 0 else 0.0,
         "offside_avg": total_offside / count,
-        "late_concede_ratio": late_concede / goals_against if goals_against > 0 else 0.0,
+        "late_concede_ratio": late_concede / timed_conceded if timed_conceded > 0 else 0.0,
         "in_box_shot_ratio": in_box_shots / detailed_shots if detailed_shots > 0 else 0.0,
         "shots_total": total_shots,
         "shots_on_target_total": total_sot,
@@ -188,21 +192,3 @@ def _is_in_box(x_value: float, y_value: float) -> bool:
     if x_value > 1.5 or y_value > 1.5:
         return x_value >= 83.0 and 18.0 <= y_value <= 82.0
     return x_value >= 0.83 and 0.18 <= y_value <= 0.82
-
-
-def _goal_type_label(type_code: int) -> str:
-    labels = {
-        1: "일반 슈팅 (normal)",
-        2: "감아차기 (finesse)",
-        3: "헤더 (header)",
-        4: "로빙슛 (lob)",
-        5: "플레어슛 (flare)",
-        6: "낮은 슛 (low)",
-        7: "발리슛 (volley)",
-        8: "프리킥 (free-kick)",
-        9: "패널티킥 (penalty)",
-        10: "무회전슛 (knuckle)",
-        11: "바이시클킥 (bicycle)",
-        12: "파워슛 (super)",
-    }
-    return labels.get(type_code, f"미정의 슈팅 타입 {type_code} (공식 문서 미기재)")

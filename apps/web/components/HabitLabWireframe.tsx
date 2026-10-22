@@ -8,19 +8,9 @@ import {
   tacticAdjustmentLines,
   type CurrentTactic,
 } from "../lib/actionPlan";
-import { buildTrackingCoachInsight } from "../lib/trackingCoach";
-import {
-  DEFENSE_STYLE_OPTIONS,
-  FC_TACTIC_VALUES,
-  SET_PIECE_OPTIONS,
-  setPieceLabel,
-  tacticBandLabel,
-  TACTIC_STYLE_OPTIONS,
-} from "../lib/tactic";
 import { requestApi, trackEvent, trackVisitorLifecycle } from "../lib/apiClient";
 import {
   BENCHMARK_SOURCE_LABEL,
-  ISSUE_DETAIL,
   ISSUE_LABELS,
   MATCH_LABELS,
   MATCH_TYPE_OPTIONS,
@@ -28,16 +18,13 @@ import {
   SCREEN_FLOW,
   SCREEN_LABELS,
   TACTIC_DIRECTION_KO,
-  WINDOW_OPTIONS,
 } from "../lib/uiConstants";
 import type {
   ActionCard,
   AnalysisPayload,
   CoachExplanation,
-  EvaluationPayload,
-  ExperimentPreview,
-  ExperimentPreviewPayload,
   MatchType,
+  MatchSampleOptions,
   MetricMap,
   OfficialRanker,
   PlayerChemistryPair,
@@ -57,8 +44,15 @@ import type {
 } from "../types/analysis";
 import { PlayerPortrait } from "./player/PlayerPortrait";
 import { GuideScreen } from "./guide/GuideScreen";
+import { MatchSampleSelector } from "./coaching/MatchSampleSelector";
+import { SquadFeedSelector } from "./coaching/SquadFeedSelector";
+import { FeedConnectionSummary } from "./coaching/FeedCoachingPanel";
+import type { SquadFeedSnapshot } from "../types/squadFeed";
+import { InteractiveShotMap } from "./coaching/InteractiveShotMap";
+import { PrescriptionPanel } from "./coaching/PrescriptionPanel";
+import { PositionCoachingPanel } from "./coaching/PositionCoachingPanel";
+import { BeforeAfterComparisonPanel } from "./coaching/BeforeAfterComparisonPanel";
 import {
-  buildFormationNodes,
   enhanceLevelClass,
   formatImpactRaw,
   IMPACT_COMPONENT_LABELS,
@@ -91,7 +85,8 @@ function normalizePathname(pathname: string | null): string {
 }
 
 function screenFromPath(pathname: string | null): ScreenKey | null {
-  return PATH_TO_SCREEN[normalizePathname(pathname)] ?? null;
+  const path = normalizePathname(pathname);
+  return path === "/habits" ? "players" : PATH_TO_SCREEN[path] ?? null;
 }
 
 type HabitLabWireframeProps = {
@@ -276,7 +271,7 @@ function buildPlayerSpotlights(players: PlayerReportEntry[]): PlayerSpotlight[] 
       { label: "종합", value: formatFixed(ironman?.impact_score ?? 0, 1) },
       { label: "포지션", value: ironman?.position_name ?? "-" },
     ],
-    "최근 표본에서 가장 자주 기용된 핵심 로테이션입니다.",
+    "최근 경기에서 가장 자주 기용된 핵심 로테이션입니다.",
   );
 
   const fallbackTitles = ["숨은 기여자", "컨디션 좋은 카드"];
@@ -293,7 +288,7 @@ function buildPlayerSpotlights(players: PlayerReportEntry[]): PlayerSpotlight[] 
         { label: "골관여", value: `${formatFixed(player?.goal_involvements ?? 0, 0)}회` },
         { label: "수비액션", value: `${formatFixed(perAppearance(playerDefenseActions(player), player?.appearances ?? 0), 2)}/경기` },
       ],
-      "주요 역할 카드에 들지는 않았지만 최근 표본에서 기여도가 높은 선수입니다.",
+      "주요 역할 카드에 들지는 않았지만 최근 경기에서 기여도가 높은 선수입니다.",
     );
   }
 
@@ -349,6 +344,9 @@ function getCoachExplanation(evidence: Record<string, unknown> | undefined): Coa
   return {
     coach_message: String(value.coach_message ?? ""),
     root_cause: String(value.root_cause ?? ""),
+    problem_detail: String(value.problem_detail ?? ""),
+    improvement_goal: String(value.improvement_goal ?? ""),
+    progress_check: String(value.progress_check ?? ""),
     execution_checklist: Array.isArray(value.execution_checklist) ? value.execution_checklist.map(String) : [],
     in_game_signals: Array.isArray(value.in_game_signals) ? value.in_game_signals.map(String) : [],
     failure_patterns: Array.isArray(value.failure_patterns) ? value.failure_patterns.map(String) : [],
@@ -407,48 +405,6 @@ function getSimilarRankers(evidence: Record<string, unknown> | undefined): Simil
   return parsed;
 }
 
-function buildFallbackSimilarRankers(officialRankers: OfficialRanker[], metrics: MetricMap, topK = 3): SimilarRanker[] {
-  if (officialRankers.length === 0) return [];
-  const userWinRate = Number(metrics.win_rate ?? 0);
-  const candidates = officialRankers
-    .filter((ranker) => Number.isFinite(Number(ranker.win_rate)))
-    .map((ranker) => {
-      const candidateWinRate = Number(ranker.win_rate ?? 0);
-      const gapValue = Number((userWinRate - candidateWinRate).toFixed(4));
-      const rankGames = Math.max(1, Number(ranker.win_count ?? 0) + Number(ranker.draw_count ?? 0) + Number(ranker.loss_count ?? 0));
-      const distance = Math.abs(userWinRate - candidateWinRate);
-      const similarity = 1 / (1 + distance * 4);
-      return {
-        ranker_proxy_rank: Number(ranker.rank_no ?? 999999),
-        ouid: String(ranker.ouid ?? `ranker:${ranker.rank_no}`),
-        nickname: String(ranker.nickname ?? ""),
-        similarity: Number(similarity.toFixed(4)),
-        match_count: rankGames,
-        win_rate: Number(candidateWinRate.toFixed(4)),
-        reliability: Number(Math.min(0.45, rankGames / 40).toFixed(2)),
-        source: "client_winrate_proxy",
-        formation: String(ranker.formation ?? ""),
-        team_color: String(ranker.team_color ?? ""),
-        gaps: { win_rate: gapValue },
-        metric_comparisons: [
-          {
-            metric_name: "win_rate",
-            metric_label: "승률",
-            higher_is_better: true,
-            user_value: Number(userWinRate.toFixed(4)),
-            candidate_value: Number(candidateWinRate.toFixed(4)),
-            gap_value: gapValue,
-          },
-        ],
-      } as SimilarRanker;
-    })
-    .sort((left, right) => {
-      if (right.similarity !== left.similarity) return right.similarity - left.similarity;
-      return left.ranker_proxy_rank - right.ranker_proxy_rank;
-    });
-  return candidates.slice(0, Math.max(1, topK));
-}
-
 function similarRankerSourceLabel(source: string): string {
   if (source.includes("nickname_proxy")) return "닉네임 매핑 기반";
   if (source.includes("meta_only")) return "랭커 메타 기반";
@@ -457,21 +413,18 @@ function similarRankerSourceLabel(source: string): string {
   return "기준 정보";
 }
 
-function toModelScale(fcValue: number): number {
-  return Math.max(1, Math.min(10, Math.round(fcValue)));
-}
-
 function compareText(gapValue: number, higherIsBetter: boolean): string {
   const absGap = Math.abs(gapValue);
-  if (absGap < 0.03) return "비슷함";
+  if (absGap < 1e-9) return "같음";
   if (higherIsBetter) {
     return gapValue > 0 ? "내 수치가 높음" : "랭커 후보가 높음";
   }
-  return gapValue < 0 ? "내 수치가 좋음(낮음)" : "랭커 후보가 좋음(낮음)";
+  return gapValue < 0 ? "내 수치가 낮음" : "랭커 후보가 낮음";
 }
 
-function formatDeltaSigned(value: number): string {
-  return `${value > 0 ? "+" : ""}${formatFixed(value, 3)}`;
+function formatDeltaSigned(value: number, metric: string): string {
+  const rate = ["win_rate", "shot_on_target_rate", "goals_per_sot", "in_box_shot_ratio", "pass_success_rate", "through_pass_success_rate", "tackle_success_rate", "late_concede_ratio"].includes(metric);
+  return `${value > 0 ? "+" : ""}${formatFixed(value * (rate ? 100 : 1), rate ? 1 : 2)}${rate ? "%p" : ""}`;
 }
 
 function toProgressPercent(value: number, maxValue: number): number {
@@ -492,41 +445,11 @@ function normalizeWindowSize(value: unknown, fallback: WindowSize): WindowSize {
   return fallback;
 }
 
-type ExperimentTarget = {
-  ouid: string;
-  matchType: MatchType;
-};
-
-const LAST_EXPERIMENT_TARGET_KEY = "fcoach:last-experiment-target";
-
-function readExperimentTarget(): ExperimentTarget | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(LAST_EXPERIMENT_TARGET_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<ExperimentTarget>;
-    const ouid = String(parsed.ouid ?? "").trim();
-    if (ouid.length < 8) return null;
-    return { ouid, matchType: normalizeMatchType(parsed.matchType, 60) };
-  } catch {
-    return null;
-  }
-}
-
-function saveExperimentTarget(target: ExperimentTarget): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(LAST_EXPERIMENT_TARGET_KEY, JSON.stringify(target));
-  } catch {
-    return;
-  }
-}
-
 type VisualMetricItem = {
   key: string;
   label: string;
   userValue: number;
-  benchmarkValue: number;
+  benchmarkValue: number | null;
   userDisplay: string;
   benchmarkDisplay: string;
   reverse: boolean;
@@ -539,10 +462,10 @@ function buildVisualMetricItems(metrics: MetricMap, benchmark: MetricMap | undef
   const lateConcedeRatio = toKpiValue(metrics, "late_concede_ratio");
   const offsideAvg = toKpiValue(metrics, "offside_avg");
 
-  const benchmarkWinRate = Number(benchmark?.win_rate ?? 0.5);
-  const benchmarkShotOnTargetRate = Number(benchmark?.shot_on_target_rate ?? 0.4);
-  const benchmarkLateConcedeRatio = Number(benchmark?.late_concede_ratio ?? 0.33);
-  const benchmarkOffsideAvg = Number(benchmark?.offside_avg ?? 1.0);
+  const benchmarkWinRate = typeof benchmark?.win_rate === "number" ? benchmark.win_rate : null;
+  const benchmarkShotOnTargetRate = typeof benchmark?.shot_on_target_rate === "number" ? benchmark.shot_on_target_rate : null;
+  const benchmarkLateConcedeRatio = typeof benchmark?.late_concede_ratio === "number" ? benchmark.late_concede_ratio : null;
+  const benchmarkOffsideAvg = typeof benchmark?.offside_avg === "number" ? benchmark.offside_avg : null;
 
   return [
     {
@@ -551,7 +474,7 @@ function buildVisualMetricItems(metrics: MetricMap, benchmark: MetricMap | undef
       userValue: winRate,
       benchmarkValue: benchmarkWinRate,
       userDisplay: formatPercent(winRate),
-      benchmarkDisplay: formatPercent(benchmarkWinRate),
+      benchmarkDisplay: benchmarkWinRate === null ? "" : formatPercent(benchmarkWinRate),
       reverse: false,
       scaleMax: 1,
     },
@@ -561,19 +484,19 @@ function buildVisualMetricItems(metrics: MetricMap, benchmark: MetricMap | undef
       userValue: shotOnTargetRate,
       benchmarkValue: benchmarkShotOnTargetRate,
       userDisplay: formatPercent(shotOnTargetRate),
-      benchmarkDisplay: formatPercent(benchmarkShotOnTargetRate),
+      benchmarkDisplay: benchmarkShotOnTargetRate === null ? "" : formatPercent(benchmarkShotOnTargetRate),
       reverse: false,
       scaleMax: 1,
     },
     {
       key: "late_concede_ratio",
-      label: "후반 실점 비율 (낮을수록 좋음)",
+      label: "60분 이후 실점 비중",
       userValue: lateConcedeRatio,
       benchmarkValue: benchmarkLateConcedeRatio,
-      userDisplay: formatFixed(lateConcedeRatio, 3),
-      benchmarkDisplay: formatFixed(benchmarkLateConcedeRatio, 3),
+      userDisplay: formatPercent(lateConcedeRatio),
+      benchmarkDisplay: benchmarkLateConcedeRatio === null ? "" : formatPercent(benchmarkLateConcedeRatio),
       reverse: true,
-      scaleMax: Math.max(1, benchmarkLateConcedeRatio * 1.8, lateConcedeRatio * 1.3),
+      scaleMax: Math.max(1, (benchmarkLateConcedeRatio ?? 0) * 1.8, lateConcedeRatio * 1.3),
     },
     {
       key: "offside_avg",
@@ -581,9 +504,9 @@ function buildVisualMetricItems(metrics: MetricMap, benchmark: MetricMap | undef
       userValue: offsideAvg,
       benchmarkValue: benchmarkOffsideAvg,
       userDisplay: formatFixed(offsideAvg, 2),
-      benchmarkDisplay: formatFixed(benchmarkOffsideAvg, 2),
+      benchmarkDisplay: benchmarkOffsideAvg === null ? "" : formatFixed(benchmarkOffsideAvg, 2),
       reverse: true,
-      scaleMax: Math.max(3, benchmarkOffsideAvg * 2.2, offsideAvg * 1.3),
+      scaleMax: Math.max(3, (benchmarkOffsideAvg ?? 0) * 2.2, offsideAvg * 1.3),
     },
   ];
 }
@@ -600,6 +523,7 @@ type MetricGapEntry = {
 type CoachKpiTarget = {
   metricName: string;
   metricLabel: string;
+  higherIsBetter: boolean;
   currentText: string;
   targetText: string;
   benchmarkText: string;
@@ -646,29 +570,6 @@ function toMetricGapEntries(rows: Record<string, unknown>[]): MetricGapEntry[] {
     .filter((row) => row.metric_name.length > 0);
 }
 
-function metricStep(metricName: string): number {
-  if (metricName === "offside_avg") return 0.1;
-  if (metricName === "shots_per_match") return 0.4;
-  if (metricName === "xg_for_per_match") return 0.15;
-  if (metricName === "goals_against_per_match") return 0.15;
-  if (metricName === "possession_avg") return 1.0;
-  return 0.03;
-}
-
-function clampMetricValue(metricName: string, value: number): number {
-  if (RATE_METRICS.has(metricName)) return Math.max(0, Math.min(1, value));
-  if (metricName === "possession_avg") return Math.max(0, Math.min(100, value));
-  return Math.max(0, value);
-}
-
-function metricTargetValue(entry: MetricGapEntry): number {
-  const deficit = entry.higher_is_better ? Math.max(0, -entry.gap_value) : Math.max(0, entry.gap_value);
-  const movement = deficit > 0 ? Math.max(metricStep(entry.metric_name), deficit * 0.5) : metricStep(entry.metric_name);
-  const direction = entry.higher_is_better ? 1 : -1;
-  const rawTarget = entry.user_value + direction * movement;
-  return clampMetricValue(entry.metric_name, rawTarget);
-}
-
 function formatMetricValue(metricName: string, value: number): string {
   if (metricName === "possession_avg") return `${formatFixed(value, 1)}%`;
   if (RATE_METRICS.has(metricName)) return formatPercent(value);
@@ -699,21 +600,6 @@ function syncNoticeText(payload: AnalysisPayload, fallback: string): string {
   return details.length > 0 ? `${warning} (${details.join(" · ")})` : warning;
 }
 
-function similarRankerTarget(metricName: string, similarRankers: SimilarRanker[]): { value: number; count: number } | null {
-  const weightedValues: { value: number; weight: number }[] = [];
-  similarRankers.forEach((ranker) => {
-    const match = ranker.metric_comparisons.find((row) => row.metric_name === metricName);
-    if (!match) return;
-    const weight = Math.max(0.1, ranker.similarity) * Math.max(0.2, ranker.reliability);
-    weightedValues.push({ value: Number(match.candidate_value ?? 0), weight });
-  });
-  if (weightedValues.length === 0) return null;
-  const weightedSum = weightedValues.reduce((sum, item) => sum + item.value * item.weight, 0);
-  const totalWeight = weightedValues.reduce((sum, item) => sum + item.weight, 0);
-  if (totalWeight <= 0) return null;
-  return { value: clampMetricValue(metricName, weightedSum / totalWeight), count: weightedValues.length };
-}
-
 function buildCoachTargets(
   actionCode: string,
   metricGapTable: Record<string, unknown>[],
@@ -721,10 +607,16 @@ function buildCoachTargets(
   similarRankers: SimilarRanker[],
 ): CoachKpiTarget[] {
   const entries = toMetricGapEntries(metricGapTable);
-  const preferredMetrics = ACTION_TARGET_METRICS[actionCode] ?? [];
+  const primaryMetric = String(benchmarkCompare?.metric_name ?? "");
+  const preferredMetrics = [primaryMetric, ...(ACTION_TARGET_METRICS[actionCode] ?? [])].filter(
+    (metricName, index, rows) => metricName && rows.indexOf(metricName) === index,
+  );
   const selected: MetricGapEntry[] = preferredMetrics
     .map((metricName) => entries.find((entry) => entry.metric_name === metricName) ?? null)
-    .filter((entry): entry is MetricGapEntry => Boolean(entry))
+    .filter(
+      (entry): entry is MetricGapEntry =>
+        entry !== null && (entry.higher_is_better ? entry.gap_value < 0 : entry.gap_value > 0),
+    )
     .slice(0, 2);
 
   if (selected.length === 0 && benchmarkCompare) {
@@ -734,44 +626,25 @@ function buildCoachTargets(
       user_value: Number(benchmarkCompare.user_value ?? 0),
       benchmark_value: Number(benchmarkCompare.benchmark_value ?? 0),
       gap_value: Number(benchmarkCompare.gap_value ?? 0),
-      higher_is_better: !["late_concede_ratio", "offside_avg", "goals_against_per_match"].includes(
-        String(benchmarkCompare.metric_name ?? ""),
+      higher_is_better: Boolean(
+        benchmarkCompare.higher_is_better ??
+          !["late_concede_ratio", "offside_avg", "goals_against_per_match"].includes(String(benchmarkCompare.metric_name ?? "")),
       ),
     });
   }
 
   return selected.slice(0, 2).map((entry) => {
     const metricLabel = METRIC_LABEL_KO[entry.metric_name] ?? entry.metric_label;
-    const deficit = entry.higher_is_better ? Math.max(0, -entry.gap_value) : Math.max(0, entry.gap_value);
-    const baseStep = metricStep(entry.metric_name);
-    const movement = deficit > 0 ? Math.max(baseStep, deficit * 0.5) : baseStep;
-    const benchmarkTarget = metricTargetValue(entry);
-    const similarTarget = similarRankerTarget(entry.metric_name, similarRankers);
-    const targetValue =
-      similarTarget && Number.isFinite(similarTarget.value)
-        ? clampMetricValue(entry.metric_name, benchmarkTarget * 0.5 + similarTarget.value * 0.5)
-        : benchmarkTarget;
-    const formula = similarTarget
-      ? `목표 = 기준보정(${formatMetricValue(entry.metric_name, benchmarkTarget)})·50% + 유사랭커(${formatMetricValue(entry.metric_name, similarTarget.value)})·50%`
-      : `목표 = 현재 ${entry.higher_is_better ? "+" : "-"} max(기본 ${formatMetricValue(entry.metric_name, baseStep)}, 결손×0.5 ${formatMetricValue(entry.metric_name, deficit * 0.5)})`;
-    const reason = `결손 ${formatMetricValue(entry.metric_name, deficit)}를 1차 보정${
-      similarTarget ? ` 후 유사 랭커 ${similarTarget.count}명 평균과 혼합` : ""
-    }`;
     return {
-      metricName: entry.metric_name,
-      metricLabel,
+      metricName: entry.metric_name, metricLabel, higherIsBetter: entry.higher_is_better,
       currentText: formatMetricValue(entry.metric_name, entry.user_value),
-      targetText: formatMetricValue(entry.metric_name, targetValue),
+      targetText: formatMetricValue(entry.metric_name, entry.benchmark_value),
       benchmarkText: formatMetricValue(entry.metric_name, entry.benchmark_value),
-      similarText: similarTarget ? formatMetricValue(entry.metric_name, similarTarget.value) : undefined,
-      reasonText: `${reason} (${metricDirectionText(entry.metric_name)})`,
-      formulaText: formula,
+      reasonText: "이전 정상 종료 경기의 실측값입니다. 정상 기준이나 달성 목표가 아닙니다.",
+      formulaText: "이전 구간 성공 합계 ÷ 시도 합계",
     };
   });
 }
-
-const EXPERIMENT_CONTINUITY_NOTICE =
-  "같은 브라우저에서 이어서 확인하면 가장 안정적입니다.";
 
 function normalizeErrorMessage(error: unknown, fallbackMessage: string): string {
   if (!(error instanceof Error)) return fallbackMessage;
@@ -793,15 +666,13 @@ function normalizeErrorMessage(error: unknown, fallbackMessage: string): string 
   if (message.includes("CORS")) {
     return "서비스 연결 설정 문제로 요청이 차단되었습니다. 잠시 후 다시 시도해주세요.";
   }
-  if (lowerMessage.includes("no experiment found")) {
-    return "아직 시작된 실험이 없습니다. 전술 코칭에서 먼저 실험을 시작해주세요.";
-  }
   return message;
 }
 
 export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframeProps) {
-  const [screen, setScreen] = useState<ScreenKey>(initialScreen);
+  const [screen, setScreen] = useState<ScreenKey>(initialScreen === "habits" ? "players" : initialScreen);
   const goToScreen = useCallback((nextScreen: ScreenKey) => {
+    if (nextScreen === "habits") nextScreen = "players";
     const nextPath = SCREEN_PATHS[nextScreen];
 
     if (typeof window !== "undefined" && normalizePathname(window.location.pathname) !== nextPath) {
@@ -813,6 +684,9 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
 
   useEffect(() => {
     const nextScreen = typeof window === "undefined" ? null : screenFromPath(window.location.pathname);
+    if (typeof window !== "undefined" && normalizePathname(window.location.pathname) === "/habits") {
+      window.history.replaceState({ screen: "players" }, "", "/players");
+    }
     if (nextScreen && nextScreen !== initialScreen) {
       setScreen(nextScreen);
     }
@@ -827,35 +701,26 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, [initialScreen]);
+  useEffect(() => { window.scrollTo(0, 0); }, [screen]);
   const [matchType, setMatchType] = useState<MatchType>(60);
-  const [windowSize, setWindowSize] = useState<WindowSize>(30);
+  const windowSize: WindowSize = 30;
   const [nicknameInput, setNicknameInput] = useState("");
+  const [sampleOptions, setSampleOptions] = useState<MatchSampleOptions>({ include_forfeit_wins: false, include_forfeit_losses: false, start_match_id: null, end_match_id: null });
+  const [matchListLoading, setMatchListLoading] = useState(false);
+  const [matchSelectionCount, setMatchSelectionCount] = useState<number | null>(null);
+  const [selectedFeed, setSelectedFeed] = useState<SquadFeedSnapshot | null>(null);
+  const [feedLoading, setFeedLoading] = useState(false);
   const [resolvedUser, setResolvedUser] = useState<UserSearchResponse | null>(null);
   const [ouidInput, setOuidInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [analysisLoadingMode, setAnalysisLoadingMode] = useState<"quick" | "advanced" | null>(null);
+  const [analysisLoadingMode, setAnalysisLoadingMode] = useState<"quick" | null>(null);
   const [notice, setNotice] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [analysis, setAnalysis] = useState<AnalysisPayload | null>(null);
   const [actions, setActions] = useState<ActionCard[]>([]);
-  const [evaluation, setEvaluation] = useState<EvaluationPayload | null>(null);
-  const [experimentPreview, setExperimentPreview] = useState<ExperimentPreview | null>(null);
-  const [experimentPreviewLoading, setExperimentPreviewLoading] = useState(false);
-  const [experimentTarget, setExperimentTarget] = useState<ExperimentTarget | null>(null);
   const [officialRankers, setOfficialRankers] = useState<OfficialRanker[]>([]);
-  const [rankerMeta, setRankerMeta] = useState<{ mode: string; count: number; mapped: number } | null>(null);
 
-  const [defenseStyle, setDefenseStyle] = useState("밸런스");
-  const [buildupPlayStyle, setBuildupPlayStyle] = useState("밸런스");
-  const [chanceCreationStyle, setChanceCreationStyle] = useState("밸런스");
-  const [defenseWidth, setDefenseWidth] = useState(5);
-  const [defenseDepth, setDefenseDepth] = useState(6);
-  const [attackWidth, setAttackWidth] = useState(5);
-  const [boxPlayers, setBoxPlayers] = useState(6);
-  const [cornerKick, setCornerKick] = useState(3);
-  const [freeKick, setFreeKick] = useState(3);
-  const [appliedTactic, setAppliedTactic] = useState<CurrentTactic | null>(null);
-  const [showAdvancedTactic, setShowAdvancedTactic] = useState(false);
+  const appliedTactic: CurrentTactic | null = null;
   const [playerSortMetric, setPlayerSortMetric] = useState<PlayerSortMetric>("impact_score");
   const [playerSortDirection, setPlayerSortDirection] = useState<PlayerSortDirection>("desc");
   const togglePlayerSort = (metric: PlayerSortMetric) => {
@@ -867,11 +732,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
     setPlayerSortDirection("desc");
   };
 
-  function rememberExperimentTarget(target: ExperimentTarget): void {
-    setExperimentTarget(target);
-    saveExperimentTarget(target);
-  }
-
   const analysisMatchType = useMemo(() => normalizeMatchType(analysis?.match_type, matchType), [analysis?.match_type, matchType]);
   const analysisWindowSize = useMemo(
     () => normalizeWindowSize(analysis?.window_size, windowSize),
@@ -879,7 +739,10 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
   );
 
   const metrics = analysis?.metrics ?? analysis?.kpis ?? {};
+  const analysisSampleCount = Number(analysis?.sample_count ?? analysisWindowSize);
   const issues = analysis?.issues ?? analysis?.issue_scores ?? {};
+  const feedContext = analysis?.coaching?.squad_feed;
+  const hasContextualFeed = feedContext?.status === "available" && !!feedContext.rule_version && feedContext.summary.linked > 0;
   const tacticInputKnown = (analysis?.tactic_input_mode ?? (appliedTactic ? "provided" : "missing")) === "provided";
 
   const issueTagClass = useMemo(() => {
@@ -907,51 +770,25 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
       const parsed = getSimilarRankers(actions[0].evidence);
       if (parsed.length > 0) return parsed;
     }
-    if (analysis && officialRankers.length > 0) {
-      return buildFallbackSimilarRankers(officialRankers, metrics, 3);
-    }
     return [];
-  }, [analysis, actions, officialRankers, metrics]);
+  }, [analysis, actions]);
 
-  const sortedIssues = useMemo(
-    () => Object.entries(issues).sort((left, right) => right[1] - left[1]),
-    [issues],
-  );
-  const trackingCoach = useMemo(
-    () =>
-      buildTrackingCoachInsight({
-        evaluation,
-        experimentActionCode: experimentPreview?.action_code ?? actions[0]?.actionCode ?? null,
-        actions: actions.map((action) => ({
-          rank: action.rank,
-          actionCode: action.actionCode,
-          title: action.title,
-        })),
-        issueLabelMap: ISSUE_LABELS,
-      }),
-    [actions, evaluation, experimentPreview?.action_code],
-  );
-  const visualMetricItems = useMemo(() => buildVisualMetricItems(metrics, analysis?.benchmark), [analysis?.benchmark, metrics]);
+  const visualMetricItems = useMemo(() => {
+    const comparable = Object.fromEntries((analysis?.metric_gap_table ?? []).map(row => [String(row.metric_name), Number(row.user_value)]));
+    return buildVisualMetricItems({ ...metrics, ...comparable }, analysis?.benchmark);
+  }, [analysis?.metric_gap_table, analysis?.benchmark, metrics]);
   const shotMap = useMemo(() => {
     const raw = analysis?.visuals?.shot_map;
     if (!Array.isArray(raw)) return [] as ShotPoint[];
     return raw
       .map((item) => ({
+        ...(item as ShotPoint),
         x: Number((item as ShotPoint).x ?? 0),
         y: Number((item as ShotPoint).y ?? 0),
         is_goal: Boolean((item as ShotPoint).is_goal),
       }))
       .filter((item) => Number.isFinite(item.x) && Number.isFinite(item.y));
   }, [analysis?.visuals]);
-  const halfPitchShotMap = useMemo(
-    () =>
-      shotMap.map((point) => ({
-        left: Math.max(0, Math.min(1, point.y)),
-        top: Math.max(0, Math.min(1, point.x < 0.5 ? point.x * 0.2 : (point.x - 0.5) * 2)),
-        is_goal: point.is_goal,
-      })),
-    [shotMap],
-  );
   const goalTimingFor = useMemo(() => (Array.isArray(analysis?.visuals?.goal_timing_for) ? analysis?.visuals?.goal_timing_for : []), [analysis?.visuals]);
   const goalTimingAgainst = useMemo(
     () => (Array.isArray(analysis?.visuals?.goal_timing_against) ? analysis?.visuals?.goal_timing_against : []),
@@ -989,16 +826,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
       .map(normalizePlayerEntry)
       .filter((item) => item.sp_id > 0 && item.appearances > 0);
   }, [playerReport?.players]);
-  const topPlayerRows = useMemo(() => {
-    const raw = playerReport?.top_players;
-    if (!Array.isArray(raw) || raw.length === 0) {
-      return playerRows.slice(0, 11);
-    }
-    return raw
-      .map(normalizePlayerEntry)
-      .filter((item) => item.sp_id > 0 && item.appearances > 0)
-      .slice(0, 11);
-  }, [playerReport?.top_players, playerRows]);
   const impactExplainPlayers = useMemo(
     () =>
       [...playerRows]
@@ -1044,7 +871,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
       }),
     [playerRows, playerSortDirection, playerSortMetric],
   );
-  const formationNodes = useMemo(() => buildFormationNodes(topPlayerRows), [topPlayerRows]);
   const shotZone = analysis?.visuals?.shot_zone ?? {};
   const controllerBreakdown = useMemo(() => {
     const raw = playerReport?.controller_breakdown;
@@ -1056,8 +882,8 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
   }, [playerReport?.controller_breakdown]);
 
   const currentContextLabel = useMemo(
-    () => `${MATCH_LABELS[analysisMatchType]} · 최근 ${analysisWindowSize}경기`,
-    [analysisMatchType, analysisWindowSize],
+    () => `${MATCH_LABELS[analysisMatchType]} · ${analysis ? `${analysisSampleCount}경기` : "경기 범위 선택"}${analysis?.sample_selection?.start_match_date ? ` · ${formatDate(analysis.sample_selection.start_match_date)} ~ ${formatDate(analysis.sample_selection.end_match_date || analysis.latest_match_date || undefined)}` : ""}${analysis?.sample_selection ? ` · 정상 ${analysis.sample_selection.normal_count} / 몰수승 ${analysis.sample_selection.forfeit_win_count} / 몰수패 ${analysis.sample_selection.forfeit_loss_count}` : ""}`,
+    [analysisMatchType, analysisSampleCount, analysis],
   );
 
   const completedScreenSet = useMemo(() => {
@@ -1070,9 +896,8 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
     }
     if (actions.length > 0) completed.add("actions");
     if (officialRankers.length > 0 || similarRankersForView.length > 0) completed.add("rankers");
-    if (evaluation || experimentPreview) completed.add("tracking");
     return completed;
-  }, [actions.length, analysis, evaluation, experimentPreview, officialRankers.length, ouidInput, playerRows.length, similarRankersForView.length]);
+  }, [actions.length, analysis, officialRankers.length, ouidInput, playerRows.length, similarRankersForView.length]);
 
   useEffect(() => {
     trackVisitorLifecycle(screen);
@@ -1090,11 +915,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
     try {
       const payload = await requestApi<RankersLatestPayload>(`/rankers/latest?mode=1vs1&limit=${limit}`, undefined, { timeoutMs: 30_000 });
       setOfficialRankers(Array.isArray(payload.rankers) ? payload.rankers : []);
-      setRankerMeta({
-        mode: String(payload.mode ?? "1vs1"),
-        count: Number(payload.count ?? 0),
-        mapped: Number(payload.mapped_ouid_count ?? 0),
-      });
       if (!silent) {
         setNotice(`랭커 데이터 ${Number(payload.count ?? 0)}명을 불러왔습니다.`);
       }
@@ -1105,60 +925,11 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
     }
   }
 
-  async function loadLatestExperimentPreview(targetOuid: string, targetMatchType: number): Promise<ExperimentPreview | null> {
-    const safeOuid = targetOuid.trim();
-    if (safeOuid.length < 8) {
-      setExperimentPreview(null);
-      return null;
-    }
-    const safeMatchType = normalizeMatchType(targetMatchType, matchType);
-    setExperimentPreviewLoading(true);
-    try {
-      const payload = await requestApi<ExperimentPreviewPayload>(
-        `/experiments/latest?ouid=${encodeURIComponent(safeOuid)}&match_type=${safeMatchType}`,
-      );
-      if (payload.exists) {
-        setExperimentPreview(payload);
-        rememberExperimentTarget({
-          ouid: String(payload.ouid || safeOuid),
-          matchType: normalizeMatchType(payload.match_type, safeMatchType),
-        });
-        return payload;
-      }
-      setExperimentPreview(null);
-      return null;
-    } catch {
-      setExperimentPreview(null);
-      return null;
-    } finally {
-      setExperimentPreviewLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    const storedTarget = readExperimentTarget();
-    if (!storedTarget) return;
-    setExperimentTarget(storedTarget);
-    void loadLatestExperimentPreview(storedTarget.ouid, storedTarget.matchType);
-  }, []);
-
   useEffect(() => {
     if (screen === "rankers" && officialRankers.length === 0) {
       void loadOfficialRankers(30, true);
     }
   }, [officialRankers.length, screen]);
-
-  useEffect(() => {
-    const targetOuid = ouidInput.trim() || experimentTarget?.ouid || "";
-    const targetMatchType = experimentTarget?.matchType ?? matchType;
-    if (targetOuid.length < 8) {
-      if (!experimentTarget?.ouid) {
-        setExperimentPreview(null);
-      }
-      return;
-    }
-    void loadLatestExperimentPreview(targetOuid, targetMatchType);
-  }, [experimentTarget?.matchType, experimentTarget?.ouid, matchType, ouidInput]);
 
   async function resolveOuidFromNickname(mode: "quick" | "advanced"): Promise<string> {
     const targetNickname = nicknameInput.trim();
@@ -1202,89 +973,14 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
     return found.ouid;
   }
 
-  async function onRunAnalysis() {
-    setAnalysisLoadingMode("advanced");
-    setLoading(true);
-    setError("");
-    setNotice("");
-    let targetOuid = "";
-    try {
-      targetOuid = await resolveOuidFromNickname("advanced");
-      const currentTacticPayload = {
-        defense_style: defenseStyle,
-        buildup_play_style: buildupPlayStyle,
-        chance_creation_style: chanceCreationStyle,
-        buildup_style: buildupPlayStyle,
-        defense_width: toModelScale(Number(defenseWidth)),
-        defense_depth: toModelScale(Number(defenseDepth)),
-        attack_width: toModelScale(Number(attackWidth)),
-        box_players: toModelScale(Number(boxPlayers)),
-        corner_kick: cornerKick,
-        free_kick: freeKick,
-        quick_defense_toggles: [],
-        quick_attack_toggles: [],
-      };
-      const payload = await requestApi<AnalysisPayload>("/analysis/run", {
-        method: "POST",
-        body: JSON.stringify({
-          ouid: targetOuid,
-          match_type: matchType,
-          window: windowSize,
-          current_tactic: currentTacticPayload,
-        }),
-      }, { timeoutMs: 120_000 });
-      setAnalysis(payload);
-      const latestActions = payload.actions ? toActionCards(payload.actions) : [];
-      setActions(latestActions);
-      setAppliedTactic({
-        defenseWidth: Number(defenseWidth),
-        defenseDepth: Number(defenseDepth),
-        attackWidth: Number(attackWidth),
-        boxPlayers: Number(boxPlayers),
-        buildupPlayStyle,
-        chanceCreationStyle,
-      });
-      void loadOfficialRankers(30, true);
-      setNotice(syncNoticeText(payload, "분석이 완료되었습니다."));
-      goToScreen("diagnosis");
-      void loadLatestExperimentPreview(targetOuid, matchType);
-      trackEvent("run_analysis", {
-        screen: "search",
-        matchType,
-        windowSize,
-        ouid: targetOuid,
-        properties: {
-          mode: "advanced",
-          has_tactic_input: true,
-          action_count: latestActions.length,
-        },
-      });
-    } catch (analysisError) {
-      const errorMessage = normalizeErrorMessage(analysisError, "분석 실행 실패");
-      setError(errorMessage);
-      if (targetOuid) {
-        trackEvent("run_analysis_failed", {
-          screen: "search",
-          matchType,
-          windowSize,
-          ouid: targetOuid,
-          properties: {
-            mode: "advanced",
-            stage: "analysis_run",
-            error_message: errorMessage,
-          },
-        });
-      }
-    } finally {
-      setLoading(false);
-      setAnalysisLoadingMode(null);
-    }
-  }
-
   async function onQuickRun() {
     const targetNickname = nicknameInput.trim();
     if (targetNickname.length < 2) {
       setError("닉네임을 2글자 이상 입력해주세요.");
+      return;
+    }
+    if (!matchSelectionCount) {
+      setError(matchSelectionCount === null ? "먼저 경기 목록을 불러오고 분석할 범위를 선택해주세요." : "선택한 조건에 맞는 경기 내역이 없습니다. 경기 범위나 몰수 포함 조건을 바꿔주세요.");
       return;
     }
 
@@ -1294,8 +990,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
     setNotice("");
     setAnalysis(null);
     setActions([]);
-    setAppliedTactic(null);
-    setEvaluation(null);
     let targetOuid = "";
     try {
       targetOuid = await resolveOuidFromNickname("quick");
@@ -1304,8 +998,10 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
         body: JSON.stringify({
           ouid: targetOuid,
           match_type: matchType,
-          window: windowSize,
+          window: null,
           current_tactic: null,
+          squad_feed_id: selectedFeed?.feed_id ?? null,
+          ...sampleOptions,
         }),
       }, { timeoutMs: 120_000 });
       setAnalysis(payload);
@@ -1313,7 +1009,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
       void loadOfficialRankers(30, true);
       setNotice(syncNoticeText(payload, "완료: 진단 실행"));
       goToScreen("diagnosis");
-      void loadLatestExperimentPreview(targetOuid, matchType);
       trackEvent("run_analysis", {
         screen: "search",
         matchType,
@@ -1347,99 +1042,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
     }
   }
 
-  async function onAdoptAction(action: ActionCard) {
-    const targetOuid = ouidInput.trim();
-    if (targetOuid.length < 8) {
-      setError("먼저 검색/설정에서 닉네임으로 진단을 실행해주세요.");
-      return;
-    }
-
-    const experimentWindow = analysisWindowSize;
-    setLoading(true);
-    setError("");
-    setNotice("");
-    try {
-      const payload = await requestApi<{ experiment_id: string }>("/experiments", {
-        method: "POST",
-        body: JSON.stringify({
-          ouid: targetOuid,
-          match_type: matchType,
-          action_code: action.actionCode,
-          action_title: action.title,
-          window_size: experimentWindow,
-          notes: "웹 대시보드에서 채택",
-        }),
-      });
-      setNotice(`실험을 시작했습니다. 기준은 최대 ${experimentWindow}경기입니다. 같은 모드로 플레이한 뒤 다시 진단하고 평가를 갱신하세요.`);
-      rememberExperimentTarget({ ouid: targetOuid, matchType });
-      goToScreen("tracking");
-      void loadLatestExperimentPreview(targetOuid, matchType);
-      trackEvent("adopt_action", {
-        screen: "actions",
-        matchType,
-        windowSize: experimentWindow,
-        ouid: targetOuid,
-        properties: {
-          action_code: action.actionCode,
-          action_rank: action.rank,
-          confidence: action.confidence,
-        },
-      });
-    } catch (experimentError) {
-      setError(normalizeErrorMessage(experimentError, "실험을 시작하지 못했습니다. 잠시 후 다시 시도해주세요."));
-      trackEvent("adopt_action_failed", {
-        screen: "actions",
-        matchType,
-        windowSize,
-        ouid: targetOuid,
-      });
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function onEvaluateExperiment() {
-    const targetOuid = ouidInput.trim() || experimentPreview?.ouid || experimentTarget?.ouid || "";
-    const targetMatchType = normalizeMatchType(experimentPreview?.match_type ?? experimentTarget?.matchType ?? matchType, matchType);
-    if (targetOuid.length < 8) {
-      setError("진행 중인 실험을 찾을 수 없습니다. 전술 코칭에서 실험을 시작한 뒤 다시 평가해주세요.");
-      return;
-    }
-
-    if (targetMatchType !== matchType) {
-      setMatchType(targetMatchType);
-    }
-    rememberExperimentTarget({ ouid: targetOuid, matchType: targetMatchType });
-    setLoading(true);
-    setError("");
-    setNotice("");
-    try {
-      const latestExperiment = await loadLatestExperimentPreview(targetOuid, targetMatchType);
-      if (!latestExperiment) {
-        setEvaluation(null);
-        setNotice("아직 시작된 실험이 없습니다. 전술 코칭에서 먼저 실험을 시작해주세요.");
-        return;
-      }
-      const payload = await requestApi<EvaluationPayload>(
-        `/experiments/evaluation?ouid=${encodeURIComponent(targetOuid)}&match_type=${targetMatchType}`,
-      );
-      setEvaluation(payload);
-      setNotice("실험 평가를 갱신했습니다. 적용 후 경기가 부족하면 몇 경기 더 플레이한 뒤 다시 평가하세요.");
-      void loadLatestExperimentPreview(targetOuid, targetMatchType);
-      trackEvent("view_evaluation", {
-        screen: "tracking",
-        matchType: targetMatchType,
-        windowSize,
-        ouid: targetOuid,
-      });
-    } catch (evaluationError) {
-      setError(normalizeErrorMessage(evaluationError, "실험 평가를 갱신하지 못했습니다. 잠시 후 다시 시도해주세요."));
-      setEvaluation(null);
-    } finally {
-      setLoading(false);
-    }
-  }
-
   const primaryActions = useMemo(() => {
     const topAction = actions.reduce<ActionCard | null>(
       (best, action) => (best === null || action.rank < best.rank ? action : best),
@@ -1459,23 +1061,25 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
         tacticInputKnown,
       )
     : "";
-  const emphasizeExperimentReturn = Boolean(experimentPreview && (screen === "guide" || screen === "search"));
+
 
   return (
-    <div className="container grid">
+    <div className={`container grid${screen === "players" && analysis?.coaching ? " analysis-focus" : ""}`}>
       <header>
         <FCoachLogo />
-        <p className="subtitle">
-          FC온라인 닉네임만 입력하면 최근 경기 로그를 분석해 전술 코칭, 선수 리포트, 개선 추적을 제공합니다.
-        </p>
+        {screen === "guide" && <p className="subtitle">
+          FC온라인 닉네임으로 최근 경기의 선수·플레이를 분석하고, 전술 코칭과 개선 추적을 제공합니다.
+        </p>}
       </header>
 
-      <section className="panel grid">
+      <section className="panel grid app-navigation">
         <div className="flow-rail">
           {SCREEN_FLOW.map((item) => (
             <button
               key={item.key}
               className={`flow-step ${screen === item.key ? "active" : ""} ${completedScreenSet.has(item.key) ? "done" : ""}`}
+              aria-label={`${item.icon} ${SCREEN_LABELS[item.key]}`}
+              title={SCREEN_LABELS[item.key]}
               onClick={() => {
                 goToScreen(item.key);
                 trackEvent("tab_click", {
@@ -1493,42 +1097,16 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
             </button>
           ))}
         </div>
-        {screen !== "search" && <div className="context-banner">현재 분석 기준: {currentContextLabel}</div>}
-        {!!notice && <div className="notice ok">{notice}</div>}
-        {!!error && <div className="notice error">{error}</div>}
-        {experimentPreview && screen !== "tracking" && (
-          <div className={`notice warn experiment-return ${emphasizeExperimentReturn ? "priority" : ""}`}>
-            <div>
-              <strong>{emphasizeExperimentReturn ? "진행 중인 실험, 이제 결과를 확인할 차례예요" : "진행 중인 실험이 있어요"}</strong>
-              <p className="muted compact">
-                {experimentPreview.action_title} · 시작 {formatDate(experimentPreview.started_at)} · 최대 {experimentPreview.window_size}경기 기준
-              </p>
-              <p className="muted compact">
-                {emphasizeExperimentReturn
-                  ? "새 경기를 했다면 다시 진단하고 평가를 갱신해 전술 효과를 확인하세요."
-                  : "새 경기를 했다면 다시 진단한 뒤 평가를 갱신하세요."}
-              </p>
-            </div>
-            <div className="button-row">
-              {emphasizeExperimentReturn && screen !== "search" && (
-                <button className="btn secondary" type="button" onClick={() => goToScreen("search")}>
-                  다시 진단하기
-                </button>
-              )}
-              <button className="btn" type="button" onClick={() => goToScreen("tracking")}>
-                실험 평가하기
-              </button>
-            </div>
-          </div>
-        )}
+        {!["search", "tracking", "guide"].includes(screen) && <div className="context-banner">현재 분석 기준: {currentContextLabel}</div>}
+        {screen !== "tracking" && !!notice && !notice.startsWith("완료:") && !notice.startsWith("선택한 조건에 맞는 경기") && <div className="notice ok">{notice}</div>}
+        {screen !== "tracking" && !!error && <div className="notice error">{error}</div>}
+
       </section>
 
       {screen === "search" && (
         <section className="panel grid">
-          <h2 className="section-title">1) 검색 및 분석 실행</h2>
-          <div className="notice ok">
-            <strong>빠른 시작</strong>: 닉네임 입력 후 버튼 1번으로 분석까지 끝납니다.
-          </div>
+          <h2 className="section-title">경기 분석 시작</h2>
+          <p>닉네임과 경기 모드를 정하고, 분석할 시작·종료 경기를 선택하세요.</p>
           <div className="option-strip">
             <div className="option-block">
               <div className="option-label">경기 모드</div>
@@ -1536,9 +1114,12 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                 {MATCH_TYPE_OPTIONS.map((typeValue) => (
                   <button
                     key={typeValue}
+                    disabled={loading || matchListLoading}
                     className={`tab ${matchType === typeValue ? "active" : ""}`}
                     onClick={() => {
                       setMatchType(typeValue);
+                      setMatchSelectionCount(null);
+                      setSampleOptions(current => ({ ...current, start_match_id: null, end_match_id: null }));
                       trackEvent("change_match_type", {
                         screen: "search",
                         matchType: typeValue,
@@ -1552,192 +1133,66 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                 ))}
               </div>
             </div>
-            <div className="option-block">
-              <div className="option-label">집계 구간</div>
-              <div className="tabs">
-                {WINDOW_OPTIONS.map((windowValue) => (
-                  <button
-                    key={windowValue}
-                    className={`tab ${windowSize === windowValue ? "active" : ""}`}
-                    onClick={() => {
-                      setWindowSize(windowValue);
-                      trackEvent("change_window_size", {
-                        screen: "search",
-                        matchType,
-                        windowSize: windowValue,
-                        ouid: ouidInput,
-                      });
-                    }}
-                  >
-                    {windowValue}경기
-                  </button>
-                ))}
-              </div>
-            </div>
+
           </div>
           <div className="form-row single">
             <input
               placeholder="닉네임"
+              aria-label="분석할 닉네임"
+              disabled={loading}
               value={nicknameInput}
               onChange={(event) => {
                 const nextValue = event.target.value;
                 setNicknameInput(nextValue);
+                setMatchSelectionCount(null);
+                setError("");
+                setNotice("");
+                setSampleOptions(current => ({ ...current, start_match_id: null, end_match_id: null }));
+                setSelectedFeed(null);
                 if (resolvedUser && resolvedUser.nickname !== nextValue.trim()) {
                   setResolvedUser(null);
                 }
               }}
             />
           </div>
+          <MatchSampleSelector key={`${nicknameInput.trim()}:${matchType}`} nickname={nicknameInput} matchType={matchType} value={sampleOptions} disabled={loading} onChange={setSampleOptions} onLoadingChange={setMatchListLoading} onSelectionCountChange={setMatchSelectionCount} />
+          <SquadFeedSelector key={nicknameInput.trim()} nickname={nicknameInput} selected={selectedFeed} disabled={loading} onChange={setSelectedFeed} onLoadingChange={setFeedLoading} />
           <div className="button-row">
-            <button className="btn" onClick={onQuickRun} disabled={loading}>
+            <button className="btn" onClick={onQuickRun} disabled={loading || feedLoading || matchListLoading || !matchSelectionCount}>
               {loading && analysisLoadingMode === "quick" ? (
                 <span className="btn-loading">
                   <span className="spinner" />
                   분석 중...
                 </span>
               ) : (
-                "빠른 시작 (닉네임→진단)"
+                selectedFeed ? "피드를 연결해 경기 진단 시작" : "경기 진단 시작"
               )}
             </button>
           </div>
 
-          <div className="button-row">
-            <button className="btn secondary" onClick={() => setShowAdvancedTactic((prev) => !prev)}>
-              {showAdvancedTactic ? "고급 전술 입력 닫기" : "고급 전술 입력 열기"}
-            </button>
-          </div>
-          {showAdvancedTactic && (
-            <>
-              <div className="notice ok">
-                공식 노트 기준 팀전술 입력입니다. 수비/공격 폭·깊이·박스 안 쪽 선수는 1~10, 코너/프리킥은 1~5이며 수치가 높을수록 페널티 박스 공격 가담이 커집니다.
-              </div>
-              <div className="grid grid-2">
-                <div className="field-card">
-                  <label>수비 스타일</label>
-                  <select value={defenseStyle} onChange={(event) => setDefenseStyle(event.target.value)}>
-                    {DEFENSE_STYLE_OPTIONS.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field-card">
-                  <label>빌드업 플레이</label>
-                  <select value={buildupPlayStyle} onChange={(event) => setBuildupPlayStyle(event.target.value)}>
-                    {TACTIC_STYLE_OPTIONS.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field-card">
-                  <label>기회 만들기</label>
-                  <select value={chanceCreationStyle} onChange={(event) => setChanceCreationStyle(event.target.value)}>
-                    {TACTIC_STYLE_OPTIONS.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field-card">
-                  <label>수비 폭 (1~10)</label>
-                  <select value={String(defenseWidth)} onChange={(event) => setDefenseWidth(Number(event.target.value))}>
-                    {FC_TACTIC_VALUES.map((value) => (
-                      <option key={value} value={value}>
-                        {value} · {tacticBandLabel(value, "defenseWidth")}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field-card">
-                  <label>수비 깊이 (FC 전술값)</label>
-                  <select value={String(defenseDepth)} onChange={(event) => setDefenseDepth(Number(event.target.value))}>
-                    {FC_TACTIC_VALUES.map((value) => (
-                      <option key={value} value={value}>
-                        {value} · {tacticBandLabel(value, "defenseDepth")}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field-card">
-                  <label>공격 폭 (1~10)</label>
-                  <select value={String(attackWidth)} onChange={(event) => setAttackWidth(Number(event.target.value))}>
-                    {FC_TACTIC_VALUES.map((value) => (
-                      <option key={value} value={value}>
-                        {value} · {tacticBandLabel(value, "attackWidth")}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field-card">
-                  <label>박스 안 쪽 선수 (1~10)</label>
-                  <select value={String(boxPlayers)} onChange={(event) => setBoxPlayers(Number(event.target.value))}>
-                    {FC_TACTIC_VALUES.map((value) => (
-                      <option key={value} value={value}>
-                        {value} · {tacticBandLabel(value, "boxPlayers")}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field-card">
-                  <label>코너킥 공격 가담 성향 (1~5)</label>
-                  <select value={String(cornerKick)} onChange={(event) => setCornerKick(Number(event.target.value))}>
-                    {SET_PIECE_OPTIONS.map((value) => (
-                      <option key={value} value={value}>
-                        {value} · {setPieceLabel(value)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field-card">
-                  <label>프리킥 공격 가담 성향 (1~5)</label>
-                  <select value={String(freeKick)} onChange={(event) => setFreeKick(Number(event.target.value))}>
-                    {SET_PIECE_OPTIONS.map((value) => (
-                      <option key={value} value={value}>
-                        {value} · {setPieceLabel(value)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div className="button-row">
-                <button className="btn" onClick={onRunAnalysis} disabled={loading}>
-                  {loading && analysisLoadingMode === "advanced" ? (
-                    <span className="btn-loading">
-                      <span className="spinner" />
-                      분석 중...
-                    </span>
-                  ) : (
-                    "고급 전술 기준으로 재분석"
-                  )}
-                </button>
-              </div>
-            </>
-          )}
         </section>
       )}
 
-      {screen === "diagnosis" && (
+      {screen === "diagnosis" && !analysis && <section className="panel"><p>아직 분석한 경기 내역이 없습니다. 검색/설정에서 닉네임으로 경기를 불러와 분석해주세요.</p><button className="btn" onClick={() => goToScreen("search")}>경기 불러오기</button></section>}
+      {screen === "diagnosis" && analysis && (
         <section className="grid grid-3">
-          {topRecommendedAction && (
+          <FeedConnectionSummary context={analysis?.coaching?.squad_feed} onOpen={() => goToScreen("actions")} />
+          {topRecommendedAction && !hasContextualFeed && (
             <article className="panel span-3 diagnosis-action-cta">
               <div>
                 <p className="action-title">이번 분석의 1순위 처방</p>
                 <h3>{topRecommendedAction.title}</h3>
                 <p className="focus-line">{topRecommendedPrescription}</p>
                 <p className="muted compact">
-                  분석을 끝냈다면 여기서 바로 추천 내용을 확인하고, 같은 모드로 몇 경기 실험해 개선 추적에서 검증하세요.
+                  분석을 끝냈다면 여기서 바로 추천 내용을 확인하고, 개선 추적에서 원하는 두 경기 구간을 골라 변화를 비교하세요.
                 </p>
               </div>
               <div className="button-row">
                 <button className="btn secondary" type="button" onClick={() => goToScreen("actions")}>
                   추천 1개 바로 보기
                 </button>
-                <button className="btn" type="button" onClick={() => onAdoptAction(topRecommendedAction)} disabled={loading}>
-                  이 추천으로 실험 시작
+                <button className="btn" type="button" onClick={() => goToScreen("tracking")} disabled={loading}>
+                  전후 경기 비교하기
                 </button>
               </div>
             </article>
@@ -1748,37 +1203,37 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
             <div className="muted">모드: {MATCH_LABELS[analysisMatchType]}</div>
           </article>
           <article className="panel">
-            <h3 className="section-title">xG 차이</h3>
+            <h3 className="section-title">예상 득점 차이 · 자체 추정</h3>
             <div className="kpi-value">
               {formatFixed(toKpiValue(metrics, "xg_for") - toKpiValue(metrics, "xg_against"))}
             </div>
             <div className="muted">
-              xG For {formatFixed(toKpiValue(metrics, "xg_for"))} / xG Against {formatFixed(toKpiValue(metrics, "xg_against"))}
+              내 예상 득점 {formatFixed(toKpiValue(metrics, "xg_for"))} / 상대 {formatFixed(toKpiValue(metrics, "xg_against"))}
             </div>
           </article>
           <article className="panel">
-            <h3 className="section-title">핵심 이슈</h3>
-            <div className={`kpi-value ${issueTagClass}`}>{topIssue ? ISSUE_LABELS[topIssue.issueCode] ?? topIssue.issueCode : "-"}</div>
-            <div className="muted">이슈 점수: {topIssue ? formatFixed(topIssue.score) : "-"}</div>
+            <h3 className="section-title">이전 경기 대비 변화</h3>
+            <div className={`kpi-value ${issueTagClass}`}>{topIssue ? ISSUE_LABELS[topIssue.issueCode] ?? topIssue.issueCode : "기록 확인"}</div>
+            <div className="muted">관측 차이: {topIssue ? `${formatFixed(topIssue.score)}%p` : "뚜렷한 하락 확인 안 됨"}</div>
           </article>
           <article className="panel">
-            <h3 className="section-title">득실</h3>
+            <h3 className="section-title">팀 득점 : 실점</h3>
             <div className="kpi-value">
-              {formatFixed(toKpiValue(metrics, "goals_for"))} : {formatFixed(toKpiValue(metrics, "goals_against"))}
+              {formatFixed(toKpiValue(metrics, "goals_for"), 0)} : {formatFixed(toKpiValue(metrics, "goals_against"), 0)}
             </div>
-            <div className="muted">최근 {analysisWindowSize}경기 기준</div>
+            <div className="muted">실제 분석 {analysisSampleCount}경기 기준</div>
           </article>
           <article className="panel">
             <h3 className="section-title">유효슈팅 비율</h3>
-            <div className="kpi-value">{formatPercent(toKpiValue(metrics, "shot_on_target_rate"))}</div>
+            <div className="kpi-value">{toKpiValue(metrics, "shots_total") > 0 ? formatPercent(toKpiValue(metrics, "shot_on_target_rate")) : "—"}</div>
             <div className="muted">오프사이드 평균 {formatFixed(toKpiValue(metrics, "offside_avg"))}</div>
           </article>
           <article className="panel">
             <h3 className="section-title">분석 시각</h3>
             <div className="kpi-value mini">{formatDate(analysis?.created_at)}</div>
-            <div className="muted">데이터 표본 {formatFixed(toKpiValue(metrics, "match_count"), 0)}경기</div>
+            <div className="muted">분석 {formatFixed(toKpiValue(metrics, "match_count"), 0)}경기</div>
             <div className="muted">
-              벤치마크: {BENCHMARK_SOURCE_LABEL[String(analysis?.benchmark_meta?.source ?? "unknown")] ?? String(analysis?.benchmark_meta?.source ?? "unknown")}
+              비교 기준: {BENCHMARK_SOURCE_LABEL[String(analysis?.benchmark_meta?.source ?? "unknown")] ?? String(analysis?.benchmark_meta?.source ?? "unknown")}
             </div>
           </article>
           <article className="panel span-3">
@@ -1793,11 +1248,11 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                 {recentMatches.map((match, index) => (
                   <div key={`${match.match_date}-${match.opponent_nickname}-${index}`} className="recent-match-card">
                     <div className="recent-match-head">
-                      <strong>{match.result || "-"}</strong>
+                      <strong>{match.match_end_type === 1 ? "몰수승" : match.match_end_type === 2 ? "몰수패" : match.result || "-"}</strong>
                       <span>{formatDate(match.match_date)}</span>
                     </div>
                     <div className="recent-match-score">
-                      {formatFixed(Number(match.score_for ?? 0), 0)} : {formatFixed(Number(match.score_against ?? 0), 0)}
+                      {formatFixed(Number(match.score_for_display ?? match.score_for ?? 0), 0)} : {formatFixed(Number(match.score_against_display ?? match.score_against ?? 0), 0)}
                     </div>
                     <div className="muted compact">상대: {match.opponent_nickname || "알 수 없음"}</div>
                     <div className="muted compact">입력: {String(match.controller ?? "unknown").toLowerCase()}</div>
@@ -1813,7 +1268,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                 const userProgress = item.reverse
                   ? toProgressPercent(Math.max(0, item.scaleMax - item.userValue), item.scaleMax)
                   : toProgressPercent(item.userValue, item.scaleMax);
-                const benchmarkProgress = item.reverse
+                const benchmarkProgress = item.benchmarkValue === null ? 0 : item.reverse
                   ? toProgressPercent(Math.max(0, item.scaleMax - item.benchmarkValue), item.scaleMax)
                   : toProgressPercent(item.benchmarkValue, item.scaleMax);
                 return (
@@ -1824,11 +1279,9 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                     </div>
                     <div className={`progress-track ${item.reverse ? "reverse" : ""}`}>
                       <div className={`progress-fill ${item.reverse ? "reverse" : ""}`} style={{ width: `${userProgress}%` }} />
-                      <div className="benchmark-marker" style={{ left: `${benchmarkProgress}%` }} />
+                      {item.benchmarkValue !== null && <div className="benchmark-marker" style={{ left: `${benchmarkProgress}%` }} />}
                     </div>
-                    <p className="muted compact">
-                      랭커 기준 {item.benchmarkDisplay} · {item.reverse ? "낮을수록 유리" : "높을수록 유리"}
-                    </p>
+                    {item.benchmarkValue !== null && <p className="muted compact">정상 종료 경기끼리 비교 · 이전 {item.benchmarkDisplay}</p>}
                   </div>
                 );
               })}
@@ -1838,27 +1291,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
             <h3 className="section-title">경기장 분석</h3>
             <div className="pitch-layout">
               <div className="pitch-panel">
-                <div className="pitch-board half">
-                  <div className="pitch-lines half-pitch-lines">
-                    <div className="half-midline" />
-                    <div className="half-center-circle" />
-                    <div className="half-penalty-box" />
-                    <div className="half-goal-box" />
-                    <div className="half-goal-line" />
-                  </div>
-                  {halfPitchShotMap.map((point, index) => (
-                    <span
-                      key={`${point.left}-${point.top}-${index}`}
-                      className={`shot-dot ${point.is_goal ? "goal" : "shot"}`}
-                      style={{ left: `${point.left * 100}%`, top: `${point.top * 100}%` }}
-                    />
-                  ))}
-                </div>
-                <div className="pitch-legend">
-                  <span><i className="dot shot" /> 슈팅</span>
-                  <span><i className="dot goal" /> 득점</span>
-                  <span>총 슈팅 {formatFixed(Number(shotZone.total_shots ?? 0), 0)}개</span>
-                </div>
+                <InteractiveShotMap points={shotMap} />
               </div>
               <div className="pitch-insights">
                 <div className="zone-card">
@@ -1893,7 +1326,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                 </div>
                 <div className="zone-card">
                   <p className="action-title">득점 슈팅 타입 분포</p>
-                  {goalTypeFor.length === 0 && <p className="muted compact">득점 슈팅 타입 데이터가 아직 부족합니다.</p>}
+                  {goalTypeFor.length === 0 && <p className="muted compact">확인된 득점 슈팅 종류가 없습니다.</p>}
                   {goalTypeFor.length > 0 && (
                     <ul className="list compact">
                       {goalTypeFor.map((item) => (
@@ -1911,79 +1344,20 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
         </section>
       )}
 
-      {screen === "habits" && (
-        <section className="grid grid-2">
-          <article className="panel">
-            <h3 className="section-title">습관 진단 Top 3</h3>
-            {toKpiValue(metrics, "match_count") < 5 && (
-              <div className="notice warn">현재 표본이 {formatFixed(toKpiValue(metrics, "match_count"), 0)}경기라 이슈 점수 신뢰도가 낮습니다.</div>
-            )}
-            {sortedIssues.length === 0 && <p className="muted">분석 결과가 없습니다. 검색/설정에서 진단을 실행해주세요.</p>}
-            <div className="issue-stack">
-              {sortedIssues.slice(0, 3).map(([issueCode, score], index) => (
-                <div key={issueCode} className="issue-row">
-                  <div className="issue-row-head">
-                    <span>
-                      #{index + 1} {ISSUE_LABELS[issueCode] ?? issueCode}
-                    </span>
-                    <strong>{formatFixed(score)}점</strong>
-                  </div>
-                  <div className="progress-track">
-                    <div className="progress-fill issue" style={{ width: `${toProgressPercent(score, 100)}%` }} />
-                  </div>
-                  <p className="muted compact">{ISSUE_DETAIL[issueCode] ?? issueCode}</p>
-                </div>
-              ))}
-            </div>
-          </article>
-          <article className="panel">
-            <h3 className="section-title">코치 요약</h3>
-            <div className="coach-summary-stack">
-              {actions.length === 0 && <div className="guide-card">전술 코칭을 생성하려면 먼저 진단을 실행해주세요.</div>}
-              {actions.length > 0 && (
-                <>
-                  <div className="guide-card">
-                    <div className="guide-title">이번 주 핵심 교정 1개</div>
-                    <p>
-                      {oneLinePrescription(
-                        ISSUE_LABELS[actions[0].actionCode] ?? actions[0].actionCode,
-                        tacticAdjustmentLines(actions[0].tacticDelta, appliedTactic),
-                        tacticInputKnown,
-                      )}
-                    </p>
-                  </div>
-                  <div className="guide-card">
-                    <div className="guide-title">바로 다음 단계</div>
-                    <p>
-                      {tacticInputKnown
-                        ? "전술 코칭 탭에서 지금 표시된 추천을 채택하고 같은 전술로 플레이하세요."
-                        : "전술 코칭 탭에서 지금 표시된 추천을 테스트한 뒤, 필요하면 고급 전술 입력으로 정밀 조정하세요."}
-                    </p>
-                  </div>
-                </>
-              )}
-              <div className="guide-card">
-                <div className="guide-title">해석 팁</div>
-                <p>습관 분석은 문제 우선순위만 보여줍니다. 실제 전술값은 전술 코칭 탭에서 확정하세요.</p>
-              </div>
-            </div>
-          </article>
-        </section>
-      )}
-
       {screen === "players" && (
-        <section className="grid">
+        <section className="grid player-analysis-section">
+          <PositionCoachingPanel coaching={analysis?.coaching} reportPlayers={playerRows} analysis={analysis} renderReport={() => <>
           <article className="panel">
-            <h3 className="section-title">내 선수 리포트 ({MATCH_LABELS[analysisMatchType]} · 최근 {analysisWindowSize}경기)</h3>
+            <h3 className="section-title">전체 선수 성과 ({MATCH_LABELS[analysisMatchType]} · 실제 분석 {analysisSampleCount}경기)</h3>
             <p className="muted">
-              공식 API `matchInfo.player.status` 집계 기준입니다. 경기당 누적 데이터를 선수 단위로 통합해 주전 기여도를 보여줍니다.
+              선택한 경기의 선수별 기록을 모아 득점·도움과 주요 기여도를 보여줍니다.
             </p>
             {!!analysis?.sample_scope && (
               <p className="muted compact">
-                표본 필터:{" "}
-                {analysis.sample_scope === "playable_only"
-                  ? `키보드/패드 플레이 경기만 사용 (${Number(analysis.sample_count ?? 0)}경기)`
-                  : `컨트롤러 구분 불가 매치를 포함해 사용 (${Number(analysis.sample_count ?? 0)}경기)`}
+                분석 경기 조건:{" "}
+                {analysis.sample_scope === "completed_only"
+                  ? `몰수승·몰수패를 제외한 정상 종료 경기만 사용 (${Number(analysis.sample_count ?? 0)}경기)`
+                  : `조회된 경기 사용 (${Number(analysis.sample_count ?? 0)}경기)`}
               </p>
             )}
             {controllerBreakdown.length > 0 && (
@@ -2002,7 +1376,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
 
           {playerRows.length > 0 && (
             <>
-              <section className="grid grid-3">
+              <section className="grid grid-2">
                 <article className="panel">
                   <h4 className="section-title">최다 득점</h4>
                   <div className="kpi-value mini">{playerReport?.top_scorer?.player_name ?? "-"}</div>
@@ -2015,13 +1389,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                   <div className="kpi-value mini">{playerReport?.top_assister?.player_name ?? "-"}</div>
                   <p className="muted">
                     {formatFixed(Number(playerReport?.top_assister?.assists ?? 0), 0)}도움 · {String(playerReport?.top_assister?.position_name ?? "-")}
-                  </p>
-                </article>
-                <article className="panel">
-                  <h4 className="section-title">최다 출전</h4>
-                  <div className="kpi-value mini">{playerReport?.most_used?.player_name ?? "-"}</div>
-                  <p className="muted">
-                    {formatFixed(Number(playerReport?.most_used?.appearances ?? 0), 0)}경기 · {String(playerReport?.most_used?.position_name ?? "-")}
                   </p>
                 </article>
               </section>
@@ -2058,9 +1425,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
               {chemistryPairs.length > 0 && (
                 <article className="panel">
                   <h4 className="section-title">골 찬스 콤비</h4>
-                  <p className="muted compact">
-                    최근 경기에서 왼쪽 선수가 찬스를 만들고 오른쪽 선수가 슛으로 마무리한 장면을 모았습니다. 자주 나온 공격 루트를 보는 참고용이에요.
-                  </p>
                   <div className="chemistry-grid">
                     {chemistryPairs.map((pair) => {
                       const [left, right] = pair.players;
@@ -2070,14 +1434,16 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                       return (
                         <article key={`${left.sp_id}-${left.sp_grade}-${right.sp_id}-${right.sp_grade}`} className="chemistry-card">
                           <div className="chemistry-player-row">
-                            {[left, right].map((player) => (
-                              <div key={`${player.sp_id}-${player.sp_grade}`} className="chemistry-player">
+                            {[left, right].map((player, index) => (
+                              <div key={`${player.sp_id}-${player.sp_grade}`} className="chemistry-player-step">
+                              {index === 1 && <span className="chemistry-direction" role="img" aria-label="찬스 제공에서 슈팅으로">→</span>}
+                              <div className="chemistry-player"><small>{index === 0 ? "찬스 제공" : "슈팅"}</small>
                                 <PlayerPortrait player={player} alt={`${player.player_name} 미니페이스온`} className="player-face chemistry" />
                                 <strong>{player.player_name}</strong>
                                 <span>
                                   {player.position_name} · +{normalizedGrade(player.sp_grade)}
                                 </span>
-                              </div>
+                              </div></div>
                             ))}
                           </div>
                           <div className="chemistry-score-row">
@@ -2098,47 +1464,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                   </div>
                 </article>
               )}
-
-              <article className="panel">
-                <h4 className="section-title">주전 후보 Top 11 (포메이션 배치)</h4>
-                <p className="muted compact">선수 포지션을 기준으로 자동 배치합니다. 동일 포지션 중복 시 좌우로 분산 표시됩니다.</p>
-                <div className="formation-scroll">
-                  <div className="formation-board">
-                    <div className="formation-lines">
-                      <div className="formation-midline" />
-                      <div className="formation-center-circle" />
-                      <div className="formation-box top" />
-                      <div className="formation-box bottom" />
-                      <div className="formation-goal top" />
-                      <div className="formation-goal bottom" />
-                    </div>
-                    {formationNodes.map((player) => (
-                      <div
-                        key={`${player.sp_id}-${player.sp_position}`}
-                        className="formation-player"
-                        style={{ left: `${player.slot_left}%`, top: `${player.slot_top}%` }}
-                      >
-                        <div className="formation-player-head">
-                          <PlayerPortrait player={player} alt={`${player.player_name} 미니페이스온`} className="player-face formation" />
-                          <div className="formation-player-meta">
-                            <strong>{player.player_name}</strong>
-                            <span>{player.position_name}</span>
-                          </div>
-                        </div>
-                        <div className="formation-player-top">
-                          <span className={`enhance-badge ${enhanceLevelClass(player.sp_grade)}`}>+{normalizedGrade(player.sp_grade)}</span>
-                          {player.season_img ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img className="season-badge tiny" src={player.season_img} alt={`${player.season_name} 배지`} />
-                          ) : (
-                            <span className="season-badge tiny fallback">SE</span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </article>
 
               <article className="panel">
                 <h4 className="section-title">선수 상세 성과표</h4>
@@ -2306,18 +1631,14 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
               </article>
             </>
           )}
+          </>} />
         </section>
       )}
 
       {screen === "actions" && (
         <section className="grid">
-          <article className="panel coach-intro">
-            <h3 className="section-title">오늘의 전술 코칭</h3>
-            <p className="muted">
-              현재 진단에서 바로 실험해볼 추천 1개를 보여줍니다. 경기 전에 적용하고 같은 모드에서 최소 3경기(권장 5경기+) 플레이한 뒤 다시 진단해 개선 추적에서 전/후를 비교하세요.
-            </p>
-          </article>
-          {actions.length === 0 && <article className="panel muted">전술 추천이 없습니다. 먼저 진단을 실행하세요.</article>}
+          <PrescriptionPanel coaching={analysis?.coaching} onOpenAnalysis={() => goToScreen("players")} />
+          {!!primaryActions.length && <h3 className="section-title">팀 지표에서 확인된 개선 제안</h3>}
           {primaryActions.map((action) => {
             const benchmarkCompare = getBenchmarkCompare(action.evidence);
             const metricGapTable = getMetricGapTable(action.evidence);
@@ -2327,7 +1648,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
             const guide = actionGuide(action.actionCode, gapValue, action.tacticDelta, tacticInputKnown);
             const coachExplanation = getCoachExplanation(action.evidence);
             const safeAdjustments = tacticAdjustmentLines(action.tacticDelta, appliedTactic);
-            const focusPrescription = oneLinePrescription(
+            const focusPrescription = coachExplanation?.execution_checklist?.[0] || oneLinePrescription(
               ISSUE_LABELS[action.actionCode] ?? action.actionCode,
               safeAdjustments,
               tacticInputKnown,
@@ -2335,53 +1656,72 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
             const kpiTargets = buildCoachTargets(action.actionCode, metricGapTable, benchmarkCompare, similarRankers);
             return (
               <article key={`${action.rank}-${action.actionCode}`} className="panel">
+                <div className="coaching-handoff">
+                  <div className="coaching-handoff-copy">
+                    <span>먼저 점검할 플레이</span>
+                    <strong>{ISSUE_LABELS[action.actionCode] ?? action.actionCode}</strong>
+                    {kpiTargets[0] && (
+                      <small>
+                        {kpiTargets[0].metricLabel} {kpiTargets[0].currentText} → {kpiTargets[0].targetText}
+                      </small>
+                    )}
+                  </div>
+                  <button className="btn secondary" onClick={() => goToScreen("players")}>
+                    선수 기록 보기
+                  </button>
+                </div>
                 <h3 className="section-title">
-                  {ISSUE_LABELS[action.actionCode] ?? action.actionCode}{" "}
+                  이번 교정안{" "}
                   <span className="pill">
-                    신뢰도 {formatFixed(action.confidence, 2)} · <span className={confidenceInfo.className}>{confidenceInfo.label}</span>
+                    {action.evidence?.benchmark_meta && String((action.evidence.benchmark_meta as Record<string, unknown>).source) === "own_history_v1" ? "내 이전 경기 비교" : <>신뢰도 {formatFixed(action.confidence, 2)} · <span className={confidenceInfo.className}>{confidenceInfo.label}</span></>}
                   </span>
                 </h3>
                 <div className="coach-focus-grid single">
                   <div className="focus-card primary">
-                    <p className="action-title">1개 처방</p>
+                    <p className="action-title">이번에 바꿀 핵심</p>
                     <p className="focus-line">{focusPrescription}</p>
-                    <p className="muted compact">{coachExplanation?.coach_message || guide.why}</p>
-                    {!!coachExplanation?.root_cause && <p className="muted compact">근거: {coachExplanation.root_cause}</p>}
+                    <p className="muted compact">{guide.doNow}</p>
                   </div>
                   <div className="focus-card">
-                    <p className="action-title">전술 변경 추천</p>
+                    <p className="action-title">전술 설정</p>
                     <ul className="list compact">
                       {safeAdjustments.slice(0, 4).map((line) => (
-                        <li key={line}>{line}</li>
-                      ))}
-                      {(coachExplanation?.execution_checklist ?? []).slice(0, 2).map((line) => (
                         <li key={line}>{line}</li>
                       ))}
                     </ul>
                     <p className="muted compact">방향: {TACTIC_DIRECTION_KO[action.actionCode] ?? action.tacticDirection}</p>
                   </div>
                   <div className="focus-card">
-                    <p className="action-title">다음 진단 때 확인할 것</p>
-                    {kpiTargets.length === 0 && <p className="muted compact">목표 지표를 계산할 데이터가 부족합니다.</p>}
-                    {kpiTargets.length > 0 && (
+                    <p className="action-title">경기 중 체크</p>
+                    {(coachExplanation?.execution_checklist ?? []).length === 0 && <p className="muted compact">{guide.doNow}</p>}
+                    {(coachExplanation?.execution_checklist ?? []).length > 0 && (
                       <ul className="list compact">
-                        {kpiTargets.slice(0, 2).map((target) => (
-                          <li key={target.metricName}>
-                            <strong>
-                              {target.metricLabel}: {target.currentText} → {target.targetText}
-                            </strong>
-                            <div className="muted compact">{target.reasonText}</div>
-                          </li>
+                        {(coachExplanation?.execution_checklist ?? []).slice(0, 3).map((line) => (
+                          <li key={line}>{line}</li>
                         ))}
                       </ul>
                     )}
-                    <p className="muted compact">{coachExplanation?.expected_effect || guide.verify}</p>
                   </div>
                 </div>
+                <div className="coaching-verify-strip">
+                  <div className="guide-title">바뀌었는지 확인할 지표</div>
+                  {kpiTargets.length === 0 && <p className="muted compact">목표 지표를 계산할 데이터가 부족합니다.</p>}
+                  {kpiTargets.length > 0 && (
+                    <div className="coaching-verify-list">
+                      {kpiTargets.slice(0, 2).map((target) => (
+                        <div key={target.metricName}>
+                          <span>{target.metricLabel}</span>
+                          <strong>{target.currentText} → {target.targetText}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <p className="muted compact">{coachExplanation?.expected_effect || guide.verify}</p>
+                </div>
                 <details className="detail-block">
-                  <summary>랭커 기준과 세부 근거 보기</summary>
+                  <summary>이전 경기 비교 근거 보기</summary>
                   <div className="detail-content">
-                    <p className="muted compact">목표 기준: 랭커 기준치{similarRankers.length > 0 ? ` + 유사 랭커 ${similarRankers.length}명` : ""}</p>
+                    <p className="muted compact">비교값: 내 이전 정상 종료 경기의 실측 기록</p>
                     <ul className="list compact">
                       {kpiTargets.slice(0, 2).map((target) => (
                         <li key={target.metricName}>
@@ -2396,13 +1736,12 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                   </div>
                 </details>
                 <div className="button-row">
-                  <button className="btn" onClick={() => onAdoptAction(action)} disabled={loading}>
-                    이 추천으로 실험 시작
+                  <button className="btn" onClick={() => goToScreen("tracking")} disabled={loading}>
+                    전후 경기 비교하기
                   </button>
                 </div>
                 <p className="muted compact">
-                  실험 시작 후 같은 모드로 몇 경기 플레이하고 검색/설정에서 다시 진단 실행 → 개선 추적에서 평가 갱신 순서로 확인하세요.{" "}
-                  {EXPERIMENT_CONTINUITY_NOTICE}
+                  플레이를 바꾼 전후의 경기를 개선 추적에서 직접 선택해 비교하세요.{" "}
                 </p>
               </article>
             );
@@ -2420,14 +1759,14 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
               </button>
             </div>
             <p className="muted">
-              모드 {rankerMeta?.mode ?? "1vs1"} · 저장 {rankerMeta?.count ?? 0}명 · OUID 매핑 {rankerMeta?.mapped ?? 0}명
+              공식 1대1 랭킹 · {officialRankers.length}명 표시{officialRankers[0]?.fetched_at ? ` · 수집 ${formatDate(officialRankers[0].fetched_at)}` : ""}
             </p>
             {officialRankers.length === 0 && <p className="muted">저장된 랭커 데이터가 없습니다. 잠시 후 다시 불러와주세요.</p>}
             {officialRankers.length > 0 && (
               <ul className="list compact">
                 {officialRankers.slice(0, 15).map((ranker) => (
                   <li key={`${ranker.ouid}-${ranker.rank_no}`}>
-                    #{ranker.rank_no} {ranker.nickname} · 승률 {formatPercent(ranker.win_rate)} · 포메 {ranker.formation || "-"} · 팀컬러 {ranker.team_color || "-"}
+                    #{ranker.rank_no} {ranker.nickname} · 승률 {formatPercent(ranker.win_rate)} · 포메이션 {ranker.formation || "-"} · 팀컬러 {ranker.team_color || "-"}
                   </li>
                 ))}
               </ul>
@@ -2438,24 +1777,24 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
             {similarRankersForView.length === 0 && (
               <p className="muted">
                 {analysis
-                  ? "유사 랭커 계산에 필요한 랭커 경기 프로필이 부족합니다. 랭커 데이터 재로딩 후 다시 진단해주세요."
+                  ? "같은 공식경기 모드의 실제 랭커 경기 기록이 있을 때만 비교합니다. 공식 친선 기록이나 승률만으로 플레이 성향을 추정하지 않습니다."
                   : "먼저 진단을 실행하면 유사 랭커 후보가 표시됩니다."}
               </p>
             )}
             {similarRankersForView.map((ranker) => (
               <div key={ranker.ouid} className="similar-item">
                 <p>
-                  공식 #{ranker.ranker_proxy_rank} · {ranker.nickname || "닉네임 미확인"} · 유사도 {formatFixed(ranker.similarity, 3)} · 승률{" "}
+                  공식 #{ranker.ranker_proxy_rank} · {ranker.nickname || "닉네임 미확인"} · 기록 유사도 {formatFixed(ranker.similarity, 3)} · 승률{" "}
                   {formatPercent(ranker.win_rate)}
                 </p>
                 <p className="muted">
-                  포메이션 {ranker.formation || "-"} / 팀컬러 {ranker.team_color || "-"} / 신뢰도 {formatFixed(ranker.reliability, 2)} / {similarRankerSourceLabel(ranker.source)}
+                  포메이션 {ranker.formation || "-"} / 팀컬러 {ranker.team_color || "-"} / 비교 기록 {ranker.match_count}경기 / {similarRankerSourceLabel(ranker.source)}
                 </p>
                 <ul className="list compact muted">
                   {ranker.metric_comparisons.slice(0, 5).map((comparison) => (
                     <li key={`${ranker.ouid}-${comparison.metric_name}`}>
-                      {comparison.metric_label}: 내 값 {formatFixed(comparison.user_value, 3)} / 랭커 {formatFixed(comparison.candidate_value, 3)} / 차이{" "}
-                      {formatDeltaSigned(comparison.gap_value)} ({compareText(comparison.gap_value, comparison.higher_is_better)})
+                      {comparison.metric_label}: 내 값 {formatMetricValue(comparison.metric_name, comparison.user_value)} / 랭커 {formatMetricValue(comparison.metric_name, comparison.candidate_value)} / 차이{" "}
+                      {formatDeltaSigned(comparison.gap_value, comparison.metric_name)} ({compareText(comparison.gap_value, comparison.higher_is_better)})
                     </li>
                   ))}
                 </ul>
@@ -2465,169 +1804,15 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
         </section>
       )}
 
-      {screen === "tracking" && (
-        <section className="grid grid-2">
-          <article className="panel span-2">
-            <h3 className="section-title">평가 실행</h3>
-            <p className="muted">실험 시작 전과 후의 경기 성과를 비교합니다.</p>
-            <div className="notice warn">
-              새 경기를 했다면 <strong>검색/설정에서 다시 진단</strong>한 뒤, 여기서 <strong>평가 갱신</strong>을 누르세요.{" "}
-              {EXPERIMENT_CONTINUITY_NOTICE}
-            </div>
-            <div className="notice ok">
-              {experimentPreviewLoading && "진행 중인 실험을 확인하고 있습니다..."}
-              {!experimentPreviewLoading && !experimentPreview && "아직 진행 중인 실험이 없습니다. 전술 코칭에서 추천을 선택해 실험을 시작하세요."}
-              {!experimentPreviewLoading && experimentPreview && (
-                <>
-                  <strong>진행 중 실험</strong>: {experimentPreview.action_title} (
-                  {ISSUE_LABELS[experimentPreview.action_code] ?? experimentPreview.action_code}) · 시작{" "}
-                  {formatDate(experimentPreview.started_at)} · 최대 {experimentPreview.window_size}경기 기준
-                  {experimentPreview.latest_evaluated_at ? ` · 최근 평가 ${formatDate(experimentPreview.latest_evaluated_at)}` : " · 아직 평가 기록 없음"}
-                </>
-              )}
-            </div>
-            <button className="btn" onClick={onEvaluateExperiment} disabled={loading}>
-              {loading ? "평가 중..." : "평가 갱신"}
-            </button>
-            <p className="muted">평가 시각: {formatDate(evaluation?.evaluated_at)}</p>
-            {evaluation && (
-              <p className="muted">
-                비교 표본: 적용 전 {Number(evaluation.pre_match_count ?? 0)}경기 / 적용 후 {Number(evaluation.post_match_count ?? 0)}경기
-                {" · "}평가 기준 최대 {Number(evaluation.window_size ?? 0)}경기
-                {evaluation.sample_scope === "playable_only" ? " (키보드/패드 기준)" : ""}
-              </p>
-            )}
-            {evaluation?.sync_warning && <div className="notice warn">{evaluation.sync_warning}</div>}
-          </article>
-          {trackingCoach && (
-            <article className="panel span-2">
-              <h3 className="section-title">코치 해석 · 다음 방향</h3>
-              <div className="coach-focus-grid compact">
-                <div className="focus-card primary">
-                  <p className="action-title">핵심 해석</p>
-                  <p className="focus-line">{trackingCoach.headline}</p>
-                  <p className="muted">{trackingCoach.guidance}</p>
-                </div>
-                <div className="focus-card">
-                  <p className="action-title">평가 신뢰도</p>
-                  <p className="focus-line">
-                    {trackingCoach.reliabilityLabel} · <span className={trackingCoach.reliabilityClassName}>{trackingCoach.outcomeLabel}</span>
-                  </p>
-                  <p className="muted">{trackingCoach.reliabilityDetail}</p>
-                </div>
-                <div className="focus-card">
-                  <p className="action-title">다음 추천 실험</p>
-                  <p className="focus-line">{trackingCoach.recommendationTitle}</p>
-                  <p className="muted">{trackingCoach.recommendationDescription}</p>
-                  <p className="muted compact">{trackingCoach.recommendationReason}</p>
-                </div>
-              </div>
-              <div className="tracking-insight-list">
-                {trackingCoach.metricInsights.map((item) => (
-                  <div key={item.key} className={`tracking-insight-item ${item.tone}`}>
-                    <p className="action-title">{item.label}</p>
-                    <p className="focus-line">{item.deltaText}</p>
-                    <p className="muted">{item.comment}</p>
-                  </div>
-                ))}
-              </div>
-            </article>
-          )}
-          <article className="panel">
-            <h3 className="section-title">적용 전·후 요약</h3>
-            <ul className="list">
-              <li>
-                승률: {formatPercent(toKpiValue(evaluation?.pre ?? {}, "win_rate"))} →{" "}
-                {formatPercent(toKpiValue(evaluation?.post ?? {}, "win_rate"))}
-              </li>
-              <li>
-                xG For: {formatFixed(toKpiValue(evaluation?.pre ?? {}, "xg_for"))} →{" "}
-                {formatFixed(toKpiValue(evaluation?.post ?? {}, "xg_for"))}
-              </li>
-              <li>
-                xG Against: {formatFixed(toKpiValue(evaluation?.pre ?? {}, "xg_against"))} →{" "}
-                {formatFixed(toKpiValue(evaluation?.post ?? {}, "xg_against"))}
-              </li>
-              <li>
-                유효슈팅 비율: {formatPercent(toKpiValue(evaluation?.pre ?? {}, "shot_on_target_rate"))} →{" "}
-                {formatPercent(toKpiValue(evaluation?.post ?? {}, "shot_on_target_rate"))}
-              </li>
-            </ul>
-          </article>
-          <article className="panel">
-            <h3 className="section-title">변화량</h3>
-            <ul className="list">
-              <li>승률 Δ: {formatFixed(toKpiValue(evaluation?.delta ?? {}, "win_rate"))}</li>
-              <li>xG For Δ: {formatFixed(toKpiValue(evaluation?.delta ?? {}, "xg_for"))}</li>
-              <li>xG Against Δ: {formatFixed(toKpiValue(evaluation?.delta ?? {}, "xg_against"))}</li>
-              <li>유효슈팅 비율 Δ: {formatFixed(toKpiValue(evaluation?.delta ?? {}, "shot_on_target_rate"))}</li>
-            </ul>
-          </article>
-          <article className="panel span-2">
-            <h3 className="section-title">변화 시각화</h3>
-            {(() => {
-              const preCount = Number(evaluation?.pre_match_count ?? 0);
-              const postCount = Number(evaluation?.post_match_count ?? 0);
-              const preXgFor = toKpiValue(evaluation?.pre ?? {}, "xg_for");
-              const postXgFor = toKpiValue(evaluation?.post ?? {}, "xg_for");
-              const preXgAgainst = toKpiValue(evaluation?.pre ?? {}, "xg_against");
-              const postXgAgainst = toKpiValue(evaluation?.post ?? {}, "xg_against");
-
-              const xgForPerMatchDelta =
-                preCount > 0 && postCount > 0 ? postXgFor / postCount - preXgFor / preCount : toKpiValue(evaluation?.delta ?? {}, "xg_for");
-              const xgAgainstPerMatchDelta =
-                preCount > 0 && postCount > 0
-                  ? postXgAgainst / postCount - preXgAgainst / preCount
-                  : toKpiValue(evaluation?.delta ?? {}, "xg_against");
-
-              const visualItems = [
-                { key: "win_rate", label: "승률 Δ", delta: toKpiValue(evaluation?.delta ?? {}, "win_rate"), scale: 0.2 },
-                { key: "xg_for_per_match", label: "경기당 xG For Δ", delta: xgForPerMatchDelta, scale: 0.6 },
-                { key: "xg_against_per_match", label: "경기당 xG Against Δ(감소 권장)", delta: xgAgainstPerMatchDelta, scale: 0.6, reverse: true },
-                { key: "shot_on_target_rate", label: "유효슈팅 Δ", delta: toKpiValue(evaluation?.delta ?? {}, "shot_on_target_rate"), scale: 0.15 },
-              ];
-
-              return (
-            <div className="visual-metric-list">
-              {visualItems.map((item) => {
-                const directionAdjusted = item.reverse ? -item.delta : item.delta;
-                const normalized = Math.tanh(directionAdjusted / item.scale);
-                const barWidth = Math.abs(normalized) * 50;
-                const left = normalized >= 0 ? 50 : 50 - barWidth;
-                const tone = normalized > 0.08 ? "good" : normalized < -0.08 ? "bad" : "neutral";
-                const toneLabel = tone === "good" ? "개선" : tone === "bad" ? "악화" : "보합";
-                return (
-                  <div key={item.key} className="visual-metric-item">
-                    <div className="visual-metric-head">
-                      <span>{item.label}</span>
-                      <strong>{formatFixed(item.delta, 3)}</strong>
-                    </div>
-                    <div className={`visual-metric-note ${tone}`}>{toneLabel}</div>
-                    <div className="delta-track">
-                      <div className="delta-centerline" />
-                      <div
-                        className={`delta-fill ${tone}`}
-                        style={{
-                          left: `${left}%`,
-                          width: `${barWidth}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-              );
-            })()}
-          </article>
-        </section>
-      )}
+      <div style={{ display: screen === "tracking" ? undefined : "none" }}>
+        <BeforeAfterComparisonPanel initialNickname={nicknameInput} initialMatchType={matchType} />
+      </div>
 
       {screen === "guide" && (
         <GuideScreen
-          hasActions={actions.length > 0}
-          hasExperiment={Boolean(experimentPreview)}
-          onOpenActions={() => goToScreen("actions")}
+          hasAnalysis={Boolean(analysis)}
+          onOpenActions={() => goToScreen(analysis ? "actions" : "search")}
+          onOpenPlayers={() => goToScreen(analysis ? "players" : "search")}
           onOpenTracking={() => goToScreen("tracking")}
           onStartSearch={() => goToScreen("search")}
         />

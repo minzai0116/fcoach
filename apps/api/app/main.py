@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import hashlib
+import json
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -17,19 +19,23 @@ from app.db import (
     save_user_lookup,
     upsert_matches,
 )
-from app.models import AnalysisRunRequest, EventTrackRequest, ExperimentCreateRequest, UserSearchResponse
+from app.models import AnalysisRunRequest, BeforeAfterRequest, EventTrackRequest, ExperimentCreateRequest, UserSearchResponse
 from app.services.analysis import (
     create_experiment,
     evaluate_latest_experiment,
     get_latest_experiment,
     get_latest_actions,
     get_latest_analysis,
+    get_recent_matches,
     run_analysis,
 )
+from app.services.match_review import get_match_review
+from app.services.before_after import run_before_after
 from app.services.cache import CacheClient
 from app.services.analytics_store import get_analytics_summary, record_analytics_event
 from app.services.analysis_utils import normalize_nickname
-from app.services.openapi_client import NexonOpenApiClient, OpenApiRateLimitError
+from app.services.openapi_client import NexonOpenApiClient, OpenApiRateLimitError, UserNotFoundError
+from app.services.squad_feed import SquadFeedError, search_public_feeds, get_public_feed
 from app.services.ranker_source import ensure_official_rankers, fetch_official_rankers, list_official_rankers
 
 
@@ -160,8 +166,14 @@ def _trigger_match_sync_async(ouid: str, match_type: int, desired_matches: int) 
     def _worker() -> None:
         try:
             client = NexonOpenApiClient(timeout_sec=15, retries=2)
-            safe_limit = max(10, min(60, int(desired_matches)))
-            rows = client.collect_match_rows(ouid=key[0], match_type=key[1], limit=safe_limit)
+            completed_target = max(1, min(30, int(desired_matches)))
+            safe_limit = min(100, max(12, completed_target * 3))
+            rows = client.collect_match_rows(
+                ouid=key[0],
+                match_type=key[1],
+                limit=safe_limit,
+                completed_match_target=completed_target,
+            )
             if rows:
                 upsert_matches(ouid=key[0], match_type=key[1], rows=rows)
         except Exception:
@@ -387,6 +399,8 @@ def users_search(request: Request, nickname: str = Query(..., min_length=2)) -> 
         try:
             client = NexonOpenApiClient()
             payload = client.find_user_by_nickname(target_nickname)
+        except UserNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         except OpenApiRateLimitError as exc:
             if cached_lookup and cached_lookup.get("ouid", "").strip():
                 payload = {
@@ -415,9 +429,11 @@ def users_search(request: Request, nickname: str = Query(..., min_length=2)) -> 
                     cache.set_json(cache_key, payload, ttl_sec=cache_ttl)
                     return UserSearchResponse(**payload)
                 raise HTTPException(status_code=429, detail="닉네임 조회 호출이 많아 잠시 제한되었습니다. 1~2분 후 다시 시도해주세요.") from exc
-            raise HTTPException(status_code=status_code, detail=f"user search failed: {exc}") from exc
+            raise HTTPException(status_code=502, detail="넥슨의 닉네임 조회 서비스에 연결하지 못했습니다. 잠시 후 다시 시도해주세요.") from exc
+        except requests.Timeout as exc:
+            raise HTTPException(status_code=504, detail="닉네임 조회 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.") from exc
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"user search failed: {exc}") from exc
+            raise HTTPException(status_code=502, detail="닉네임을 조회하지 못했습니다. 잠시 후 다시 시도해주세요.") from exc
 
         finally:
             cache.release_lock(distributed_lock_key, distributed_lock_token)
@@ -427,15 +443,57 @@ def users_search(request: Request, nickname: str = Query(..., min_length=2)) -> 
         return UserSearchResponse(**payload)
 
 
+@app.get('/matches/recent')
+def recent_matches(request: Request, ouid: str = Query(..., min_length=8), match_type: int = Query(60)) -> dict:
+    _enforce_rate_limit(request, scope='recent_matches', max_requests=12, window_sec=60)
+    if match_type not in (50, 60, 52):
+        raise HTTPException(status_code=400, detail='지원하는 경기 모드를 선택해주세요.')
+    return get_recent_matches(ouid, match_type)
+
+
+@app.get('/matches/{match_id}/review')
+def match_review(request: Request, match_id: str, ouid: str = Query(..., min_length=8), match_type: int = Query(60)) -> dict:
+    _enforce_rate_limit(request, scope='match_review', max_requests=40, window_sec=60)
+    if match_type not in (50, 60, 52) or len(match_id) > 100:
+        raise HTTPException(status_code=400, detail='지원하는 경기와 모드를 선택해주세요.')
+    try:
+        return get_match_review(ouid, match_type, match_id)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.get('/squad-feeds')
+def squad_feeds(request: Request, nickname: str = Query(..., min_length=2, max_length=100), page: int = Query(1, ge=1, le=20)) -> dict:
+    _enforce_rate_limit(request, scope='squad_feeds', max_requests=20, window_sec=60)
+    try:
+        return search_public_feeds(nickname, page)
+    except SquadFeedError as error:
+        raise HTTPException(status_code=error.status_code, detail=str(error)) from error
+
+
+@app.get('/squad-feeds/{feed_id}')
+def squad_feed_detail(request: Request, feed_id: str) -> dict:
+    _enforce_rate_limit(request, scope='squad_feed_detail', max_requests=20, window_sec=60)
+    try:
+        return get_public_feed(feed_id)
+    except SquadFeedError as error:
+        raise HTTPException(status_code=error.status_code, detail=str(error)) from error
+
+
 @app.post("/analysis/run")
 def analysis_run(request: Request, req: AnalysisRunRequest) -> dict[str, Any]:
     _enforce_rate_limit(request, scope="analysis_run", max_requests=8, window_sec=60)
-    cache_key = f"latest_analysis:{req.ouid}:{req.match_type}:{req.window}"
+    cache_key = f"latest_analysis:empirical_v4:{req.ouid}:{req.match_type}:{req.window}"
+    request_fingerprint = hashlib.sha256(
+        json.dumps(req.model_dump(), sort_keys=True, ensure_ascii=True).encode()
+    ).hexdigest()
     lock_key = f"lock:analysis_run:{req.ouid}:{req.match_type}:{req.window}"
     lock_token = cache.acquire_lock(lock_key, ttl_sec=60)
     if lock_token is None:
         cached = cache.get_json(cache_key)
-        if cached:
+        if cached and cached.get("request_fingerprint") == request_fingerprint:
             cached["refresh_warning"] = "동일한 분석이 처리 중이라 최근 분석 결과를 먼저 보여줍니다."
             return cached
         raise HTTPException(status_code=429, detail="동일한 분석이 처리 중입니다. 잠시 후 다시 시도해주세요.")
@@ -443,44 +501,50 @@ def analysis_run(request: Request, req: AnalysisRunRequest) -> dict[str, Any]:
         result = run_analysis(
             ouid=req.ouid,
             match_type=int(req.match_type),
-            window_size=int(req.window),
+            window_size=req.window,
             current_tactic=req.current_tactic,
             manual_refresh_probe=True,
+            squad_feed_id=req.squad_feed_id,
+            include_forfeit_wins=req.include_forfeit_wins,
+            include_forfeit_losses=req.include_forfeit_losses,
+            start_match_id=req.start_match_id,
+            end_match_id=req.end_match_id,
         )
-        if int(result.get("sample_count", 0)) <= 0:
-            retry = run_analysis(
-                ouid=req.ouid,
-                match_type=int(req.match_type),
-                window_size=int(req.window),
-                current_tactic=req.current_tactic,
-                force_bootstrap_sync=True,
-                manual_refresh_probe=True,
-            )
-            if int(retry.get("sample_count", 0)) > 0:
-                result = retry
-        else:
-            _trigger_match_sync_async(
-                ouid=req.ouid,
-                match_type=int(req.match_type),
-                desired_matches=max(int(req.window), 12),
-            )
+        _trigger_match_sync_async(
+            ouid=req.ouid,
+            match_type=int(req.match_type),
+            desired_matches=max(req.window or 30, 12),
+        )
+        result["request_fingerprint"] = request_fingerprint
         cache.set_json(
             cache_key,
             result,
             ttl_sec=_analysis_cache_ttl_sec(),
         )
         return result
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     finally:
         cache.release_lock(lock_key, lock_token)
+
+
+@app.post('/analysis/compare')
+def analysis_compare(request: Request, req: BeforeAfterRequest) -> dict:
+    _enforce_rate_limit(request, scope='analysis_compare', max_requests=10, window_sec=60)
+    try:
+        return run_before_after(req.ouid, int(req.match_type), req.before_match_ids, req.after_match_ids,
+                                include_forfeit_wins=req.include_forfeit_wins, include_forfeit_losses=req.include_forfeit_losses)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @app.get("/analysis/latest")
 def analysis_latest(
     ouid: str,
     match_type: int = Query(..., ge=1),
-    window: int = Query(30, ge=5),
+    window: int = Query(30, ge=0),
 ) -> dict[str, Any]:
-    cache_key = f"latest_analysis:{ouid}:{match_type}:{window}"
+    cache_key = f"latest_analysis:empirical_v4:{ouid}:{match_type}:{window}"
     cached = cache.get_json(cache_key)
     if cached:
         return cached

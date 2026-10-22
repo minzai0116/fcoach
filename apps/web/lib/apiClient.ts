@@ -143,7 +143,7 @@ export async function requestApi<T>(path: string, init?: RequestInit, options?: 
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      const detail = typeof body.detail === "string" ? body.detail : `HTTP ${res.status}`;
+      const detail = typeof body.detail === "string" ? body.detail : res.status === 422 ? "입력한 내용을 확인해주세요. 닉네임과 경기 선택을 다시 확인해주세요." : "요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.";
       throw new Error(detail);
     }
     return (await res.json()) as T;
@@ -151,6 +151,7 @@ export async function requestApi<T>(path: string, init?: RequestInit, options?: 
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new Error("요청 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.");
     }
+    if (error instanceof TypeError) throw new Error("서비스에 연결하지 못했습니다. 잠시 후 다시 시도해주세요.");
     throw error;
   } finally {
     clearTimeout(timeoutId);

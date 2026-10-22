@@ -45,6 +45,8 @@ def purge_stale_nexon_api_data(days: int | None = None) -> dict[str, int | str]:
         lookups_deleted = max(0, cur.rowcount)
         cur.execute("DELETE FROM official_rankers WHERE fetched_at < ?", (cutoff,))
         rankers_deleted = max(0, cur.rowcount)
+        cur.execute("UPDATE user_metrics_snapshot SET coaching_json = NULL WHERE created_at < ? AND coaching_json IS NOT NULL", (cutoff,))
+        cur.execute("UPDATE user_metrics_snapshot SET analysis_json = NULL WHERE created_at < ? AND analysis_json IS NOT NULL", (cutoff,))
     return {
         "cutoff": cutoff,
         "matches_raw": matches_deleted,
@@ -111,6 +113,7 @@ def init_db() -> None:
       xg_against REAL NOT NULL,
       issue_scores_json TEXT NOT NULL,
       kpis_json TEXT NOT NULL,
+      coaching_json TEXT,
       created_at TEXT NOT NULL
     );
 
@@ -230,6 +233,11 @@ def init_db() -> None:
     """
     with db_cursor() as cur:
         cur.executescript(schema)
+        columns = {row[1] for row in cur.execute("PRAGMA table_info(user_metrics_snapshot)")}
+        if "coaching_json" not in columns:
+            cur.execute("ALTER TABLE user_metrics_snapshot ADD COLUMN coaching_json TEXT")
+        if "analysis_json" not in columns:
+            cur.execute("ALTER TABLE user_metrics_snapshot ADD COLUMN analysis_json TEXT")
         cur.execute(
             """
             DELETE FROM matches_raw

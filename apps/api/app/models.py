@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -11,8 +11,13 @@ MatchType = Literal[50, 60, 52]
 class AnalysisRunRequest(BaseModel):
     ouid: str = Field(min_length=8)
     match_type: MatchType
-    window: Literal[5, 10, 30] = 30
+    window: Literal[5, 10, 30] | None = 30
     current_tactic: dict[str, Any] | None = None
+    squad_feed_id: str | None = Field(default=None, pattern=r'^[A-Za-z0-9]{8,32}$')
+    include_forfeit_wins: bool = False
+    include_forfeit_losses: bool = False
+    start_match_id: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_-]{8,128}$')
+    end_match_id: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_-]{8,128}$')
 
 
 class ExperimentCreateRequest(BaseModel):
@@ -24,6 +29,15 @@ class ExperimentCreateRequest(BaseModel):
     started_at: str | None = None
     ended_at: str | None = None
     notes: str | None = None
+
+
+class BeforeAfterRequest(BaseModel):
+    ouid: str = Field(min_length=8)
+    match_type: MatchType
+    before_match_ids: list[Annotated[str, Field(pattern=r'^[A-Za-z0-9_-]{8,128}$')]] = Field(min_length=1, max_length=200)
+    after_match_ids: list[Annotated[str, Field(pattern=r'^[A-Za-z0-9_-]{8,128}$')]] = Field(min_length=1, max_length=200)
+    include_forfeit_wins: bool = False
+    include_forfeit_losses: bool = False
 
 
 class UserSearchResponse(BaseModel):

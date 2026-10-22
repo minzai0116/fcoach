@@ -1,11 +1,11 @@
-import type { MatchType, ScreenKey, WindowSize } from "../types/analysis";
+import type { MatchType, ScreenKey } from "../types/analysis";
 
 export const SCREEN_LABELS: Record<ScreenKey, string> = {
   search: "검색/설정",
   diagnosis: "진단 대시보드",
-  players: "선수 리포트",
-  habits: "습관 분석",
-  actions: "전술 코칭",
+  players: "선수·플레이 분석",
+  habits: "선수·플레이 분석",
+  actions: "전술 처방",
   rankers: "랭커 분석",
   tracking: "개선 추적",
   guide: "이용 가이드",
@@ -15,11 +15,10 @@ export const SCREEN_FLOW: { key: ScreenKey; icon: string; hint: string }[] = [
   { key: "guide", icon: "📘", hint: "서비스 활용법" },
   { key: "search", icon: "🔎", hint: "대상/옵션 선택" },
   { key: "diagnosis", icon: "📊", hint: "핵심 지표 진단" },
-  { key: "players", icon: "🧾", hint: "선수별 성과 분석" },
-  { key: "habits", icon: "🧩", hint: "문제 습관 분해" },
-  { key: "actions", icon: "🎯", hint: "맞춤 전술 추천" },
+  { key: "players", icon: "⚽", hint: "포메이션·경기 기록" },
+  { key: "actions", icon: "🎯", hint: "바꿀 설정·플레이" },
   { key: "rankers", icon: "🏅", hint: "랭커 비교 분석" },
-  { key: "tracking", icon: "📈", hint: "적용 효과 검증" },
+  { key: "tracking", icon: "📈", hint: "선택한 경기 전후 비교" },
 ];
 
 export const MATCH_LABELS: Record<MatchType, string> = {
@@ -29,31 +28,30 @@ export const MATCH_LABELS: Record<MatchType, string> = {
 };
 
 export const MATCH_TYPE_OPTIONS: MatchType[] = [50, 60];
-export const WINDOW_OPTIONS: WindowSize[] = [5, 10, 30];
 
 export const ISSUE_LABELS: Record<string, string> = {
   HIGH_LATE_CONCEDE: "후반 실점 리스크",
-  LOW_FINISHING: "마무리 효율 저하",
-  POOR_SHOT_SELECTION: "슈팅 선택 품질 저하",
+  LOW_FINISHING: "득점 전환율 하락",
+  POOR_SHOT_SELECTION: "유효 슈팅 비율 하락",
   OFFSIDE_RISK: "오프사이드 빈도 리스크",
-  BUILDUP_INEFFICIENCY: "빌드업 효율 저하",
-  DEFENSE_DUEL_WEAKNESS: "수비 경합 약세",
+  BUILDUP_INEFFICIENCY: "패스 성공률 하락",
+  DEFENSE_DUEL_WEAKNESS: "태클 성공률 하락",
   CHANCE_CREATION_LOW: "찬스 생성량 저하",
   POSSESSION_CONTROL_RISK: "점유 안정성 리스크",
-  INSUFFICIENT_DATA: "표본 부족",
+  INSUFFICIENT_DATA: "기록 확인",
   MAINTAIN_PERFORMANCE: "유지 권장",
 };
 
 export const ISSUE_DETAIL: Record<string, string> = {
-  HIGH_LATE_CONCEDE: "후반 집중력/수비 라인 안정화가 필요합니다.",
-  LOW_FINISHING: "기대득점 대비 실제 득점이 낮아 마무리 개선이 필요합니다.",
-  POOR_SHOT_SELECTION: "낮은 기대값 슈팅 비중이 높습니다.",
+  HIGH_LATE_CONCEDE: "실점 시간대와 수비 간격을 함께 확인하세요.",
+  LOW_FINISHING: "이전 정상 종료 경기보다 득점 전환율이 낮아졌습니다. 슈팅 위치와 종류를 함께 확인하세요.",
+  POOR_SHOT_SELECTION: "이전 정상 종료 경기보다 유효 슈팅 비율이 낮아졌습니다. 슈팅 각도와 시도 수를 함께 확인하세요.",
   OFFSIDE_RISK: "오프사이드 발생 빈도가 높습니다. 침투/패스 시도 빈도 조정이 필요합니다.",
-  BUILDUP_INEFFICIENCY: "패스/스루패스 연결 효율이 낮아 전개 안정화가 필요합니다.",
-  DEFENSE_DUEL_WEAKNESS: "1차 수비 경합에서 밀리고 있어 수비 구조 보완이 필요합니다.",
+  BUILDUP_INEFFICIENCY: "이전 정상 종료 경기보다 패스 성공률이 낮아졌습니다. 패스 종류별 시도와 실패 수를 확인하세요.",
+  DEFENSE_DUEL_WEAKNESS: "이전 정상 종료 경기보다 태클 성공률이 낮아졌습니다. 상대 슈팅과 실점도 함께 확인하세요.",
   CHANCE_CREATION_LOW: "경기당 슈팅·xG 생성량이 낮아 공격 전개 볼륨 보강이 필요합니다.",
   POSSESSION_CONTROL_RISK: "점유 안정성이 낮아 공격 전환 전에 볼 순환 품질 개선이 필요합니다.",
-  INSUFFICIENT_DATA: "최소 5경기 이상 데이터가 필요합니다.",
+  INSUFFICIENT_DATA: "현재 경기 기록을 확인하세요.",
   MAINTAIN_PERFORMANCE: "현재 전술을 유지하면서 동일 조건에서 추가 표본을 수집하세요.",
 };
 
@@ -71,7 +69,7 @@ export const TACTIC_DIRECTION_KO: Record<string, string> = {
 };
 
 export const METRIC_LABEL_KO: Record<string, string> = {
-  late_concede_ratio: "후반 실점 비율(낮을수록 좋음)",
+  late_concede_ratio: "60분 이후 실점 비중",
   goals_per_sot: "유효슈팅 대비 득점률(높을수록 좋음)",
   in_box_shot_ratio: "박스 안 슈팅 비중(높을수록 좋음)",
   shot_on_target_rate: "유효슈팅 비율(높을수록 좋음)",
@@ -87,6 +85,8 @@ export const METRIC_LABEL_KO: Record<string, string> = {
 };
 
 export const BENCHMARK_SOURCE_LABEL: Record<string, string> = {
+  own_history_v1: "내 이전 정상 종료 경기",
+  unavailable: "비교 기록 없음",
   official_rank_1vs1: "공식 랭킹(1vs1)",
   ranker_proxy_v1: "기본 기준(공식 랭커 매핑 전)",
   top_cohort_v1: "수집 데이터 상위권 코호트",
