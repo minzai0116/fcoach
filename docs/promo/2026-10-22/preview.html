@@ -1,0 +1,42 @@
+<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FCOACH 게시글 미리보기</title><style>body{margin:0;background:#f3f6fb;color:#162d48;font:16px/1.8 system-ui,sans-serif}main{max-width:980px;margin:32px auto;padding:0 20px}article{background:white;padding:32px;border:1px solid #d9e3f1;border-radius:16px;margin:24px 0}h1{font-size:26px;line-height:1.5}h2{font-size:22px}h3{font-size:19px;margin-top:32px}a{color:#215be0}nav{display:flex;gap:20px;flex-wrap:wrap}figure{margin:24px 0}img{display:block;max-width:100%;max-height:900px;object-fit:contain;margin:auto}figcaption{font-size:14px;text-align:center;color:#53647d}p{white-space:normal}@media(max-width:600px){article{padding:18px}main{margin:16px auto}h1{font-size:22px}}</style><main><h1>FCOACH 게시용 자료</h1><nav><a href="#nexon-openapi-post">넥슨 Open API용</a><a href="#community-post">커뮤니티용</a><a href="patch-notes.md">전체 패치노트</a></nav><article id="nexon-openapi-post"><h1>FCOACH 업데이트: 선수별 코칭·공개 스쿼드 연결·경기 전후 비교</h1>
+<p>안녕하세요. FC온라인 경기 기록 분석 서비스 <strong>FCOACH</strong>를 업데이트했습니다.</p>
+<p><strong>서비스 바로가기: <a href="https://fcoach.fun">https://fcoach.fun</a></strong></p>
+<p>이번에는 기록을 읽는 과정과 실제로 바꿔볼 플레이를 찾는 흐름을 중심으로 개선했습니다.</p>
+<h3>1. 포메이션에서 선수별 기록 확인</h3>
+<p>경기장 위 선수를 선택하면 해당 시즌·강화·포지션의 기록과 코칭을 볼 수 있습니다. 골키퍼는 선방·배급 등 역할에 맞는 지표를 제공합니다. PC에서는 좌우 화면으로, 모바일에서는 선수 선택 후 상세 보기로 확인합니다.</p>
+<figure><img src="screenshots/01-player-analysis-pc.png" alt="포메이션과 선수별 기록"><figcaption>포메이션과 선수별 기록</figcaption></figure>
+<h3>2. 공개 스쿼드의 설정 연결</h3>
+<p>닉네임의 공식 스쿼드메이커 공개 피드 하나를 선택하면 저장된 전술·특성·훈련코치와 경기 기록을 함께 볼 수 있습니다. 특성과 훈련코치는 아이콘으로 표시합니다. 피드와 경기의 선수·강화·자리가 다르거나 제공되지 않은 값은 구분합니다.</p>
+<figure><img src="screenshots/02-player-settings.png" alt="선수 특성과 훈련코치"><figcaption>선수 특성과 훈련코치</figcaption></figure>
+<h3>3. 패스·슈팅·수비 세부 분석</h3>
+<p>패스 종류별 성공률과 사용·실패 비중, 슈팅 종류·위치, 태클·블록·드리블·경합 기록을 나눠 보여줍니다. 슈팅 점을 선택하면 누가 언제 슈팅했는지도 확인할 수 있습니다. 현재 수치와 이전 경기 대비 변화를 구분해 플레이 선택지를 제안합니다.</p>
+<figure><img src="screenshots/03-team-passing.png" alt="패스 유형별 기록"><figcaption>패스 유형별 기록</figcaption></figure>
+<h3>4. 원하는 경기로 개선 전후 비교</h3>
+<p>분석 시작·종료 경기를 직접 고르고, 개선 추적에서는 비교할 경기를 ‘개선 전’과 ‘개선 후’로 나눕니다. 경기 수가 달라도 경기당 평균과 성공 합계/시도 합계로 비교하며, 수치 변화와 유지·보완할 플레이를 함께 보여줍니다.</p>
+<figure><img src="screenshots/04-before-after.png" alt="선택한 경기의 전후 비교"><figcaption>선택한 경기의 전후 비교</figcaption></figure>
+<h3>5. 모바일과 조회 안내 개선</h3>
+<p>포메이션의 시즌·강화 표시와 선수 상세 이동을 다듬었습니다. 없는 닉네임, 해당 모드의 경기 내역 없음, 조회 실패도 구분해서 안내합니다.</p>
+<figure><img src="screenshots/05-mobile-formation.png" alt="모바일 포메이션"><figcaption>모바일 포메이션</figcaption></figure>
+<p>경기 데이터는 <strong>Nexon Open API</strong>, 스쿼드 설정과 랭킹은 <strong>FC온라인 공식 홈페이지의 공개 정보</strong>를 활용합니다. 공개 피드는 저장된 설정이며 경기 당시 사용 여부나 특성·코치 발동을 확인하는 기능은 아닙니다. API에 없는 전진 패스 방향은 추정하지 않으며, 전후 수치 변화만으로 전술이나 코치의 효과를 단정하지 않습니다.</p>
+<p>직접 사용해보시고 이해하기 어려운 지표나 불편한 화면이 있다면 의견 부탁드립니다.</p>
+<p>감사합니다.</p>
+<p>※ 넥슨의 공식 서비스가 아닌 개인 개발 서비스입니다. API 반영 시점·점검·호출 제한에 따라 조회 가능한 기록이 달라질 수 있습니다.</p></article><article id="community-post"><h1>[업데이트] 닉네임으로 선수별 기록과 경기 전후를 비교하는 FCOACH 업데이트했습니다</h1>
+<p>안녕하세요. FC온라인 경기 기록을 분석해주는 <strong>FCOACH</strong>를 개발하고 있습니다.</p>
+<p><strong>주소: <a href="https://fcoach.fun">https://fcoach.fun</a></strong></p>
+<p>이번에 선수별 분석과 모바일 화면, 경기 전후 비교를 업데이트해서 소개드립니다.</p>
+<p><strong>선수를 눌러서 기록을 볼 수 있습니다.</strong></p>
+<p>포메이션에서 선수를 선택하면 패스·슈팅·태클 등 해당 선수의 기록과 플레이 제안을 볼 수 있습니다. 시즌과 강화도 함께 표시하고, 골키퍼는 선방·배급 기록을 따로 보여줍니다.</p>
+<figure><img src="screenshots/01-player-analysis-pc.png" alt="포메이션에서 선수 선택"><figcaption>포메이션에서 선수 선택</figcaption></figure>
+<p><strong>공개 스쿼드를 연결할 수 있습니다.</strong></p>
+<p>닉네임의 공식 스쿼드메이커 공개 피드를 선택하면 저장해둔 전술·특성·훈련코치도 함께 확인할 수 있습니다. 피드 연결 없이 경기 기록만 분석하는 것도 가능합니다.</p>
+<figure><img src="screenshots/02-player-settings.png" alt="특성과 훈련코치 확인"><figcaption>특성과 훈련코치 확인</figcaption></figure>
+<p><strong>원하는 경기끼리 전후 비교가 가능합니다.</strong></p>
+<p>경기를 ‘개선 전’과 ‘개선 후’로 직접 나누면 패스·슈팅·수비 수치가 얼마나 변했는지, 어떤 플레이를 유지하고 보완하면 좋을지 볼 수 있습니다. 경기별로 상대 기록과 비교하는 화면도 넣었습니다.</p>
+<figure><img src="screenshots/04-before-after.png" alt="개선 전후 수치 비교"><figcaption>개선 전후 수치 비교</figcaption></figure>
+<p><strong>모바일에서도 사용할 수 있습니다.</strong></p>
+<p>포메이션에서 선수 선택 → 자세히 보기 → 뒤로가기로 확인할 수 있습니다. 슈팅 위치를 누르면 슈팅한 선수도 나옵니다.</p>
+<figure><img src="screenshots/05-mobile-formation.png" alt="모바일 포메이션"><figcaption>모바일 포메이션</figcaption></figure>
+<p>사용 방법은 닉네임 입력 → 경기 목록 불러오기 → 분석할 시작·종료 경기 선택 → 경기 진단 시작 순서입니다. 공식경기와 공식 친선을 지원하고, 몰수승·몰수패 포함 여부도 고를 수 있습니다.</p>
+<p>기록으로 확인되는 수치와 선수의 역할을 바탕으로 플레이 선택지를 제안하는 방식입니다. 공개 피드는 저장된 설정이므로 과거 경기에서도 같은 설정을 썼는지나 코치·특성이 발동했는지까지 확인하지는 않습니다.</p>
+<p>직접 써보시고 불편한 점이나 추가로 보고 싶은 지표가 있으면 편하게 말씀 부탁드립니다. 감사합니다!</p>
+<p>※ Nexon Open API 등을 활용한 비공식 개인 개발 서비스입니다. 조회 시점과 API 상태에 따라 최근 경기 반영이 늦어질 수 있습니다.</p></article></main></html>
