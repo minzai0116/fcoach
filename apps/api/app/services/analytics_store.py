@@ -7,13 +7,13 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from app.analytics_schema import EVENT_USER_NAMES, FAILURE_EVENTS, measurement_metadata, usage_summary
 from app.db import get_analytics_summary as get_sqlite_analytics_summary
 from app.db import insert_analytics_event as insert_sqlite_analytics_event
 
 
 _PREFIX = "fcoach:analytics:v1"
-_FAILURE_EVENTS = {"search_user_failed", "run_analysis_failed", "adopt_action_failed"}
-_FUNNEL_EVENTS = ("search_user", "run_analysis", "adopt_action", "view_evaluation")
+_FAILURE_EVENTS = frozenset(FAILURE_EVENTS)
 
 
 def _ttl_sec() -> int:
@@ -92,6 +92,7 @@ class RedisAnalyticsStore:
         users_key = f"{_PREFIX}:users:{bucket}"
         event_users_key = f"{_PREFIX}:event_users:{event_name}:{bucket}"
         paths_key = f"{_PREFIX}:paths:{bucket}"
+        hosts_key = f"{_PREFIX}:page_hosts:{bucket}"
         failures_key = f"{_PREFIX}:failures:{bucket}"
         ttl = _ttl_sec()
         try:
@@ -107,6 +108,8 @@ class RedisAnalyticsStore:
             if event_name == "page_view":
                 pipe.hincrby(paths_key, (path or "/")[:255], 1)
                 pipe.expire(paths_key, ttl)
+                pipe.hincrby(hosts_key, str((properties or {}).get("hostname") or "unknown")[:255], 1)
+                pipe.expire(hosts_key, ttl)
             if event_name in _FAILURE_EVENTS:
                 payload = {
                     "event_name": event_name,
@@ -134,20 +137,36 @@ class RedisAnalyticsStore:
         since = now - timedelta(hours=safe_hours)
         event_counts: Counter[str] = Counter()
         path_counts: Counter[str] = Counter()
+        host_counts: Counter[str] = Counter()
         users: set[str] = set()
-        event_users: dict[str, set[str]] = {event_name: set() for event_name in _FUNNEL_EVENTS}
+        event_users: dict[str, set[str]] = {event_name: set() for event_name in EVENT_USER_NAMES}
         failures: list[dict[str, Any]] = []
         try:
-            for bucket in _hour_buckets(since, now):
-                event_counts.update({key: int(value) for key, value in self._redis.hgetall(f"{_PREFIX}:events:{bucket}").items()})
-                path_counts.update({key or "/": int(value) for key, value in self._redis.hgetall(f"{_PREFIX}:paths:{bucket}").items()})
-                users.update(self._redis.smembers(f"{_PREFIX}:users:{bucket}"))
-                for event_name in _FUNNEL_EVENTS:
-                    event_users[event_name].update(self._redis.smembers(f"{_PREFIX}:event_users:{event_name}:{bucket}"))
-                for raw in self._redis.lrange(f"{_PREFIX}:failures:{bucket}", 0, safe_limit * 2):
-                    parsed = _safe_json(raw)
-                    if parsed and str(parsed.get("created_at", "")) >= since.isoformat():
-                        failures.append(parsed)
+            buckets = _hour_buckets(since, now)
+            # 24시간씩 묶어 왕복을 줄이고 30일 조회의 응답 메모리도 제한한다.
+            for start in range(0, len(buckets), 24):
+                batch = buckets[start:start + 24]
+                pipe = self._redis.pipeline(transaction=False)
+                for bucket in batch:
+                    pipe.hgetall(f"{_PREFIX}:events:{bucket}")
+                    pipe.hgetall(f"{_PREFIX}:paths:{bucket}")
+                    pipe.hgetall(f"{_PREFIX}:page_hosts:{bucket}")
+                    pipe.smembers(f"{_PREFIX}:users:{bucket}")
+                    for event_name in EVENT_USER_NAMES:
+                        pipe.smembers(f"{_PREFIX}:event_users:{event_name}:{bucket}")
+                    pipe.lrange(f"{_PREFIX}:failures:{bucket}", 0, safe_limit * 2)
+                responses = iter(pipe.execute())
+                for _ in batch:
+                    event_counts.update({key: int(value) for key, value in next(responses).items()})
+                    path_counts.update({key or "/": int(value) for key, value in next(responses).items()})
+                    host_counts.update({key: int(value) for key, value in next(responses).items()})
+                    users.update(next(responses))
+                    for event_name in EVENT_USER_NAMES:
+                        event_users[event_name].update(next(responses))
+                    for raw in next(responses):
+                        parsed = _safe_json(raw)
+                        if parsed and str(parsed.get("created_at", "")) >= since.isoformat():
+                            failures.append(parsed)
         except Exception:
             self._redis = None
             return get_sqlite_analytics_summary(hours=hours, limit=limit)
@@ -163,10 +182,19 @@ class RedisAnalyticsStore:
         search_to_analysis_users = search_users & analysis_users
         analysis_to_experiment_users = analysis_users & experiment_users
         experiment_to_evaluation_users = experiment_users & evaluation_users
+        unclassified_views = event_counts.get("page_view", 0) - sum(host_counts.values())
+        if unclassified_views > 0:
+            host_counts["unknown"] += unclassified_views
         return {
             "hours": safe_hours,
             "since": since.isoformat(),
+            "bucket_since": since.replace(minute=0, second=0, microsecond=0).isoformat(),
+            "until": now.isoformat(),
+            "time_zone": "UTC",
+            "aggregation": "hour_buckets",
             "source": "redis",
+            "measurement": measurement_metadata(),
+            **usage_summary(event_counts, {name: len(ids) for name, ids in event_users.items()}),
             "total_events": int(sum(event_counts.values())),
             "unique_users": len(users),
             "new_visitors": new_visitors,
@@ -176,6 +204,7 @@ class RedisAnalyticsStore:
                 {"event_name": event_name, "count": count}
                 for event_name, count in event_counts.most_common(safe_limit)
             ],
+            "event_counts": dict(event_counts),
             "event_users": [
                 {"event_name": event_name, "unique_users": len(users_for_event)}
                 for event_name, users_for_event in event_users.items()
@@ -196,6 +225,7 @@ class RedisAnalyticsStore:
                 {"path": path or "/", "count": count}
                 for path, count in path_counts.most_common(safe_limit)
             ],
+            "page_view_hosts": [{"hostname": host, "count": count} for host, count in host_counts.most_common()],
             "recent_failures": failures[:safe_limit],
         }
 

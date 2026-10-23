@@ -9,6 +9,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
+from app.analytics_schema import EVENT_USER_NAMES, FAILURE_EVENTS, measurement_metadata, usage_summary
+
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 DEFAULT_DB_PATH = BASE_DIR / "data" / "habit_lab.sqlite3"
@@ -415,7 +417,8 @@ def _safe_json_object(raw: str | None) -> dict[str, Any]:
 def get_analytics_summary(hours: int = 24, limit: int = 20) -> dict[str, Any]:
     safe_hours = max(1, min(24 * 30, int(hours)))
     safe_limit = max(1, min(100, int(limit)))
-    since = (datetime.now(timezone.utc) - timedelta(hours=safe_hours)).isoformat()
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(hours=safe_hours)).isoformat()
     with db_cursor() as cur:
         cur.execute(
             """
@@ -424,27 +427,18 @@ def get_analytics_summary(hours: int = 24, limit: int = 20) -> dict[str, Any]:
             WHERE created_at >= ?
             GROUP BY event_name
             ORDER BY event_count DESC
-            LIMIT ?
-            """,
-            (since, safe_limit),
-        )
-        event_rows = cur.fetchall()
-        cur.execute(
-            """
-            SELECT event_name, COUNT(*) AS event_count
-            FROM analytics_events
-            WHERE created_at >= ? AND event_name IN ('visitor_first_seen', 'visitor_return')
-            GROUP BY event_name
             """,
             (since,),
         )
-        event_counts = {str(row["event_name"]): int(row["event_count"]) for row in cur.fetchall()}
+        event_rows = cur.fetchall()
+        event_counts = {str(row["event_name"]): int(row["event_count"]) for row in event_rows}
         new_visitors = event_counts.get("visitor_first_seen", 0)
         returning_visitors = event_counts.get("visitor_return", 0)
         visitor_lifecycle_events = new_visitors + returning_visitors
         cur.execute(
             """
-            SELECT COUNT(*) AS total_events, COUNT(DISTINCT distinct_id) AS unique_users
+            SELECT COUNT(*) AS total_events,
+                   COUNT(DISTINCT COALESCE(NULLIF(distinct_id, ''), NULLIF(session_id, ''))) AS unique_users
             FROM analytics_events
             WHERE created_at >= ?
             """,
@@ -464,20 +458,42 @@ def get_analytics_summary(hours: int = 24, limit: int = 20) -> dict[str, Any]:
         )
         page_rows = cur.fetchall()
         cur.execute(
-            """
+            """SELECT COALESCE(json_extract(properties_json, '$.hostname'), 'unknown') AS hostname, COUNT(*) AS count
+               FROM analytics_events WHERE created_at >= ? AND event_name = 'page_view' GROUP BY hostname""",
+            (since,),
+        )
+        host_rows = cur.fetchall()
+        cur.execute(
+            f"""SELECT event_name, COUNT(*) AS event_count,
+                       COUNT(DISTINCT COALESCE(NULLIF(distinct_id, ''), NULLIF(session_id, ''))) AS unique_users
+                FROM analytics_events WHERE created_at >= ? AND event_name IN ({','.join('?' for _ in EVENT_USER_NAMES)})
+                GROUP BY event_name""",
+            (since, *EVENT_USER_NAMES),
+        )
+        user_rows = cur.fetchall()
+        event_counts.update({str(row["event_name"]): int(row["event_count"]) for row in user_rows})
+        event_users = {str(row["event_name"]): int(row["unique_users"]) for row in user_rows}
+        cur.execute(
+            f"""
             SELECT event_name, path, screen, properties_json, created_at
             FROM analytics_events
             WHERE created_at >= ?
-              AND event_name IN ('search_user_failed', 'run_analysis_failed', 'adopt_action_failed')
+              AND event_name IN ({','.join('?' for _ in FAILURE_EVENTS)})
             ORDER BY created_at DESC
             LIMIT ?
             """,
-            (since, safe_limit),
+            (since, *FAILURE_EVENTS, safe_limit),
         )
         failure_rows = cur.fetchall()
     return {
         "hours": safe_hours,
         "since": since,
+        "until": now.isoformat(),
+        "time_zone": "UTC",
+        "aggregation": "exact_timestamps",
+        "source": "sqlite",
+        "measurement": measurement_metadata(),
+        **usage_summary(event_counts, event_users),
         "total_events": int(aggregate["total_events"]) if aggregate else 0,
         "unique_users": int(aggregate["unique_users"]) if aggregate else 0,
         "new_visitors": new_visitors,
@@ -488,8 +504,9 @@ def get_analytics_summary(hours: int = 24, limit: int = 20) -> dict[str, Any]:
                 "event_name": str(row["event_name"]),
                 "count": int(row["event_count"]),
             }
-            for row in event_rows
+            for row in event_rows[:safe_limit]
         ],
+        "event_counts": event_counts,
         "page_views": [
             {
                 "path": str(row["path"] or "/"),
@@ -497,6 +514,8 @@ def get_analytics_summary(hours: int = 24, limit: int = 20) -> dict[str, Any]:
             }
             for row in page_rows
         ],
+        "page_view_hosts": [{"hostname": row["hostname"], "count": int(row["count"])} for row in host_rows],
+        "event_users": [{"event_name": name, "unique_users": event_users.get(name, 0)} for name in EVENT_USER_NAMES],
         "recent_failures": [
             {
                 "event_name": str(row["event_name"] or ""),

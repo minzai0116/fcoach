@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { requestApi } from "../../lib/apiClient";
+import { analyticsError, trackEvent } from "../../lib/analytics";
 import { MATCH_LABELS, MATCH_TYPE_OPTIONS } from "../../lib/uiConstants";
 import type { MatchType, RecentMatchSummary, UserSearchResponse } from "../../types/analysis";
 import type { BeforeAfterPayload, ComparisonMetric } from "../../types/comparison";
@@ -62,14 +63,22 @@ export function BeforeAfterComparisonPanel({ initialNickname, initialMatchType }
   async function load() {
     const token = ++generation.current;
     setBusy(true); setError(""); setOwner(null); setMatches([]); setResult(null);
+    let stage = "user_search";
     try {
       const user = await requestApi<UserSearchResponse>(`/users/search?nickname=${encodeURIComponent(nickname.trim())}`);
+      stage = "match_list";
       const data = await requestApi<{ items: RecentMatchSummary[]; sync_warning?: string }>(`/matches/recent?ouid=${encodeURIComponent(user.ouid)}&match_type=${matchType}`, undefined, { timeoutMs: 120_000 });
       if (token !== generation.current) return;
       const ids = new Set(data.items.map(m => m.match_id));
       setOwner(user); setMatches(data.items.filter(m => m.match_id)); setBefore(current => current.filter(id => ids.has(id))); setAfter(current => current.filter(id => ids.has(id))); setResult(null);
       if (!data.items.length) setError(data.sync_warning || "이 경기 모드에서 조회할 수 있는 경기 내역이 없습니다. 다른 모드를 선택해보세요.");
-    } catch (e) { if (token === generation.current) setError(e instanceof Error ? e.message : "경기 목록을 불러오지 못했습니다."); }
+      trackEvent("before_after_match_list_completed", { screen: "tracking", matchType, properties: { result_count: data.items.length } });
+    } catch (e) {
+      if (token === generation.current) {
+        setError(e instanceof Error ? e.message : "경기 목록을 불러오지 못했습니다.");
+        trackEvent("before_after_match_list_failed", { screen: "tracking", matchType, properties: { stage, ...analyticsError(e) } });
+      }
+    }
     finally { if (token === generation.current) setBusy(false); }
   }
   const eligible = matches.filter(m => m.match_end_type === 0 || wins && m.match_end_type === 1 || losses && m.match_end_type === 2);
@@ -80,13 +89,26 @@ export function BeforeAfterComparisonPanel({ initialNickname, initialMatchType }
   async function compare() {
     if (!owner) return;
     const token = ++generation.current;
-    setBusy(true); setError("");
+    setBusy(true); setError(""); setResult(null);
     try {
       const payload = await requestApi<BeforeAfterPayload>("/analysis/compare", { method: "POST", body: JSON.stringify({
         ouid: owner.ouid, match_type: matchType, before_match_ids: pre, after_match_ids: post, include_forfeit_wins: wins, include_forfeit_losses: losses,
       }) }, { timeoutMs: 120_000 });
-      if (token === generation.current) { setResult(payload); setCategory("main"); }
-    } catch (e) { if (token === generation.current) setError(e instanceof Error ? e.message : "두 구간을 비교하지 못했습니다."); }
+      if (token === generation.current) {
+        setResult(payload); setCategory("main");
+        trackEvent("before_after_completed", { screen: "tracking", matchType, properties: {
+          before_matches: payload.before.matches, after_matches: payload.after.matches,
+          metric_count: payload.metrics.length, include_forfeit_wins: wins, include_forfeit_losses: losses,
+        } });
+      }
+    } catch (e) {
+      if (token === generation.current) {
+        setError(e instanceof Error ? e.message : "두 구간을 비교하지 못했습니다.");
+        trackEvent("before_after_failed", { screen: "tracking", matchType, properties: {
+          stage: "compare", before_matches: pre.length, after_matches: post.length, ...analyticsError(e),
+        } });
+      }
+    }
     finally { if (token === generation.current) setBusy(false); }
   }
   const categories = result ? [...new Map(result.metrics.map(m => [m.category, m.category_label])).entries()] : [];

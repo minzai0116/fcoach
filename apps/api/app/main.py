@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict, deque
 from typing import Any
+from urllib.parse import urlsplit
 
 import requests
 from fastapi import FastAPI, Header, HTTPException, Query, Request
@@ -20,6 +21,7 @@ from app.db import (
     upsert_matches,
 )
 from app.models import AnalysisRunRequest, BeforeAfterRequest, EventTrackRequest, ExperimentCreateRequest, UserSearchResponse
+from app.analytics_schema import PRODUCTION_HOSTS
 from app.services.analysis import (
     create_experiment,
     evaluate_latest_experiment,
@@ -600,6 +602,18 @@ def events_track(request: Request, req: EventTrackRequest) -> dict[str, Any]:
     event_name = req.event_name.strip()
     if not event_name:
         raise HTTPException(status_code=400, detail="event_name is required")
+    try:
+        origin = urlsplit(request.headers.get("origin", ""))
+    except ValueError:
+        return {"ok": True, "recorded": False}
+    if origin.scheme != "https" or origin.hostname not in PRODUCTION_HOSTS:
+        return {"ok": True, "recorded": False}
+    properties = {
+        key: value for key, value in req.properties.items()
+        if key not in {"nickname", "ouid", "ouid_masked", "feed_id", "match_id", "error_message"}
+    }
+    properties.update(hostname=origin.hostname, environment="production")
+    req = req.model_copy(update={"properties": properties})
     record_analytics_event(
         event_name=event_name,
         distinct_id=req.distinct_id,
@@ -610,7 +624,7 @@ def events_track(request: Request, req: EventTrackRequest) -> dict[str, Any]:
         properties=req.properties,
     )
     _forward_event_to_posthog(req)
-    return {"ok": True}
+    return {"ok": True, "recorded": True}
 
 
 @app.get("/events/summary")

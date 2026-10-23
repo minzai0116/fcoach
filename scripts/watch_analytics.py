@@ -12,6 +12,7 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 
 DEFAULT_API_URL = "https://api.fcoach.fun"
@@ -30,6 +31,16 @@ EVENT_LABELS = {
     "view_evaluation": "실험 평가 조회",
     "change_match_type": "모드 변경",
     "change_window_size": "경기수 변경",
+    "squad_feed_list_completed": "공개 피드 목록 조회 완료",
+    "squad_feed_list_failed": "공개 피드 목록 조회 실패",
+    "squad_feed_selection_completed": "공개 피드 선택 완료",
+    "squad_feed_selection_failed": "공개 피드 선택 실패",
+    "squad_feed_connection_completed": "분석 결과에 피드 연결 완료",
+    "squad_feed_connection_failed": "분석 결과에 피드 연결 실패",
+    "before_after_match_list_completed": "전후 비교 경기 목록 조회 완료",
+    "before_after_match_list_failed": "전후 비교 경기 목록 조회 실패",
+    "before_after_completed": "전후 비교 완료",
+    "before_after_failed": "전후 비교 실패",
 }
 
 
@@ -89,6 +100,8 @@ def fetch_summary(api_url: str, admin_key: str, hours: int, limit: int, timeout:
 
 
 def event_count(summary: dict[str, Any], event_name: str) -> int:
+    if event_name in summary.get("event_counts", {}):
+        return int(summary["event_counts"][event_name])
     for event in summary.get("events", []):
         if event.get("event_name") == event_name:
             return int(event.get("count") or 0)
@@ -109,7 +122,7 @@ def format_local_time(value: str | None) -> str:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return value
-    return parsed.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    return parsed.astimezone(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S KST")
 
 
 def print_bar(label: str, value: int, max_value: int) -> None:
@@ -143,26 +156,32 @@ def render_recent_failures(summary: dict[str, Any]) -> None:
         label = EVENT_LABELS.get(name, name)
         stage = str(properties.get("stage") or "-")
         mode = str(properties.get("mode") or "-")
-        message = str(properties.get("error_message") or "-")
+        reason = str(properties.get("error_kind") or "분류 정보 없음")
+        status = properties.get("http_status")
         created_at = format_local_time(str(row.get("created_at") or ""))
-        print(f"- {created_at} · {label} · {stage}/{mode} · {message}")
+        print(f"- {created_at} · {label} · {stage}/{mode} · {reason}" + (f" (HTTP {status})" if status else ""))
 
 
 def render_summary(summary: dict[str, Any], api_url: str, interval_sec: int) -> None:
     events = summary.get("events", [])
     page_views = summary.get("page_views", [])
-    new_visitors, returning_visitors, return_rate = visitor_lifecycle(summary)
+    new_visitors, returning_visitors, _ = visitor_lifecycle(summary)
     max_event_count = max([int(event.get("count") or 0) for event in events] + [new_visitors, returning_visitors, 1])
 
     print("FCOACH 실시간 이용 현황")
     print("=" * 64)
     print(f"API: {api_url}")
-    print(f"조회 범위: 최근 {summary.get('hours', 24)}시간")
-    print(f"기준 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"집계 시작: {format_local_time(summary.get('since'))}")
+    print(f"조회 범위: 최근 약 {summary.get('hours', 24)}시간 · 저장소 {summary.get('source', '미확인')}")
+    print(f"기준 시각: {datetime.now(ZoneInfo('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S KST')}")
+    print(f"집계 시작: {format_local_time(summary.get('bucket_since') or summary.get('since'))}")
+    if summary.get('until'):
+        print(f"집계 종료: {format_local_time(summary['until'])}")
     print("-" * 64)
-    print(f"방문자 수: {int(summary.get('unique_users') or 0)}명")
-    print(f"신규/재방문: {new_visitors}명 / {returning_visitors}명 · 재방문률 {format_percent(return_rate)}")
+    print(f"익명 브라우저: {int(summary.get('unique_users') or 0)}개")
+    print(f"신규/재방문 기록: {new_visitors}회 / {returning_visitors}회")
+    lifecycle = summary.get('visitor_lifecycle', {})
+    if lifecycle:
+        print(f"신규/재방문 고유 브라우저: {lifecycle['new']['unique_users']}개 / {lifecycle['returning']['unique_users']}개 (서로 중복 가능)")
     print(f"전체 이벤트: {int(summary.get('total_events') or 0)}건")
     print()
     print("핵심 이벤트")
@@ -173,8 +192,9 @@ def render_summary(summary: dict[str, Any], api_url: str, interval_sec: int) -> 
     print_bar("검색 실패", event_count(summary, "search_user_failed"), max_event_count)
     print_bar("분석 실행", event_count(summary, "run_analysis"), max_event_count)
     print_bar("분석 실패", event_count(summary, "run_analysis_failed"), max_event_count)
-    print_bar("실험 시작", event_count(summary, "adopt_action"), max_event_count)
-    print_bar("평가 조회", event_count(summary, "view_evaluation"), max_event_count)
+    print_bar("피드 연결 완료", event_count(summary, "squad_feed_connection_completed"), max_event_count)
+    print_bar("전후 비교 완료", event_count(summary, "before_after_completed"), max_event_count)
+    print_bar("전후 비교 실패", event_count(summary, "before_after_failed"), max_event_count)
     print()
     print("이벤트 상세")
     if events:
@@ -191,26 +211,24 @@ def render_summary(summary: dict[str, Any], api_url: str, interval_sec: int) -> 
             print(f"- {row.get('path') or '/'}: {int(row.get('count') or 0)}회")
     else:
         print("- 아직 페이지 방문 기록이 없습니다.")
+    if summary.get("page_view_hosts"):
+        print("페이지뷰 수집 호스트")
+        for row in summary["page_view_hosts"]:
+            print(f"- {row['hostname']}: {row['count']}회")
     print()
     if summary.get("event_users"):
-        funnel = summary.get("funnel_users") if isinstance(summary.get("funnel_users"), dict) else {}
-        print("사람 기준 퍼널(익명 브라우저 기준)")
-        print(f"- 검색한 사람: {event_unique_user_count(summary, 'search_user')}명")
-        print(f"- 분석한 사람: {event_unique_user_count(summary, 'run_analysis')}명")
-        print(f"- 실험 시작한 사람: {event_unique_user_count(summary, 'adopt_action')}명")
-        print(f"- 검증 조회한 사람: {event_unique_user_count(summary, 'view_evaluation')}명")
-        if funnel:
-            analysis_to_experiment = float(funnel.get("analysis_to_experiment_rate") or 0)
-            experiment_to_evaluation = float(funnel.get("experiment_to_evaluation_rate") or 0)
-            print(f"- 분석→실험 전환: {format_percent(analysis_to_experiment)}")
-            print(f"- 실험→검증 전환: {format_percent(experiment_to_evaluation)}")
+        print("기능별 고유 익명 브라우저 (순차 전환율 아님)")
+        for event in ('search_user', 'run_analysis', 'squad_feed_connection_completed', 'squad_feed_connection_failed', 'before_after_completed', 'before_after_failed'):
+            print(f"- {EVENT_LABELS.get(event, event)}: {event_unique_user_count(summary, event)}개")
         print()
     render_recent_failures(summary)
     print()
     print("해석 메모")
-    print("- 사용자 검색은 사람이 닉네임 검색/빠른 시작을 누른 횟수입니다.")
+    print("- 사용자 검색은 분석 실행 흐름의 닉네임 조회 기록이며, 경기 목록·피드 조회 전체가 아닙니다.")
     print("- Nexon /id 원시 호출량은 랭커 OUID 매핑, 캐시 미스, 재시도가 섞이므로 방문자/검색자 수로 보지 않습니다.")
-    print("- 사람 기준 퍼널은 로그인 ID가 아니라 브라우저 익명 ID 기준입니다.")
+    print("- 고유 이용자는 실제 사람이 아닌 익명 브라우저 기준입니다. 이벤트 교집합은 행동 순서를 보장하지 않습니다.")
+    print("- 기존 실험 시작·평가 조회는 과거 기능이며 현재 전후 비교 완료와 별개입니다.")
+    print("- 새 수집 규칙 적용 전의 로컬·검수 기록과 중복 페이지뷰는 소급 제거되지 않습니다.")
     print()
     print(f"{interval_sec}초마다 자동 갱신됩니다. 종료: Ctrl+C")
 

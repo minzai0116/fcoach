@@ -8,7 +8,8 @@ import {
   tacticAdjustmentLines,
   type CurrentTactic,
 } from "../lib/actionPlan";
-import { requestApi, trackEvent, trackVisitorLifecycle } from "../lib/apiClient";
+import { requestApi, trackEvent } from "../lib/apiClient";
+import { analyticsError, trackFeedConnection } from "../lib/analytics";
 import {
   BENCHMARK_SOURCE_LABEL,
   ISSUE_LABELS,
@@ -899,18 +900,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
     return completed;
   }, [actions.length, analysis, officialRankers.length, ouidInput, playerRows.length, similarRankersForView.length]);
 
-  useEffect(() => {
-    trackVisitorLifecycle(screen);
-  }, [screen]);
-
-  useEffect(() => {
-    trackEvent("page_view", {
-      screen,
-      matchType,
-      windowSize,
-    });
-  }, [screen, matchType, windowSize]);
-
   async function loadOfficialRankers(limit = 30, silent = true) {
     try {
       const payload = await requestApi<RankersLatestPayload>(`/rankers/latest?mode=1vs1&limit=${limit}`, undefined, { timeoutMs: 30_000 });
@@ -951,12 +940,12 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
       trackEvent("search_user_failed", {
         screen: "search",
         matchType,
-        windowSize,
+        windowSize: matchSelectionCount ?? undefined,
         properties: {
           mode,
           stage: "user_search",
           nickname_length: targetNickname.length,
-          error_message: normalizeErrorMessage(searchError, "닉네임 조회 실패"),
+          ...analyticsError(searchError),
         },
       });
       throw searchError;
@@ -966,8 +955,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
     trackEvent("search_user", {
       screen: "search",
       matchType,
-      windowSize,
-      ouid: found.ouid,
+      windowSize: matchSelectionCount ?? undefined,
       properties: { mode, source: found.source },
     });
     return found.ouid;
@@ -1012,14 +1000,16 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
       trackEvent("run_analysis", {
         screen: "search",
         matchType,
-        windowSize,
-        ouid: targetOuid,
+        windowSize: matchSelectionCount ?? undefined,
         properties: {
           mode: "quick",
           has_tactic_input: false,
           action_count: payload.actions?.length ?? 0,
+          analyzed_matches: payload.sample_count ?? null,
+          with_feed: Boolean(selectedFeed),
         },
       });
+      if (selectedFeed) trackFeedConnection(payload.coaching?.squad_feed, matchType);
     } catch (quickRunError) {
       const errorMessage = normalizeErrorMessage(quickRunError, "빠른 실행 실패");
       setError(errorMessage);
@@ -1027,15 +1017,18 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
         trackEvent("run_analysis_failed", {
           screen: "search",
           matchType,
-          windowSize,
-          ouid: targetOuid,
+          windowSize: matchSelectionCount ?? undefined,
           properties: {
             mode: "quick",
             stage: "analysis_run",
-            error_message: errorMessage,
+            ...analyticsError(quickRunError),
           },
         });
       }
+      if (selectedFeed) trackEvent("squad_feed_connection_failed", {
+        screen: "search", matchType,
+        properties: { stage: targetOuid ? "analysis_run" : "user_search", ...analyticsError(quickRunError) },
+      });
     } finally {
       setLoading(false);
       setAnalysisLoadingMode(null);
@@ -1085,8 +1078,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                 trackEvent("tab_click", {
                   screen: item.key,
                   matchType,
-                  windowSize,
-                  ouid: ouidInput,
                   properties: { from_screen: screen },
                 });
               }}
@@ -1123,8 +1114,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                       trackEvent("change_match_type", {
                         screen: "search",
                         matchType: typeValue,
-                        windowSize,
-                        ouid: ouidInput,
                       });
                     }}
                   >

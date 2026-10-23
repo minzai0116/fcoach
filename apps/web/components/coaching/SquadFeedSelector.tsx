@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { requestApi } from "../../lib/apiClient";
+import { analyticsError, trackEvent } from "../../lib/analytics";
 import { feedNicknameKey, type SquadFeedList, type SquadFeedSnapshot, type SquadFeedSummary } from "../../types/squadFeed";
 import { SquadFeedSettings } from "./SquadFeedSettings";
 
@@ -17,27 +18,41 @@ export function SquadFeedSelector({ nickname, selected, disabled, onChange, onLo
   const sequence = useRef(0);
   useEffect(() => () => { sequence.current += 1; onLoadingChange(false); }, [onLoadingChange]);
 
-  async function run<T>(load: () => Promise<T>, apply: (value: T) => void) {
+  async function run<T>(stage: "squad_feed_list" | "squad_feed_selection", load: () => Promise<T>, apply: (value: T) => Record<string, unknown>) {
     const request = ++sequence.current;
     setLoading(true); onLoadingChange(true); setError("");
-    try { const value = await load(); if (request === sequence.current) apply(value); }
-    catch (error) { if (request === sequence.current) setError(error instanceof Error ? error.message : "공개 피드를 불러오지 못했습니다."); }
+    try {
+      const value = await load();
+      if (request === sequence.current) {
+        const properties = apply(value);
+        trackEvent(`${stage}_completed`, { screen: "search", properties });
+      }
+    } catch (error) {
+      if (request === sequence.current) {
+        setError(error instanceof Error ? error.message : "공개 피드를 불러오지 못했습니다.");
+        trackEvent(`${stage}_failed`, { screen: "search", properties: analyticsError(error) });
+      }
+    }
     finally { if (request === sequence.current) { setLoading(false); onLoadingChange(false); } }
   }
 
   function loadPage(nextPage: number) {
-    void run(() => requestApi<SquadFeedList>(`/squad-feeds?nickname=${encodeURIComponent(nickname.trim())}&page=${nextPage}`), result => {
+    void run("squad_feed_list", () => requestApi<SquadFeedList>(`/squad-feeds?nickname=${encodeURIComponent(nickname.trim())}&page=${nextPage}`), result => {
       setItems(previous => nextPage === 1 ? result.items : [...new Map([...previous, ...result.items].map(item => [item.feed_id, item])).values()]);
       setPage(result.page); setMore(result.has_more);
       if (nextPage === 1 && !result.has_more && selected && !result.items.some(item => item.feed_id === selected.feed_id)) onChange(null);
+      return { page: result.page, result_count: result.items.length, has_more: result.has_more };
     });
   }
 
   function choose(feedId: string) {
     onChange(null);
-    void run(() => requestApi<SquadFeedSnapshot>(`/squad-feeds/${encodeURIComponent(feedId)}`), snapshot => {
-      if (feedNicknameKey(snapshot.author) !== feedNicknameKey(nickname)) { setError("피드 작성자가 입력한 닉네임과 다릅니다. 목록을 다시 불러오세요."); return; }
+    void run("squad_feed_selection", () => requestApi<SquadFeedSnapshot>(`/squad-feeds/${encodeURIComponent(feedId)}`), snapshot => {
+      if (feedNicknameKey(snapshot.author) !== feedNicknameKey(nickname)) {
+        throw Object.assign(new Error("피드 작성자가 입력한 닉네임과 다릅니다. 목록을 다시 불러오세요."), { code: "author_mismatch" });
+      }
       onChange(snapshot);
+      return { player_count: snapshot.players.length };
     });
   }
 

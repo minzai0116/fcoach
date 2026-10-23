@@ -97,6 +97,9 @@
   - `properties?: object`
 - Response:
   - `ok: true`
+  - `recorded: boolean`: HTTPS 운영 Origin(`fcoach.fun`, `www.fcoach.fun`)만 저장하며 로컬·미리보기·Origin 누락은 `false`입니다.
+- 서버가 Origin을 기준으로 `properties.hostname`과 `environment=production`을 확정합니다. 닉네임·OUID·피드 ID·경기 ID·자유 형식 오류 메시지는 부가 속성에서 제외합니다.
+- 신규 기능 이벤트의 정의와 페이지뷰 범위는 [이용 집계 기준](analytics-measurement.md)을 참고하세요.
 
 ## `GET /events/summary`
 - Query:
@@ -108,7 +111,14 @@
   - `total_events`
   - `unique_users`
   - `events[]`
+  - `event_counts`: `limit`에 의해 잘리지 않는 이벤트별 전체 횟수. 낮은 빈도의 실패를 0으로 오인하지 않도록 보고에 사용합니다.
   - `page_views[]`
+  - `event_users[]`: 이벤트별 고유 익명 브라우저 수
+  - `feature_usage`: 피드 목록·선택·분석 연결·전후 비교 목록·비교 완료의 `completed_events`, `completed_users`, `failed_events`, `failed_users`
+  - `visitor_lifecycle`: 신규/재방문별 기록 횟수와 고유 브라우저 수(두 그룹은 서로 겹칠 수 있음)
+  - `page_view_hosts[]`: 호스트별 페이지뷰. 이전 기록에서 호스트를 알 수 없으면 `unknown`
+  - `since`, `until`, `time_zone`, `aggregation`, `bucket_since?`: Redis는 시간 버킷을 사용하므로 `bucket_since`가 실제 포함 시작 경계이며, SQLite는 정확한 타임스탬프 기준입니다.
+  - `measurement`: 계측 버전·운영 도메인·방문 정의·이전 기록 포함 가능성과 이벤트 교집합의 순서 미보장 여부
 
 ### 전체 경기 지표 시각화
 - `coaching.domains`는 `shooting`, `defending`, `carrying`, `discipline`, `overview` 영역의 기록·경기별 추이를 반환합니다. 패스는 기존 `coaching.passing`을 사용합니다.
