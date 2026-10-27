@@ -95,3 +95,10 @@ test("분석 결과의 피드 연결은 선택과 구분하며 불일치를 실�
   assert.equal(requests[1].body.properties.coaching_linked, false);
   assert.equal(requests[2].body.event_name, "squad_feed_connection_failed");
 });
+
+test("분석 오류는 허용된 원인 코드만 보내며 원문 메시지를 보내지 않는다", () => {
+  const { api } = client();
+  assert.equal(api.analyticsError({ code: "http", status: 400, reason: "no_matching_matches" }).reason_code, "no_matching_matches");
+  const detail = api.analyticsError({ code: "http", status: 400, reason: "private nickname", message: "private message" });
+  assert.ok(!JSON.stringify(detail).includes("private"));
+});

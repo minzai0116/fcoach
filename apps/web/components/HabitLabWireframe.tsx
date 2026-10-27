@@ -709,6 +709,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
   const [sampleOptions, setSampleOptions] = useState<MatchSampleOptions>({ include_forfeit_wins: false, include_forfeit_losses: false, start_match_id: null, end_match_id: null });
   const [matchListLoading, setMatchListLoading] = useState(false);
   const [matchSelectionCount, setMatchSelectionCount] = useState<number | null>(null);
+  const [matchListRevision, setMatchListRevision] = useState(0);
   const [selectedFeed, setSelectedFeed] = useState<SquadFeedSnapshot | null>(null);
   const [feedLoading, setFeedLoading] = useState(false);
   const [resolvedUser, setResolvedUser] = useState<UserSearchResponse | null>(null);
@@ -1013,6 +1014,11 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
     } catch (quickRunError) {
       const errorMessage = normalizeErrorMessage(quickRunError, "빠른 실행 실패");
       setError(errorMessage);
+      if ((quickRunError as { action?: string })?.action === "reload_matches") {
+        setMatchSelectionCount(null);
+        setSampleOptions(current => ({ ...current, start_match_id: null, end_match_id: null }));
+        setMatchListRevision(current => current + 1);
+      }
       if (targetOuid) {
         trackEvent("run_analysis_failed", {
           screen: "search",
@@ -1144,7 +1150,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
               }}
             />
           </div>
-          <MatchSampleSelector key={`${nicknameInput.trim()}:${matchType}`} nickname={nicknameInput} matchType={matchType} value={sampleOptions} disabled={loading} onChange={setSampleOptions} onLoadingChange={setMatchListLoading} onSelectionCountChange={setMatchSelectionCount} />
+          <MatchSampleSelector key={`${nicknameInput.trim()}:${matchType}:${matchListRevision}`} nickname={nicknameInput} matchType={matchType} value={sampleOptions} disabled={loading} onChange={setSampleOptions} onLoadingChange={setMatchListLoading} onSelectionCountChange={setMatchSelectionCount} />
           <SquadFeedSelector key={nicknameInput.trim()} nickname={nicknameInput} selected={selectedFeed} disabled={loading} onChange={setSelectedFeed} onLoadingChange={setFeedLoading} />
           <div className="button-row">
             <button className="btn" onClick={onQuickRun} disabled={loading || feedLoading || matchListLoading || !matchSelectionCount}>

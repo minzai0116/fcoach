@@ -89,8 +89,10 @@ export function trackEvent(eventName: string, payload: EventPayload = {}): void 
 }
 
 export function analyticsError(error: unknown): Record<string, unknown> {
-  const detail = error as { code?: string; status?: number } | null;
-  return { error_kind: detail?.code ?? "unknown", http_status: detail?.status ?? null };
+  const detail = error as { code?: string; status?: number; reason?: string } | null;
+  const safeReasons = new Set(["match_range_expired", "invalid_match_range", "no_matching_matches", "no_match_history", "match_sync_unavailable", "analysis_processing_error"]);
+  return { error_kind: detail?.code ?? "unknown", http_status: detail?.status ?? null,
+    ...(detail?.reason && safeReasons.has(detail.reason) ? { reason_code: detail.reason } : {}) };
 }
 
 export function trackFeedConnection(connection: SquadFeedCoaching | undefined, matchType: number): void {

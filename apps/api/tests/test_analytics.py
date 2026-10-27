@@ -71,6 +71,14 @@ class RedisAnalyticsTest(unittest.TestCase):
     def record(self, name, user='browser-a', **properties):
         self.assertTrue(self.store.record(event_name=name, distinct_id=user, path='/tracking', properties=properties))
 
+    def test_feed_empty_pages_are_distinct_from_pages_with_results(self):
+        self.record('squad_feed_list_empty')
+        self.record('squad_feed_list_empty')
+        self.record('squad_feed_list_with_results', 'browser-b')
+        result = self.store.summary()
+        self.assertEqual(result['feed_list_results']['empty_pages'], {'events': 2, 'unique_users': 1})
+        self.assertEqual(result['feed_list_results']['nonempty_pages'], {'events': 1, 'unique_users': 1})
+
     def test_completed_events_and_distinct_browsers_are_separate(self):
         self.record('before_after_completed')
         self.record('before_after_completed')

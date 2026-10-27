@@ -36,6 +36,7 @@ from app.services.before_after import run_before_after
 from app.services.cache import CacheClient
 from app.services.analytics_store import get_analytics_summary, record_analytics_event
 from app.services.analysis_utils import normalize_nickname
+from app.services.analysis_errors import AnalysisRequestError
 from app.services.openapi_client import NexonOpenApiClient, OpenApiRateLimitError, UserNotFoundError
 from app.services.squad_feed import SquadFeedError, search_public_feeds, get_public_feed
 from app.services.ranker_source import ensure_official_rankers, fetch_official_rankers, list_official_rankers
@@ -524,8 +525,11 @@ def analysis_run(request: Request, req: AnalysisRunRequest) -> dict[str, Any]:
             ttl_sec=_analysis_cache_ttl_sec(),
         )
         return result
+    except AnalysisRequestError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail()) from error
     except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
+        raise HTTPException(status_code=500, detail={"message": "경기 분석 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+                                                    "code": "analysis_processing_error", "action": "retry"}) from error
     finally:
         cache.release_lock(lock_key, lock_token)
 

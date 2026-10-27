@@ -2452,6 +2452,10 @@ code {
 .feed-options { display: grid; gap: 8px; margin-top: 12px; }
 .feed-option { display: flex; align-items: center; gap: 12px; padding: 14px; border: 1px solid #dce5ef; border-radius: 12px; cursor: pointer; min-height: 60px; background: #fff; }
 .feed-option.selected { border-color: #86afe9; background: #f0f6ff; }
+.feed-option-label { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; cursor: pointer; }
+.feed-option-label > span { min-width: 0; }
+.feed-option > button { flex-shrink: 0; min-height: 44px; }
+@media (max-width: 480px) { .feed-option { flex-wrap: wrap; } .feed-option > button { width: 100%; } }
 .feed-option input { width: 20px; height: 20px; flex-shrink: 0; }
 .feed-option strong, .feed-option small { display: block; overflow-wrap: anywhere; }
 .feed-option small { color: #64748b; margin-top: 6px; font-size: .78rem; }

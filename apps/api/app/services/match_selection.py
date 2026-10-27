@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.services.analysis_models import MatchStats
+from app.services.analysis_errors import AnalysisRequestError
 
 
 def eligible_match_rows(rows: list[MatchStats], include_forfeit_wins: bool = False,
@@ -15,11 +16,12 @@ def select_match_sample(rows: list[MatchStats], window: int | None, *, include_f
     indices = {row.match_id: i for i, row in enumerate(rows)}
     for match_id, label in ((start_match_id, '시작'), (end_match_id, '종료')):
         if match_id and match_id not in indices:
-            raise ValueError(f'선택한 {label} 경기를 조회할 수 없습니다. 경기 목록을 다시 불러와 선택해주세요.')
+            raise AnalysisRequestError(f'선택한 {label} 경기를 현재 목록에서 찾을 수 없습니다. 경기 목록을 다시 불러와 범위를 선택해주세요.',
+                                       'match_range_expired', 'reload_matches', 409)
     start = indices[start_match_id] if start_match_id else len(rows) - 1
     end = indices[end_match_id] if end_match_id else 0
     if rows and end > start:
-        raise ValueError('종료 경기는 시작 경기와 같거나 이후 경기여야 합니다.')
+        raise AnalysisRequestError('종료 경기는 시작 경기와 같거나 이후 경기여야 합니다.', 'invalid_match_range', 'change_range')
     # 최신순 목록의 양 끝 경기를 포함한 뒤 종료 유형을 적용한다.
     candidates = rows[end:start + 1]
     eligible = eligible_match_rows(candidates, include_forfeit_wins, include_forfeit_losses)

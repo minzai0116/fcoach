@@ -5,7 +5,8 @@ export { trackEvent } from "./analytics";
 type RequestApiOptions = { timeoutMs?: number };
 
 export class ApiRequestError extends Error {
-  constructor(message: string, public code: "http" | "timeout" | "network", public status?: number) {
+  constructor(message: string, public code: "http" | "timeout" | "network", public status?: number,
+    public reason?: string, public action?: string) {
     super(message);
     this.name = "ApiRequestError";
   }
@@ -26,8 +27,11 @@ export async function requestApi<T>(path: string, init?: RequestInit, options?: 
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      const detail = typeof body.detail === "string" ? body.detail : res.status === 422 ? "입력한 내용을 확인해주세요. 닉네임과 경기 선택을 다시 확인해주세요." : "요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.";
-      throw new ApiRequestError(detail, "http", res.status);
+      const detail = body.detail;
+      const message = typeof detail === "string" ? detail : typeof detail?.message === "string" ? detail.message : res.status === 422 ? "입력한 내용을 확인해주세요. 닉네임과 경기 선택을 다시 확인해주세요." : "요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.";
+      throw new ApiRequestError(message, "http", res.status,
+        typeof detail?.code === "string" ? detail.code : undefined,
+        typeof detail?.action === "string" ? detail.action : undefined);
     }
     return (await res.json()) as T;
   } catch (error) {

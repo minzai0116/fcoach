@@ -41,12 +41,14 @@ export function SquadFeedSelector({ nickname, selected, disabled, onChange, onLo
       setItems(previous => nextPage === 1 ? result.items : [...new Map([...previous, ...result.items].map(item => [item.feed_id, item])).values()]);
       setPage(result.page); setMore(result.has_more);
       if (nextPage === 1 && !result.has_more && selected && !result.items.some(item => item.feed_id === selected.feed_id)) onChange(null);
+      trackEvent(result.items.length ? "squad_feed_list_with_results" : "squad_feed_list_empty", {
+        screen: "search", properties: { page: result.page, has_more: result.has_more },
+      });
       return { page: result.page, result_count: result.items.length, has_more: result.has_more };
     });
   }
 
   function choose(feedId: string) {
-    onChange(null);
     void run("squad_feed_selection", () => requestApi<SquadFeedSnapshot>(`/squad-feeds/${encodeURIComponent(feedId)}`), snapshot => {
       if (feedNicknameKey(snapshot.author) !== feedNicknameKey(nickname)) {
         throw Object.assign(new Error("피드 작성자가 입력한 닉네임과 다릅니다. 목록을 다시 불러오세요."), { code: "author_mismatch" });
@@ -59,14 +61,16 @@ export function SquadFeedSelector({ nickname, selected, disabled, onChange, onLo
   return <section className="squad-feed-selector" aria-label="공개 피드 선택" aria-busy={loading}>
     <div className="coaching-section-heading"><div><h3>공개 스쿼드 연결 · 선택 사항</h3><p className="coaching-scope-note">공개 피드 하나를 선택하면 분석할 경기의 기록과 저장된 설정을 함께 확인합니다.</p></div></div>
     <button className="btn" type="button" disabled={disabled || loading || nickname.trim().length < 2} onClick={() => loadPage(1)}>{loading ? "피드 불러오는 중…" : page ? "공개 피드 새로 불러오기" : "닉네임의 공개 피드 불러오기"}</button>
-    {error && <p className="notice error" role="alert">{error} 경기 진단은 피드 없이도 실행할 수 있습니다.</p>}
-    {page > 0 && <p className="coaching-scope-note" role="status">{items.length ? `불러온 공개 피드 ${items.length}개 · 하나를 선택하세요.` : "이 페이지에 해당 닉네임의 공개 피드가 없습니다."}</p>}
-    <div className="feed-options">{items.map(item => <label key={item.feed_id} className={`feed-option${selected?.feed_id === item.feed_id ? " selected" : ""}`}>
+    {error && <p className="notice error" role="alert">{error} {selected ? "이전에 선택한 피드는 유지됩니다." : "경기 진단은 피드 없이도 실행할 수 있습니다."}</p>}
+    {page > 0 && <p className="search-feedback" role="status">{items.length ? `공개 피드 ${items.length}개를 찾았습니다. 사용할 피드의 ‘이 피드 선택’을 누르세요.` : more ? "이 페이지에 일치하는 피드가 없습니다. 다음 피드를 더 불러오세요." : "공개 피드를 찾지 못했습니다. 스쿼드메이커에서 ‘피드 공유’로 저장했는지와 작성자 닉네임을 확인해주세요."}</p>}
+    {page > 0 && !items.length && !more && <a href="https://fconline.nexon.com/SquadMaker/feed/my" target="_blank" rel="noopener noreferrer">공식 스쿼드메이커에서 공개 피드 확인하기</a>}
+    <div className="feed-options">{items.map(item => <div key={item.feed_id} className={`feed-option${selected?.feed_id === item.feed_id ? " selected" : ""}`}><label className="feed-option-label">
       <input type="radio" name="squad-feed" value={item.feed_id} checked={selected?.feed_id === item.feed_id} disabled={disabled || loading} onChange={() => choose(item.feed_id)} />
       <span><strong>{item.title}</strong><small>{item.formation} · {item.mode === 1 ? "1vs1" : item.mode === 2 ? "감독 모드" : "모드 미제공"} · 생성 {item.created_at?.slice(0, 10) ?? "날짜 미제공"}</small></span>
-    </label>)}</div>
+    </label><button type="button" className="btn secondary" disabled={disabled || loading || selected?.feed_id === item.feed_id} onClick={() => choose(item.feed_id)}>{selected?.feed_id === item.feed_id ? "선택 완료" : "이 피드 선택"}</button></div>)}</div>
     {more && <button className="btn secondary" disabled={disabled || loading} type="button" onClick={() => loadPage(page + 1)}>다음 피드 더 보기</button>}
-    {selected && <div className="feed-preview" aria-live="polite"><div className="coaching-section-heading"><strong>다음 진단에 연결: {selected.title}</strong><button className="btn secondary" type="button" disabled={disabled || loading} onClick={() => onChange(null)}>선택 해제</button></div>
+    {selected && <div className="feed-preview" aria-live="polite"><div className="coaching-section-heading"><strong>피드 선택 완료: {selected.title}</strong><button className="btn secondary" type="button" disabled={disabled || loading} onClick={() => onChange(null)}>선택 해제</button></div>
+      <p className="search-feedback">아래 ‘피드를 연결해 경기 진단 시작’을 누르면 경기 기록과 함께 분석합니다.</p>
       <p className="coaching-scope-note">경기 선수와 다른 설정은 구분해서 표시합니다. 생성일은 최종 수정일이 아니며 과거 경기에서 사용한 설정인지는 확인되지 않습니다.</p>
       <details className="detail-block"><summary>선택한 피드 설정 미리 보기</summary><SquadFeedSettings snapshot={selected} /></details>
     </div>}

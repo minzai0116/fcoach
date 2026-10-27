@@ -60,7 +60,7 @@ test("공개 피드 목록·선택 완료는 각각 한 번 기록하고 분석 
   await tick(); ui.render();
   ui.find(n => n.type === "input" && n.props.type === "radio").props.onChange();
   await tick();
-  assert.deepEqual(ui.events.map(e => e.name), ["squad_feed_list_completed", "squad_feed_selection_completed"]);
+  assert.deepEqual(ui.events.map(e => e.name), ["squad_feed_list_with_results", "squad_feed_list_completed", "squad_feed_selection_completed"]);
   assert.equal(selected.at(-1), fixture);
 });
 
@@ -76,6 +76,34 @@ test("작성자 불일치와 실패한 조회는 선택 성공으로 기록하�
   assert.equal(ui.events.at(-1).name, "squad_feed_selection_failed");
   assert.equal(ui.events.at(-1).properties.error_kind, "author_mismatch");
   assert.ok(!ui.events.some(e => e.name === "squad_feed_selection_completed"));
+});
+
+test("빈 공개 피드 목록은 미선택과 구분하고 공유 안내를 제공한다", async () => {
+  const ui = component("SquadFeedSelector", "SquadFeedSelector", {
+    nickname: "tester", selected: null, disabled: false, onChange() {}, onLoadingChange() {},
+  }, async () => ({ items: [], page: 1, has_more: false }));
+  ui.find(n => n.type === "button").props.onClick(); await tick(); ui.render();
+  assert.ok(ui.events.some(e => e.name === "squad_feed_list_empty"));
+  assert.equal(ui.events.find(e => e.name === "squad_feed_list_completed").properties.result_count, 0);
+  assert.ok(ui.find(n => n.type === "a" && n.props.href.includes("SquadMaker")));
+  assert.ok(!ui.events.some(e => e.name === "squad_feed_selection_completed"));
+});
+
+test("다른 피드 조회가 실패해도 이전 선택을 지우지 않는다", async () => {
+  const changes = [], previous = { feed_id: "previous", title: "previous", players: [] };
+  const fixture = { feed_id: "feed1234", author: "tester", title: "new feed" };
+  const ui = component("SquadFeedSelector", "SquadFeedSelector", {
+    nickname: "tester", selected: previous, disabled: false, onChange: value => changes.push(value), onLoadingChange() {},
+  }, async path => {
+    if (path.includes("?")) return { items: [previous, fixture], page: 1, has_more: false };
+    throw Object.assign(new Error("unavailable"), { code: "network" });
+  });
+  ui.find(n => n.type === "button" && n.props.children === "닉네임의 공개 피드 불러오기").props.onClick();
+  await tick(); ui.render();
+  ui.find(n => n.type === "button" && n.props.children === "이 피드 선택").props.onClick();
+  await tick(); ui.render();
+  assert.equal(changes.length, 0);
+  assert.equal(ui.events.at(-1).name, "squad_feed_selection_failed");
 });
 
 async function comparison(requestCompare) {

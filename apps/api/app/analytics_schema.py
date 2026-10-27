@@ -14,12 +14,16 @@ FEATURE_STAGES = {
 }
 LEGACY_FUNNEL_EVENTS = ("search_user", "run_analysis", "adopt_action", "view_evaluation")
 FAILURE_EVENTS = ("search_user_failed", "run_analysis_failed", "adopt_action_failed", *(f"{stage}_failed" for stage in FEATURE_STAGES.values()))
-EVENT_USER_NAMES = (*LEGACY_FUNNEL_EVENTS, "visitor_first_seen", "visitor_return", *FAILURE_EVENTS,
+EVENT_USER_NAMES = (*LEGACY_FUNNEL_EVENTS, "visitor_first_seen", "visitor_return", "squad_feed_list_empty", "squad_feed_list_with_results", *FAILURE_EVENTS,
                     *(f"{stage}_completed" for stage in FEATURE_STAGES.values()))
 
 
 def usage_summary(events: Mapping[str, int], users: Mapping[str, int]) -> dict:
     return {
+        "feed_list_results": {
+            label: {"events": events.get(event, 0), "unique_users": users.get(event, 0)}
+            for label, event in (("empty_pages", "squad_feed_list_empty"), ("nonempty_pages", "squad_feed_list_with_results"))
+        },
         "feature_usage": {
             feature: {
                 "completed_events": events.get(f"{stage}_completed", 0),

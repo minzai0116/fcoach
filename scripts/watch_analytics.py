@@ -157,9 +157,10 @@ def render_recent_failures(summary: dict[str, Any]) -> None:
         stage = str(properties.get("stage") or "-")
         mode = str(properties.get("mode") or "-")
         reason = str(properties.get("error_kind") or "분류 정보 없음")
+        reason_code = str(properties.get("reason_code") or "")
         status = properties.get("http_status")
         created_at = format_local_time(str(row.get("created_at") or ""))
-        print(f"- {created_at} · {label} · {stage}/{mode} · {reason}" + (f" (HTTP {status})" if status else ""))
+        print(f"- {created_at} · {label} · {stage}/{mode} · {reason}" + (f" (HTTP {status})" if status else "") + (f" · {reason_code}" if reason_code else ""))
 
 
 def render_summary(summary: dict[str, Any], api_url: str, interval_sec: int) -> None:

@@ -49,6 +49,7 @@ from app.services.coaching_data import extract_coaching_data, extract_player_coa
 from app.services.squad_feed import SquadFeedError, get_public_feed
 from app.services.feed_coaching import build_feed_coaching
 from app.services.match_selection import select_match_sample
+from app.services.analysis_errors import AnalysisRequestError, MatchSyncWarning
 from app.services.comparison_evidence import previous_matches
 from app.services.team_history_coaching import VERSION as COACHING_VERSION, build_team_history_coaching
 
@@ -1812,7 +1813,7 @@ def _merge_match_stats(db_rows: list[MatchStats], cached_rows: list[MatchStats])
         if row.match_id:
             seen.add(row.match_id)
         rows.append(row)
-    return sorted(rows, key=lambda row: _parse_iso_datetime(row.match_date) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+    return sorted(rows, key=lambda row: (_parse_iso_datetime(row.match_date) or datetime.min.replace(tzinfo=timezone.utc), row.match_id), reverse=True)
 
 
 def _available_match_stats(ouid: str, match_type: int) -> list[MatchStats]:
@@ -1939,7 +1940,7 @@ def _refresh_match_rows(
             if match_rows:
                 refreshed_match_rows = upsert_matches(ouid=ouid, match_type=match_type, rows=match_rows)
                 _save_match_rows_to_cache(ouid, match_type, match_rows)
-            rows = _available_match_stats(ouid, match_type)
+            rows = _merge_match_stats(_available_match_stats(ouid, match_type), existing_rows)
             sync_error = None
             return rows, refreshed_match_rows
         except requests.HTTPError as exc:
@@ -1965,6 +1966,7 @@ def _load_rows_for_analysis(
     rows = _merge_match_stats(db_rows, cache_rows)
     refreshed_match_rows = 0
     refresh_warning: str | None = None
+    sync_unavailable = False
     using_cache_only = not db_rows and bool(cache_rows)
     latest_before = rows[0].match_date if rows else None
     latest_before_dt = _parse_iso_datetime(latest_before) if latest_before else None
@@ -1980,6 +1982,7 @@ def _load_rows_for_analysis(
             known_match_ids = set(_latest_known_match_ids(ouid, match_type, limit=max(window_size, 12)))
             should_refresh = _detect_new_match_head(ouid=ouid, match_type=match_type, known_match_ids=known_match_ids)
         except OpenApiRateLimitError as exc:
+            sync_unavailable = True
             wait_seconds = int(round(exc.wait_seconds or 0))
             refresh_warning = (
                 f"Nexon Open API 호출 제한으로 최신 동기화 여부를 확인하지 못했습니다. "
@@ -1999,6 +2002,7 @@ def _load_rows_for_analysis(
                 existing_rows=rows,
             )
         except OpenApiRateLimitError as exc:
+            sync_unavailable = True
             wait_seconds = int(round(exc.wait_seconds or 0))
             refresh_warning = (
                 f"Nexon Open API 호출 제한으로 최신 동기화에 실패했습니다. "
@@ -2008,6 +2012,7 @@ def _load_rows_for_analysis(
             )
             rows = _available_match_stats(ouid, match_type)
         except requests.HTTPError as exc:
+            sync_unavailable = True
             status_code = exc.response.status_code if exc.response is not None else None
             api_error_name = ""
             api_error_message = ""
@@ -2034,18 +2039,22 @@ def _load_rows_for_analysis(
                 refresh_warning = f"{refresh_warning} [{' / '.join(detail_parts)}]"
             rows = _available_match_stats(ouid, match_type)
         except Exception as exc:
+            sync_unavailable = True
             refresh_warning = (
                 "최신 경기 동기화에 실패해 저장된 데이터로 분석했습니다."
                 f" ({type(exc).__name__})"
             )
             rows = _available_match_stats(ouid, match_type)
     elif should_refresh and not rows:
+        sync_unavailable = True
         refresh_warning = "저장된 경기 데이터가 없어 최신 동기화가 필요합니다. 잠시 후 다시 시도해주세요."
 
     if not rows and refresh_warning:
         refresh_warning = f"{refresh_warning} 해당 모드에서 저장된 경기 데이터가 없습니다."
     if not rows and not refresh_warning:
         refresh_warning = "이 경기 모드에서 조회할 수 있는 경기 내역이 없습니다. 다른 모드를 선택해보세요."
+    if sync_unavailable and refresh_warning:
+        refresh_warning = MatchSyncWarning(refresh_warning)
     return rows, refreshed_match_rows, refresh_warning, should_refresh
 
 
@@ -2082,12 +2091,16 @@ def run_analysis(
         live_sync_enabled=live_sync_enabled,
         manual_refresh_probe=manual_refresh_probe,
     )
+    if not rows:
+        unavailable = isinstance(refresh_warning, MatchSyncWarning)
+        raise AnalysisRequestError(refresh_warning or '이 경기 모드에서 조회할 수 있는 경기 내역이 없습니다.',
+                                   'match_sync_unavailable' if unavailable else 'no_match_history',
+                                   'retry' if unavailable else 'reload_matches', 503 if unavailable else 404)
     selected, selection = select_match_sample(rows, window_size, include_forfeit_wins=include_forfeit_wins,
                                              include_forfeit_losses=include_forfeit_losses, start_match_id=start_match_id, end_match_id=end_match_id)
     if not selected:
-        if not rows and refresh_warning:
-            raise ValueError(refresh_warning)
-        raise ValueError('선택한 범위와 몰수 포함 조건에 맞는 경기 내역이 없습니다. 경기 범위나 포함 조건을 바꿔주세요.')
+        raise AnalysisRequestError('선택한 범위와 몰수 포함 조건에 맞는 경기 내역이 없습니다. 경기 범위나 포함 조건을 바꿔주세요.',
+                                   'no_matching_matches', 'change_filters')
     if window_size is not None and len(selected) < window_size:
         sample_warning = f"선택한 조건에 맞는 경기 {len(selected)}경기만 확인되어 해당 경기만 분석했습니다."
         refresh_warning = f"{refresh_warning} {sample_warning}".strip() if refresh_warning else sample_warning
