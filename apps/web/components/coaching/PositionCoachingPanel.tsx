@@ -31,7 +31,7 @@ export function PositionCoachingPanel({ section, coaching, reportPlayers, render
   const feed = coaching.squad_feed?.status === "available" ? coaching.squad_feed : undefined;
   return <article className="panel position-coaching-panel" data-view={view}>
     <div className="analysis-heading"><h3 className="section-title">{section === "team" ? "팀 분석" : "선수 분석"}</h3></div>
-    {coaching.comparison_scope && <p className="comparison-scope">현재 정상 종료 {coaching.comparison_scope.current.matches}경기{coaching.comparison_scope.previous.matches > 0 ? ` · 이전 ${coaching.comparison_scope.previous.matches}경기와 비교` : ""}</p>}
+    {coaching.comparison_scope && <p className="comparison-scope">분석 {coaching.comparison_scope.current.matches}경기{coaching.includes_forfeits ? " · 몰수 경기 중단 전 기록 포함" : ""}{coaching.comparison_scope.previous.matches > 0 ? ` · 이전 ${coaching.comparison_scope.previous.matches}경기와 비교` : ""}</p>}
     <nav className="analysis-section-nav" aria-label={section === "team" ? "팀 분석 보기" : "선수 분석 보기"}>{views.map(([key, label]) => <button key={key} type="button" aria-pressed={view === key} onClick={() => setView(key)}><strong>{label}</strong></button>)}</nav>
     <div className="analysis-view-body">
     {view === "overview" && renderOverview?.()}

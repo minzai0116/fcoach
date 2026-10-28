@@ -1157,7 +1157,7 @@ def _player_report_summary(rows: list[MatchStats], names: dict[int, str] | None 
         "controller_breakdown": dict(sorted(controller_breakdown.items(), key=lambda item: item[1], reverse=True)),
         "player_count": len(players),
         "top_players": top_players,
-        "players": players[:18],
+        "players": players,
         "top_scorer": top_scorer,
         "top_assister": top_assister,
         "most_used": most_used,
@@ -2120,19 +2120,20 @@ def run_analysis(
     names = {**(name_index(snapshot['players'], 'sp_id') if snapshot else {}), **_spid_name_map()}
     metrics = _compute_metrics(selected)
     visuals = _build_visual_summary(selected, names)
-    history = previous_matches(rows, selected) if match_type != 0 else []
+    include_forfeits = include_forfeit_wins or include_forfeit_losses
+    history = previous_matches(rows, selected, include_forfeits=include_forfeits) if match_type != 0 else []
     coaching = build_position_coaching(
         selected, visuals.get("player_report", {}), _position_name_map(), match_type=match_type,
-        include_forfeits=match_type != 0 and (include_forfeit_wins or include_forfeit_losses),
+        include_forfeits=include_forfeits,
         player_names=names, history_rows=history,
     )
     if match_type == 0:
         coaching["reference_note"] = "공식경기·공식 친선을 합친 현재 기록입니다. 선수별 누적 기록은 함께 보여주되 모드가 다른 이전 기록과 비교해 문제라고 판단하지 않습니다. 팀의 이전 기록 비교는 모드별로 분리하고, 장점·보완점은 같은 경기의 상대 기록과 직접 비교합니다."
     if snapshot:
-        coaching['squad_feed'] = build_feed_coaching(snapshot, coaching, [row for row in selected if row.match_end_type == 0], match_type, history_rows=history)
+        coaching['squad_feed'] = build_feed_coaching(snapshot, coaching, selected, match_type, history_rows=history)
     elif squad_feed_id:
         coaching['squad_feed'] = {'status': 'unavailable', 'requested_feed_id': squad_feed_id, 'message': feed_error}
-    empirical = mode_history(selected, rows) if match_type == 0 else build_team_history_coaching(selected, history, match_type)
+    empirical = mode_history(selected, rows) if match_type == 0 else build_team_history_coaching(selected, history, match_type, include_forfeits=include_forfeits)
     benchmark, benchmark_meta = empirical['benchmark'], empirical['benchmark_meta']
     metric_gap_table, issues = empirical['metric_gap_table'], empirical['issues']
     created_at = utc_now_iso()
@@ -2143,7 +2144,7 @@ def run_analysis(
     from app.services.ranker_coaching import build_ranker_coaching
     from app.services.domain_scores import build_domain_scores
     benchmark_snapshot = get_ranker_benchmark()
-    current_comparison = metric_catalog([row for row in selected if row.match_end_type == 0])
+    current_comparison = metric_catalog(selected, include_forfeits=include_forfeits)
     ranker_coaching = build_ranker_coaching(current_comparison, benchmark_snapshot, coaching)
     result = {
         "ranker_benchmark": benchmark_snapshot,
@@ -2154,7 +2155,7 @@ def run_analysis(
         "opponent_comparison": opponent_comparison(selected),
         "match_trends": build_match_trends(rows),
         "comparison_metrics": {"all": current_comparison,
-                               "official": metric_catalog([row for row in selected if row.match_type == 50 and row.match_end_type == 0])},
+                               "official": metric_catalog([row for row in selected if row.match_type == 50], include_forfeits=include_forfeits)},
         "mode_counts": {str(mode): sum(row.match_type == mode for row in selected) for mode in (50, 60, 52)},
         "normal_mode_counts": {str(mode): sum(row.match_type == mode and row.match_end_type == 0 for row in selected) for mode in (50, 60, 52)},
         "ouid": ouid,

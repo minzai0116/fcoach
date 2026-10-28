@@ -3,8 +3,9 @@ from __future__ import annotations
 from app.services.analysis_models import MatchStats
 from app.services.coaching_data import number
 from app.services.comparison_evidence import compare_rates, period, previous_matches, rate_sample
+from app.services.match_selection import eligible_match_rows
 
-VERSION = 'empirical_history_v4'
+VERSION = 'empirical_history_v5'
 _METRICS = {
     'shot_on_target_rate': ('유효 슈팅 비율', 'shoot', 'effectiveShootTotal', 'shootTotal', 10, 'POOR_SHOT_SELECTION',
                             '수비수가 슈팅 경로를 막았는지 확인하고, 각도가 좁으면 가까운 동료에게 연결한 뒤 다시 슈팅해 보세요.'),
@@ -33,13 +34,13 @@ def _sample(rows: list[MatchStats], container: str, success_key: str, trials_key
     return rate_sample(success, trials, len(dates), dates)
 
 
-def build_team_history_coaching(rows: list[MatchStats], history_rows: list[MatchStats], match_type: int) -> dict:
-    current = [row for row in rows if row.match_end_type == 0]
-    history = previous_matches(history_rows, rows)
+def build_team_history_coaching(rows: list[MatchStats], history_rows: list[MatchStats], match_type: int, *, include_forfeits=False) -> dict:
+    current = eligible_match_rows(rows, include_forfeits, include_forfeits)
+    history = previous_matches(history_rows, rows, include_forfeits=include_forfeits)
     comparisons, benchmark, gaps, actions, issues = {}, {}, [], [], {}
     meta = {'source': 'own_history_v1' if history else 'unavailable', 'current': period(current),
             'previous': period(history), 'method': 'wilson_95_nonoverlap',
-            'description': '같은 경기 모드의 이전 정상 종료 기록. 분석 구간과 겹치지 않으며, 이전 관측값은 정상 기준이나 달성 목표가 아닙니다.'}
+            'description': '같은 경기 모드의 이전 기록이 확인된 기록. 분석 구간과 겹치지 않으며, 이전 관측값은 정상 기준이나 달성 목표가 아닙니다.'}
     for key, (label, container, made, attempted, minimum, code, advice) in _METRICS.items():
         comparison = compare_rates(_sample(current, container, made, attempted), _sample(history, container, made, attempted), minimum)
         comparisons[key] = comparison
@@ -53,11 +54,11 @@ def build_team_history_coaching(rows: list[MatchStats], history_rows: list[Match
         gaps.append(gap)
         if comparison['status'] != 'lower':
             continue
-        evidence_text = (f"{label}: 현재 정상 종료 {now['matches']}경기 {now['success']:g}/{now['trials']:g}회 ({now['value']:.1%}), "
+        evidence_text = (f"{label}: 현재 기록이 확인된 {now['matches']}경기 {now['success']:g}/{now['trials']:g}회 ({now['value']:.1%}), "
                          f"이전 {before['matches']}경기 {before['success']:g}/{before['trials']:g}회 ({before['value']:.1%}). "
                          '두 성공률의 95% Wilson 구간이 겹치지 않아 하락한 기록으로 표시합니다.')
         if match_type == 52:
-            advice = '감독 모드에서는 직접 조작을 교정하지 않습니다. 같은 선수·포메이션의 다음 정상 종료 경기에서 기록이 반복되는지 확인하세요.'
+            advice = '감독 모드에서는 직접 조작을 교정하지 않습니다. 같은 선수·포메이션의 다음 기록이 확인된 경기에서 기록이 반복되는지 확인하세요.'
         action = {'rank': 0, 'action_code': code, 'title': f'이전 경기 대비 {label} 변화', 'description': evidence_text,
                   'tactic_direction': advice, 'tactic_delta': {}, 'confidence': 0.0,
                   'evidence': {'benchmark_meta': meta, 'benchmark_compare': gap, 'metric_gap_table': [gap],
@@ -66,7 +67,7 @@ def build_team_history_coaching(rows: list[MatchStats], history_rows: list[Match
                                    'root_cause': '상대·경기 상황·설정 차이가 있어 수치만으로 하락 원인을 확정할 수 없습니다.',
                                    'problem_detail': evidence_text, 'execution_checklist': [advice],
                                    'improvement_goal': f"이전 실측값 {before['value']:.1%}와 비교합니다. 이 값은 정상 기준이나 달성 목표가 아닙니다.",
-                                   'progress_check': '다음 정상 종료 경기에서 성공·시도 수와 슈팅·득점을 함께 비교하세요.',
+                                   'progress_check': '다음 기록이 확인된 경기에서 성공·시도 수와 슈팅·득점을 함께 비교하세요.',
                                    'expected_effect': '제안은 확인할 플레이 선택입니다. 설정 변경의 효과를 보장하지 않습니다.'}}}
         issues[code] = max(issues.get(code, 0), -comparison['gap_pp'])
         actions.append(action)

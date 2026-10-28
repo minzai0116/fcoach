@@ -8,7 +8,7 @@ from typing import Any
 from app.services.analysis_models import MatchStats
 from app.services.match_selection import eligible_match_rows
 from app.services.passing_coaching import build_passing_coaching
-from app.services.coaching_data import PLAYER_COUNTERS, active_players, number
+from app.services.coaching_data import PLAYER_COUNTERS, active_players, number, recorded_team_goals
 from app.services.domain_coaching import build_domain_coaching
 from app.services.shot_types import shot_type_label
 from app.services.player_guidance import build_player_guidance
@@ -66,7 +66,7 @@ def _aggregate_players(rows: list[MatchStats]) -> dict:
             aggregate = aggregates.setdefault(key, {"appearances": 0, "metrics": {}, "observations": {}, "shot_types": {}})
             aggregate["appearances"] += 1
             if key[2] == 0:
-                conceded = number(row.coaching_data.get('opponent_shoot', {}), 'goalTotalDisplay', 'goalTotal')
+                conceded = recorded_team_goals(row, opponent=True)
                 if conceded is not None:
                     context = aggregate.setdefault('keeper_context', {'conceded': 0, 'clean_sheets': 0, 'matches': 0})
                     context['conceded'] += conceded
@@ -128,8 +128,8 @@ def build_position_coaching(
     match_type: int = 60,
     *, include_forfeits: bool = False, player_names: dict[int, str] | None = None, history_rows: list[MatchStats] | None = None,
 ) -> dict[str, Any]:
-    rows = eligible_match_rows(rows)
-    history = previous_matches(history_rows or [], rows)
+    rows = eligible_match_rows(rows, include_forfeits, include_forfeits)
+    history = previous_matches(history_rows or [], rows, include_forfeits=include_forfeits)
     metadata = {(p["sp_id"], p["sp_grade"]): p for p in player_report.get("players", [])}
     aggregates = _aggregate_players(rows)
     previous = _aggregate_players(history)
@@ -165,10 +165,10 @@ def build_position_coaching(
             findings.append({
                 "metric": metric, "label": label, "current": round(rate, 6), "reference": threshold,
                 "target": threshold, "gap_pp": round((threshold - rate) * 100, 1), "comparison": comparison,
-                "evidence": f"같은 카드·강화·{position}의 현재 정상 종료 {total['active_matches']}경기 {success:g}/{trials:g}회 ({rate:.1%}), 이전 {before['matches']}경기 {before['success']:g}/{before['trials']:g}회 ({threshold:.1%})입니다. 두 성공률의 95% Wilson 구간이 겹치지 않아 하락한 기록으로 표시합니다.",
+                "evidence": f"같은 카드·강화·{position}의 현재 기록이 확인된 {total['active_matches']}경기 {success:g}/{trials:g}회 ({rate:.1%}), 이전 {before['matches']}경기 {before['success']:g}/{before['trials']:g}회 ({threshold:.1%})입니다. 두 성공률의 95% Wilson 구간이 겹치지 않아 하락한 기록으로 표시합니다.",
                 "hypothesis": "상대와 경기 상황·설정이 달라질 수 있어 기록의 하락만으로 원인이나 플레이의 잘못을 단정하지 않습니다.",
                 "adjustment": _adjustment(metric, position, match_type),
-                "verification": f"같은 모드·카드·강화·자리의 다음 정상 종료 경기에서 {label} 성공/시도 수와 실점·찬스를 함께 비교하세요. 이전 기록 {threshold:.1%}는 관측값이며 달성해야 할 정상 기준이 아닙니다.",
+                "verification": f"같은 모드·카드·강화·자리의 다음 기록이 확인된 경기에서 {label} 성공/시도 수와 실점·찬스를 함께 비교하세요. 이전 기록 {threshold:.1%}는 관측값이며 달성해야 할 정상 기준이 아닙니다.",
             })
         findings.sort(key=lambda f: f["gap_pp"], reverse=True)
         players.append({
@@ -183,7 +183,7 @@ def build_position_coaching(
     for player in players:
         player["guidance"] = build_player_guidance(player, mode=match_type)
     players.sort(key=lambda p: (-max((f["gap_pp"] for f in p["findings"]), default=0), -p["appearances"], p["sp_position"], p["sp_id"]))
-    latest = max(rows, key=lambda row: (row.match_date, row.match_id), default=None)
+    latest = max((row for row in rows if any(active_players(row))), key=lambda row: (row.match_date, row.match_id), default=None)
     latest_lineup = None if latest is None else {
         'match_id': latest.match_id, 'match_date': latest.match_date,
         'players': [{key: p[key] for key in ('sp_id', 'sp_grade', 'sp_position')} for p in active_players(latest)],
@@ -192,9 +192,10 @@ def build_position_coaching(
         "mode": "observation" if match_type == 52 else "play",
         "reference_source": "own_history_v1",
         "comparison_scope": {"current": period(rows), "previous": period(history)},
-        "reference_note": "정상 종료 경기만 비교합니다. 같은 모드·카드·강화·자리의 이전 기록과 현재 기록을 분리하며, 각 5경기 이상과 지표별 시도 수를 충족하고 95% Wilson 구간이 겹치지 않을 때만 변화에 따른 코칭을 제공합니다. 비교 기록이 없거나 차이가 불확실하면 좋고 나쁨을 단정하지 않고 현재 기록에 맞춘 플레이 선택지를 제안합니다. 이전 기록은 정상 기준이 아니며 피드 설정을 하락 원인으로 단정하지 않습니다.",
+        "reference_note": "기록이 확인된 경기만 비교합니다. 같은 모드·카드·강화·자리의 이전 기록과 현재 기록을 분리하며, 각 5경기 이상과 지표별 시도 수를 충족하고 95% Wilson 구간이 겹치지 않을 때만 변화에 따른 코칭을 제공합니다. 비교 기록이 없거나 차이가 불확실하면 좋고 나쁨을 단정하지 않고 현재 기록에 맞춘 플레이 선택지를 제안합니다. 이전 기록은 정상 기준이 아니며 피드 설정을 하락 원인으로 단정하지 않습니다.",
         "sample_count": len(rows), "players": players, "latest_lineup": latest_lineup,
-        "passing": build_passing_coaching(rows, match_type, history_rows=history),
+        "includes_forfeits": include_forfeits,
+        "passing": build_passing_coaching(rows, match_type, include_forfeits=include_forfeits, history_rows=history),
         "domains": build_domain_coaching(rows, include_forfeits=include_forfeits,
                                         player_names=player_names or {key[0]: value['player_name'] for key, value in metadata.items()}),
     }

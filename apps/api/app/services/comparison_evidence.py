@@ -16,13 +16,14 @@ def timestamp(value: str) -> datetime | None:
         return None
 
 
-def previous_matches(all_rows: list[MatchStats], selected: list[MatchStats], limit: int = 30) -> list[MatchStats]:
+def previous_matches(all_rows: list[MatchStats], selected: list[MatchStats], limit: int = 30, *, include_forfeits: bool = False) -> list[MatchStats]:
     dates = [date for row in selected if (date := timestamp(row.match_date)) is not None]
     if not dates or len(dates) != len(selected):
         return []
     cutoff = min(dates)
     selected_ids = {row.match_id for row in selected if row.match_id}
-    candidates = [(date, row) for row in all_rows if row.match_end_type == 0 and row.match_id not in selected_ids
+    allowed = (0, 1, 2) if include_forfeits else (0,)
+    candidates = [(date, row) for row in all_rows if row.match_end_type in allowed and row.match_id not in selected_ids
                   and (date := timestamp(row.match_date)) is not None and date < cutoff]
     return [row for _, row in sorted(candidates, key=lambda item: item[0], reverse=True)[:limit]]
 

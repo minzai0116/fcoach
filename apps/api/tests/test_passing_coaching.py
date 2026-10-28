@@ -36,9 +36,18 @@ class PassingCoachingTest(unittest.TestCase):
         inconsistent.pass_breakdown["overall"]["success"] = 800
         result = build_passing_coaching([valid] * 5 + [missing, inconsistent, replace(valid, match_end_type=1)], 60)
         self.assertEqual(result["sample_count"], 7)
-        self.assertEqual(result["observed_matches"], 5)
-        self.assertEqual(result["excluded_matches"], 2)
-        self.assertEqual(result["overall"]["trials"], 75)
+        self.assertEqual(result["observed_matches"], 7)
+        self.assertEqual(result["type_observed_matches"], 5)
+        self.assertEqual(result["excluded_matches"], 0)
+        self.assertEqual(result["overall"]["trials"], 2075)
+        self.assertEqual(result["type_overall"]["trials"], 75)
+        short = next(item for item in result['types'] if item['metric'] == 'short')
+        self.assertAlmostEqual(short['usage_share'], 50 / 75, places=6)
+        from app.services.metric_catalog import metric_catalog
+        metrics = {m['id']: m for group in metric_catalog([valid] * 5 + [missing, inconsistent]) for m in group['metrics']}
+        self.assertEqual(metrics['passing:overall']['trials'], 2075)
+        self.assertEqual(metrics['passing:short:usage']['trials'], 75)
+        self.assertAlmostEqual(metrics['passing:short:usage']['value'], 50 / 75, places=6)
 
     def test_rare_low_success_type_is_not_a_correction(self):
         result = build_passing_coaching([passing_row(short=(100, 90), lobbed_through=(1, 0))] * 5, 60)

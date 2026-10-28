@@ -5,7 +5,7 @@ from typing import Any
 
 from app.services.analysis_models import MatchStats
 from app.services.match_selection import eligible_match_rows
-from app.services.coaching_data import PLAYER_COUNTERS, PLAYER_PAIRS, active_players, number
+from app.services.coaching_data import PLAYER_COUNTERS, PLAYER_PAIRS, active_players, number, recorded_team_goals
 
 
 from app.services.shot_types import SHOT_TYPES, shot_type_label
@@ -65,11 +65,11 @@ def build_domain_coaching(rows: list[MatchStats], *, include_forfeits: bool = Fa
             if value is not None:
                 series[key].append((date, value / 100 if key == 'possession' else value))
         for key, source in (('goals_for', 'shoot'), ('goals_against', 'opponent_shoot'), ('shots_against', 'opponent_shoot')):
-            value = number(data.get(source, {}), 'shootTotal') if key == 'shots_against' else number(data.get(source, {}), 'goalTotalDisplay', 'goalTotal')
+            value = number(data.get(source, {}), 'shootTotal') if key == 'shots_against' else recorded_team_goals(row, opponent=key == 'goals_against')
             if value is not None:
                 series[key].append((date, value))
-        for key, field in (('display_goals', 'goalTotalDisplay'), ('own_goals', 'ownGoal'), ('shootout_shots', 'shootOutScore')):
-            value = number(data.get('shoot', {}), field)
+        for key, field in (('display_goals', 'goalTotal'), ('own_goals', 'ownGoal'), ('shootout_shots', 'shootOutScore')):
+            value = recorded_team_goals(row) if key == 'display_goals' else number(data.get('shoot', {}), field)
             if value is not None:
                 series[key].append((date, value))
         if row.result in ('승', '무', '패'):

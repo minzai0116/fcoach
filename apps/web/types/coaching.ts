@@ -52,6 +52,7 @@ export type PositionPlayer = {
 };
 
 export type PositionCoaching = {
+  includes_forfeits?: boolean;
   mode: "play" | "observation";
   reference_source: string;
   reference_note: string;
@@ -99,6 +100,7 @@ export type PassingCoaching = {
   sample_count: number;
   observed_matches: number;
   excluded_matches: number;
+  type_observed_matches?: number;
   overall: { trials: number; success: number; failures: number; success_rate: number | null };
   remainder: { trials: number; success: number; failures: number };
   note: string;

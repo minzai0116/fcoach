@@ -7,9 +7,9 @@ NEUTRAL = {'possession', 'team_distance', 'dribble_distance', 'corner', 'injury'
 GROUP_ORDER = ('overview', 'passing', 'shooting', 'defending', 'carrying', 'discipline')
 
 
-def metric_catalog(rows):
+def metric_catalog(rows, *, include_forfeits=True):
     groups = {}
-    for domain in build_domain_coaching(rows):
+    for domain in build_domain_coaching(rows, include_forfeits=include_forfeits):
         metrics = []
         for metric in domain['metrics']:
             key, unit = metric['metric'], metric['unit']
@@ -27,20 +27,21 @@ def metric_catalog(rows):
                 'matches': metric['observed_matches'],
                 'direction': 'lower' if key in LOWER else 'neutral' if key in NEUTRAL else 'higher'})
         groups[domain['id']] = {'id': domain['id'], 'label': domain['label'], 'metrics': metrics}
-    passing = build_passing_coaching(rows, 50)
+    passing = build_passing_coaching(rows, 50, include_forfeits=include_forfeits)
     overall = passing['overall']
+    type_overall = passing['type_overall']
     pass_metrics = [{'id': 'passing:overall', 'label': '전체 패스 성공률', 'unit': 'rate',
                      'value': overall['success_rate'], 'success': overall['success'], 'trials': overall['trials'],
                      'total': None, 'matches': passing['observed_matches'], 'direction': 'higher'}]
     remainder = passing['remainder']
     types = [*passing['types'], {'metric': 'unclassified', 'label': '미분류 패스', **remainder,
               'success_rate': remainder['success'] / remainder['trials'] if remainder['trials'] else None,
-              'usage_share': remainder['trials'] / overall['trials'] if overall['trials'] else None,
-              'observed_matches': passing['observed_matches']}]
+              'usage_share': remainder['trials'] / type_overall['trials'] if type_overall['trials'] else None,
+              'observed_matches': passing['type_observed_matches']}]
     for item in types:
         for suffix, label, value, success, trials in (
             ('success', f"{item['label']} 성공률", item['success_rate'], item['success'], item['trials']),
-            ('usage', f"{item['label']} 사용 비중", item['usage_share'], item['trials'], overall['trials']),
+            ('usage', f"{item['label']} 사용 비중", item['usage_share'], item['trials'], type_overall['trials']),
         ):
             pass_metrics.append({'id': f"passing:{item['metric']}:{suffix}", 'label': label, 'unit': 'rate',
                 'value': value, 'success': success, 'trials': trials, 'total': None,

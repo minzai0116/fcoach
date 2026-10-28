@@ -18,6 +18,11 @@ function load(file, parent = `${__dirname}/../components/coaching`) {
 }
 const chart = load('MetricComparisonCards');
 const traitIcons = tree => tree.props.children[0].props.children.flat().filter(item=>item?.type==='img');
+test('선수 선택은 긴 영문 시즌 설명을 줄이되 이름·시즌·강화·포지션은 보존한다', () => {
+  const {playerOptionLabel}=load('../../lib/playerComparison');
+  assert.equal(playerOptionLabel({player_name:'페데리코 발베르데',season_name:'25 UCL (25 UEFA Champions League)',sp_grade:10,position_name:'RM'}),'페데리코 발베르데 · 25 UCL +10 · RM');
+  assert.equal(playerOptionLabel({player_name:'카카',season_name:'',sp_grade:8,position_name:'RF'}),'카카 · +8 · RF');
+});
 test('강화만 다른 피드는 저장된 특성·코치·전술을 보여주고 경기의 강화와 능력치는 유지한다', () => {
   const { savedPlayerSettings } = load('../../lib/playerTraits');
   const source = {sp_id:877138449,grade:9,position:'RF',overall:145,

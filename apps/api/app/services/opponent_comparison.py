@@ -3,6 +3,7 @@ from app.services.coaching_data import number
 from app.services.comparison_evidence import compare_rates, rate_sample
 from app.services.domain_coaching import SHOT_PAIRS
 from app.services.passing_coaching import PASS_TYPES
+from app.services.match_selection import eligible_match_rows
 
 
 RATIOS = (
@@ -17,7 +18,7 @@ RATIOS = (
 
 
 def opponent_comparison(rows):
-    completed = [row for row in rows if row.match_end_type == 0]
+    completed = eligible_match_rows(rows, True, True)
     comparisons = []
     for key, label, section, made, attempted in RATIOS:
         mine_success = mine_trials = their_success = their_trials = 0
@@ -45,4 +46,4 @@ def opponent_comparison(rows):
         comparisons.append({'metric': key, 'label': label, 'mine': current, 'opponent': opponent,
                             'status': status, 'gap_pp': gap, 'method': 'paired_observed_rates'})
     return {'source': 'same_matches_opponents', 'matches': len(completed), 'metrics': comparisons,
-            'note': '정상 종료 경기에서 양 팀의 유효한 성공·시도가 함께 있는 기록만 비교합니다. 각 5경기·20회 이상인 항목의 실제 성공률 차이를 표시하며 통계적 유의성이나 실력 차이를 뜻하지 않습니다.'}
+            'note': '중단 전 기록을 포함해 양 팀의 성공·시도가 함께 있는 항목을 비교합니다.'}

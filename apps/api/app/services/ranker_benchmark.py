@@ -9,8 +9,9 @@ from app.services.cache import CacheClient
 from app.services.metric_catalog import metric_catalog
 from app.services.domain_scores import score_inputs
 from app.services.ranker_source import list_official_rankers
+from app.services.match_selection import eligible_match_rows
 
-CACHE_KEY = 'rankers:benchmark:v5'
+CACHE_KEY = 'rankers:benchmark:v6'
 LAST_VALID_KEY = f'{CACHE_KEY}:last_valid'
 _CACHE = CacheClient()
 _BUNDLED_SNAPSHOT = Path(__file__).resolve().parents[1] / 'data' / 'ranker-benchmark.json'
@@ -66,7 +67,7 @@ def aggregate_rankers(profiles, listed_count, fetched_at=None):
     samples, usage, templates, members, dates, match_ids = defaultdict(list), defaultdict(list), {}, [], [], set()
     score_profiles = []
     for member, rows in profiles:
-        rows = sorted((row for row in rows if row.match_end_type == 0), key=lambda row: (row.match_date, row.match_id), reverse=True)[:30]
+        rows = sorted(eligible_match_rows(rows, True, True), key=lambda row: (row.match_date, row.match_id), reverse=True)[:30]
         if not rows:
             continue
         members.append({'rank': member['rank_no'], 'nickname': member['nickname'], 'matches': len(rows)})
@@ -102,8 +103,8 @@ def aggregate_rankers(profiles, listed_count, fetched_at=None):
         'unique_match_count': len(match_ids), 'members': members, 'groups': groups, 'score_profiles': score_profiles,
         'ranking_fetched_at': fetched_at, 'computed_at': utc_now_iso(),
         'match_from': min(dates) if dates else None, 'match_until': max(dates) if dates else None,
-        'method': 'equal_ranker_mean_latest_30_normal_official',
-        'note': '공식 1대1 랭커 중 실제 경기 기록이 연결된 인원의 최근 정상 종료 공식경기(각 최대 30경기)를 사용합니다. 먼저 각 랭커의 지표를 계산한 뒤 인원별 동일 가중치로 평균냅니다. 지표별 기록이 없으면 해당 평균에서 제외하며 실제 참여 인원을 표시합니다. 경기 수가 많은 랭커가 평균을 더 크게 좌우하지 않습니다. 상대·선수 구성·전술이 달라 수치 차이만으로 원인이나 실력 차이를 확정하지 않습니다.'}
+        'method': 'equal_ranker_mean_latest_30_recorded_official',
+        'note': '랭커별 최근 공식경기 최대 30경기의 실제 기록을 같은 비중으로 평균냅니다. 몰수 경기는 중단 전 기록을 포함하며, 지표별 누락값은 제외합니다.'}
 
 
 def get_ranker_benchmark(refresh=False):

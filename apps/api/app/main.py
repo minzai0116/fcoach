@@ -496,7 +496,7 @@ def squad_feed_detail(request: Request, feed_id: str) -> dict:
 @app.post("/analysis/run")
 def analysis_run(request: Request, req: AnalysisRunRequest) -> dict[str, Any]:
     _enforce_rate_limit(request, scope="analysis_run", max_requests=8, window_sec=60)
-    cache_key = f"latest_analysis:empirical_v4:{req.ouid}:{req.match_type}:{req.window}"
+    cache_key = f"latest_analysis:empirical_v5:{req.ouid}:{req.match_type}:{req.window}"
     request_fingerprint = hashlib.sha256(
         json.dumps(req.model_dump(), sort_keys=True, ensure_ascii=True).encode()
     ).hexdigest()
@@ -555,7 +555,7 @@ def analysis_latest(
     match_type: int = Query(..., ge=1),
     window: int = Query(30, ge=0),
 ) -> dict[str, Any]:
-    cache_key = f"latest_analysis:empirical_v4:{ouid}:{match_type}:{window}"
+    cache_key = f"latest_analysis:empirical_v5:{ouid}:{match_type}:{window}"
     cached = cache.get_json(cache_key)
     if cached:
         return cached

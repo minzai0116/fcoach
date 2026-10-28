@@ -1,6 +1,11 @@
 import type { ComparableMetric, MetricUnit } from "../types/comparison";
 import type { PositionPlayer } from "../types/coaching";
 
+export function playerOptionLabel(player: PositionPlayer): string {
+  const season = player.season_name?.split("(")[0].trim();
+  return `${player.player_name} · ${season ? `${season} ` : ""}+${player.sp_grade} · ${player.position_name}`;
+}
+
 const COUNTERS: Record<string, [string, MetricUnit, ComparableMetric["direction"]]> = {
   goals: ["경기당 득점", "goals", "higher"], assists: ["경기당 도움", "average", "higher"],
   intercept: ["경기당 인터셉트", "average", "neutral"], defending_actions: ["경기당 골 차단", "average", "neutral"],

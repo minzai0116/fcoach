@@ -23,7 +23,7 @@ export function RankerComparisonPanel({ analysis, onSearch, onRefresh, loading =
   const reference = data?.groups.find(item => item.id === group);
   const mine = analysis?.comparison_metrics?.all?.find(item => item.id === group);
   const mineById = new Map(mine?.metrics.map(metric => [metric.id, metric]));
-  const mineCount = analysis?.sample_selection?.normal_count ?? 0;
+  const mineCount = analysis?.sample_count ?? 0;
   const findings = analysis?.ranker_coaching?.by_group?.[group];
   const highlighted = new Set([...findings?.strengths ?? [], ...findings?.weaknesses ?? []].map(item => item.id));
   const remaining = reference?.metrics.filter(metric => !highlighted.has(metric.id)) ?? [];

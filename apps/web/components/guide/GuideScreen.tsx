@@ -29,6 +29,7 @@ export function GuideScreen({ hasAnalysis, onStartSearch, onOpenPlayers, onOpenA
     <article className="panel guide-faq"><h3 className="section-title">자주 묻는 질문</h3>
       <details><summary>공개 피드는 어떻게 연결하나요?</summary><p>스쿼드메이커에서 피드를 공개 공유한 뒤, 경기 검색에서 ‘닉네임의 공개 피드 불러오기’를 누르세요. 저장한 미니페이스온과 신규 특성을 표시합니다. 같은 카드·포지션이면 강화가 달라도 설정·특성에서 기본·획득 특성, 훈련코치와 개인 전술을 볼 수 있습니다. 다른 강화의 설정에는 피드의 저장 강화를 표시합니다.</p></details>
       <details><summary>비교 색상은 무엇을 뜻하나요?</summary><p>선수 비교는 첫 번째 선수 파랑, 두 번째 선수 보라로 고정합니다. 랭커·상대 비교는 파랑이 앞선 방향, 빨강이 낮은 방향입니다. 사용 비중·거리 같은 참고 기록은 중립색입니다.</p></details>
+      <details><summary>몰수 경기도 분석되나요?</summary><p>승패와 중단 전까지 남은 슈팅·패스·선수 기록을 포함합니다. 실제 득점은 몰수 처리로 부여된 최종 점수와 구분하며, 없는 기록이나 경기 시간을 추정하지 않습니다.</p></details>
       <details><summary>닉네임을 검색해도 경기가 나오지 않아요.</summary><p>닉네임과 최근 경기 내역을 확인하세요. 연결 실패·점검·호출 제한이 표시되면 잠시 후 다시 조회하세요.</p></details>
     </article>
   </section>;

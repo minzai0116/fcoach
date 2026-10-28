@@ -108,3 +108,13 @@ def extract_coaching_data(user: dict, opponent: dict) -> dict:
         'shots': _shots(user.get('shootDetail')), 'shots_observed': isinstance(user.get('shootDetail'), list),
         'opponent_shots': _shots(opponent.get('shootDetail')), 'opponent_shots_observed': isinstance(opponent.get('shootDetail'), list),
     }
+
+
+def recorded_team_goals(row: MatchStats, *, opponent: bool = False) -> float | None:
+    source, other = ('opponent_shoot', 'shoot') if opponent else ('shoot', 'opponent_shoot')
+    shoot = row.coaching_data.get(source, {})
+    if row.match_end_type == 0:
+        return number(shoot, 'goalTotalDisplay', 'goalTotal')
+    goals = number(shoot, 'goalTotal')
+    # 몰수로 부여된 최종 점수는 실제 득점에 섞지 않는다. 상대 자책골은 별도 실측값이다.
+    return goals + (number(row.coaching_data.get(other, {}), 'ownGoal') or 0) if goals is not None else None

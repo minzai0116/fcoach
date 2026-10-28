@@ -4,7 +4,7 @@ from collections import defaultdict
 from typing import Any, Iterable
 
 from app.services.analysis_models import MatchStats
-from app.services.coaching_data import number
+from app.services.coaching_data import number, recorded_team_goals
 from app.services.shot_types import shot_type_label as _goal_type_label
 
 
@@ -38,8 +38,8 @@ def compute_metrics(matches: Iterable[MatchStats]) -> dict[str, float]:
 
     wins = sum(1 for row in rows if row.result == "승")
     recorded_goals = sum(row.goals_for for row in rows)
-    goals_for = sum(value if (value := number(row.coaching_data.get('shoot', {}), 'goalTotalDisplay')) is not None else row.goals_for for row in rows)
-    goals_against = sum(value if (value := number(row.coaching_data.get('opponent_shoot', {}), 'goalTotalDisplay')) is not None else row.goals_against for row in rows)
+    goals_for = sum(value if (value := recorded_team_goals(row)) is not None else row.goals_for for row in rows)
+    goals_against = sum(value if (value := recorded_team_goals(row, opponent=True)) is not None else row.goals_against for row in rows)
     xg_for = sum(row.xg_for for row in rows)
     xg_against = sum(row.xg_against for row in rows)
     total_shots = sum(row.shots for row in rows)

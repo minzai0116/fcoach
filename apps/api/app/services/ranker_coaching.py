@@ -118,4 +118,4 @@ def build_ranker_coaching(groups, benchmark, coaching):
     return {'status': benchmark.get('status', 'unavailable'), 'ranker_count': benchmark.get('ranker_count', 0),
             'record_count': benchmark.get('record_count', 0), 'strengths': strengths, 'weaknesses': weaknesses, 'by_group': by_group, 'advice': advice,
             'method': 'outside_ranker_interquartile_range',
-            'note': '내 최근 30경기(공식·친선 합산)의 정상 종료 기록과 랭커 공식경기 평균을 비교합니다. 랭커별 실제 지표의 가운데 50% 범위 밖인 항목을 우선 표시합니다. 경기 모드·상대·선수 구성이 달라 수치 차이의 원인이나 실력 차이를 단정하지 않습니다.'}
+            'note': '내 최근 30경기(공식·친선 합산)의 기록이 확인된 기록과 랭커 공식경기 평균을 비교합니다. 랭커별 실제 지표의 가운데 50% 범위 밖인 항목을 우선 표시합니다. 경기 모드·상대·선수 구성이 달라 수치 차이의 원인이나 실력 차이를 단정하지 않습니다.'}

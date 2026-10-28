@@ -967,7 +967,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
       {screen === "diagnosis" && analysis && (
         <PositionCoachingPanel key="team" section="team" rankerCoaching={analysis.ranker_coaching} comparisonGroups={analysis.comparison_metrics?.all} benchmark={analysis.ranker_benchmark} coaching={analysis.coaching} renderOverview={() => <section className="grid grid-3">
           <DomainScorePanel data={analysis.domain_scores} />
-          <OpponentComparisonPanel comparison={analysis.opponent_comparison} modeCounts={analysis.normal_mode_counts ?? analysis.mode_counts} />
+          <OpponentComparisonPanel comparison={analysis.opponent_comparison} modeCounts={analysis.mode_counts} />
           <FeedConnectionSummary context={analysis?.coaching?.squad_feed} onOpen={() => goToScreen("actions")} />
           {topRecommendedAction && !hasContextualFeed && (
             <article className="panel span-3 diagnosis-action-cta">

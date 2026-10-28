@@ -16,6 +16,7 @@ function ChangeHighlights({ data, onSelect }: { data: MatchTrends; onSelect: (gr
 }
 
 type TrendMetric = MatchTrends["groups"][number]["metrics"][number];
+const pointResult = (point: MatchTrends["points"][number]) => point.match_end_type === 1 ? "몰수승" : point.match_end_type === 2 ? "몰수패" : point.result ?? "";
 function TrendChart({ metric, points }: { metric: TrendMetric; points: MatchTrends["points"] }) {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(640), [selected, setSelected] = useState<number | null>(null);
@@ -53,8 +54,8 @@ function TrendChart({ metric, points }: { metric: TrendMetric; points: MatchTren
       </g>)}
       {[0, Math.floor((metric.history.length - 1) / 2), metric.history.length - 1].filter((n, i, all) => all.indexOf(n) === i).map(i => <text key={i} x={x(i)} y={height - 14} textAnchor={i === 0 ? "start" : i === metric.history.length - 1 ? "end" : "middle"} fontSize="12" fill="#425b76">{i === metric.history.length - 1 ? "최근 경기" : `${i + 1}번째 경기`}</text>)}
     </svg>
-    <div className="trend-point-picker"><button type="button" aria-label="이전 경기 시점" disabled={index === 0} onClick={() => setSelected(index - 1)}>‹</button><select aria-label="최근 경기 추이 시점 선택" value={index} onChange={event => setSelected(Number(event.target.value))}>{points.map((point, i) => <option key={i} value={i}>{i + 1}번째 · {new Date(point.date).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</option>)}</select><button type="button" aria-label="다음 경기 시점" disabled={index === points.length - 1} onClick={() => setSelected(index + 1)}>›</button></div>
-    {context && <div className="trend-point-detail" aria-live="polite"><div><strong>{comparisonValue(point.value, metric.unit)}</strong><span>{new Date(context.date).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} 경기 시점</span></div><span>직전 {context.window_matches}경기 중 유효 기록 {point.observed_matches}경기</span></div>}
+    <div className="trend-point-picker"><button type="button" aria-label="이전 경기 시점" disabled={index === 0} onClick={() => setSelected(index - 1)}>‹</button><select aria-label="최근 경기 추이 시점 선택" value={index} onChange={event => setSelected(Number(event.target.value))}>{points.map((point, i) => <option key={i} value={i}>{i + 1}번째 · {new Date(point.date).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} · {pointResult(point)}</option>)}</select><button type="button" aria-label="다음 경기 시점" disabled={index === points.length - 1} onClick={() => setSelected(index + 1)}>›</button></div>
+    {context && <div className="trend-point-detail" aria-live="polite"><div><strong>{comparisonValue(point.value, metric.unit)}</strong><span>{new Date(context.date).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} · {pointResult(context)}</span></div><span>직전 {context.window_matches}경기 중 유효 기록 {point.observed_matches}경기</span></div>}
   </div>;
 }
 

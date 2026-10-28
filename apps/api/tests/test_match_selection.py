@@ -81,10 +81,10 @@ class SelectionPersistenceTest(unittest.TestCase):
             init_db()
             result = run_analysis('test-ouid', 60, 5, include_forfeit_losses=True, start_match_id='match0003')
             self.assertEqual(result['sample_count'], 3)
-            self.assertEqual(result['coaching']['sample_count'], 2)
+            self.assertEqual(result['coaching']['sample_count'], 3)
             self.assertEqual(result['sample_count'], 3)
-            self.assertEqual(result['coaching']['passing']['sample_count'], 2)
-            self.assertEqual(result['coaching']['players'][0]['appearances'], 2)
+            self.assertEqual(result['coaching']['passing']['sample_count'], 3)
+            self.assertEqual(result['coaching']['players'][0]['appearances'], 3)
             self.assertEqual(result['sample_selection']['forfeit_loss_count'], 1)
             with patch('app.services.analysis.list_match_stats', return_value=[]):
                 latest = get_latest_analysis('test-ouid', 60, 5)

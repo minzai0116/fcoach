@@ -11,9 +11,10 @@ export function PassingCoachingPanel({ passing, observation, comparisons = new M
   const [mode, setMode] = useState<"share" | "success">("success");
   const selected = passing.types.find((item) => item.metric === selection) ?? passing.types[0];
   const priority = passing.priorities.find((item) => item.metric === selected?.metric);
+  const typeMatches = passing.type_observed_matches ?? passing.observed_matches;
   return (
     <section className="passing-coaching" aria-label="팀 패스 유형 분석">
-      <div className="coaching-section-heading"><h4>패스 유형별 기록</h4><span>{passing.observed_matches}경기</span></div>
+      <div className="coaching-section-heading"><h4>패스 유형별 기록</h4><span>전체 {passing.observed_matches}경기{typeMatches !== passing.observed_matches ? ` · 유형 ${typeMatches}경기` : ""}</span></div>
       <TeamMetricComparison pairs={comparisons} ids={["passing:overall"]} />
       <div className="passing-overview">
         <div><small>전체 성공률</small><strong>{formatPercent(passing.overall.success_rate)}</strong></div>
@@ -21,7 +22,7 @@ export function PassingCoachingPanel({ passing, observation, comparisons = new M
         <div><small>패스 실패</small><strong>{passing.overall.failures.toLocaleString()}<em>회</em></strong></div>
       </div>
 
-      {passing.observed_matches === 0 ? <p className="muted">유형을 비교할 수 있는 패스 기록이 없습니다.</p> : <div className="passing-analysis-layout"><div className="passing-comparison">
+      {typeMatches === 0 ? <p className="muted">유형을 비교할 수 있는 패스 기록이 없습니다.</p> : <div className="passing-analysis-layout"><div className="passing-comparison">
         <div className="passing-chart-heading"><h5>{mode === "share" ? "사용량과 실패량 비교" : "유형별 성공률 비교"}</h5><div className="coaching-view-toggle" aria-label="그래프 보기 선택">
           <button aria-pressed={mode === "share"} onClick={() => setMode("share")}>사용·실패 비중</button>
           <button aria-pressed={mode === "success"} onClick={() => setMode("success")}>성공률</button>

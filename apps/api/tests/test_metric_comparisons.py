@@ -31,17 +31,17 @@ class MetricComparisonTest(unittest.TestCase):
         self.assertAlmostEqual(metric['q3'], .7)
         self.assertAlmostEqual(metric['spread'], .4)
 
-    def test_forfeits_missing_fields_and_zero_attempts_do_not_become_zero_rates(self):
+    def test_forfeits_use_actual_records_and_zero_attempts_do_not_become_zero_rates(self):
         result = aggregate_rankers([({'rank_no': 1, 'nickname': 'a'}, [row(1, 0, 0)]),
                                     ({'rank_no': 2, 'nickname': 'b'}, [row(2, 9, end=1)]),
                                     ({'rank_no': 3, 'nickname': 'c'}, [row(3, 4)])], 3)
         metric = find(result['groups'], 'shooting:on_target')
-        self.assertEqual(metric['ranker_count'], 1)
-        self.assertEqual(metric['value'], .4)
-        self.assertEqual(result['ranker_count'], 2)
+        self.assertEqual(metric['ranker_count'], 2)
+        self.assertEqual(metric['value'], .65)
+        self.assertEqual(result['ranker_count'], 3)
         self.assertEqual(aggregate_rankers([], 20)['status'], 'unavailable')
 
-    def test_each_ranker_uses_latest_thirty_normal_matches(self):
+    def test_each_ranker_uses_latest_thirty_recorded_matches(self):
         rows = [row(i, 1 if i <= 5 else 8) for i in range(1, 36)]
         result = aggregate_rankers([({'rank_no': 1, 'nickname': 'a'}, rows)], 1)
         self.assertEqual(result['record_count'], 30)
@@ -66,12 +66,13 @@ class MetricComparisonTest(unittest.TestCase):
         prefix = build_match_trends(rows[:21])
         self.assertEqual(metric['history'][0]['value'], find(prefix['groups'], 'shooting:on_target')['history'][-1]['value'])
 
-    def test_trends_keep_missing_values_and_exclude_forfeit_games(self):
+    def test_trends_keep_missing_values_and_include_forfeit_games(self):
         data = build_match_trends([row(1, 0, 0), row(2, 10, end=1), row(3, 8)])
         metric = find(data['groups'], 'shooting:on_target')
-        self.assertEqual(data['point_count'], 2)
+        self.assertEqual(data['point_count'], 3)
         self.assertIsNone(metric['history'][0]['value'])
-        self.assertEqual(metric['history'][1]['value'], .8)
+        self.assertEqual(metric['history'][1]['value'], 1)
+        self.assertEqual(metric['history'][2]['value'], .9)
         self.assertEqual(build_match_trends([])['point_count'], 0)
 
     def test_catalog_uses_the_same_units_as_the_screen(self):

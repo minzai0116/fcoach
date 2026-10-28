@@ -33,7 +33,7 @@ def load_recent_modes(ouid, loader, **options):
 
 def mode_history(rows, all_rows):
     parts = [(mode, build_team_history_coaching([row for row in rows if row.match_type == mode],
-                                              [row for row in all_rows if row.match_type == mode], mode))
+                                              [row for row in all_rows if row.match_type == mode], mode, include_forfeits=True))
              for mode in PLAY_MODES if any(row.match_type == mode for row in rows)]
     actions, issues = [], {}
     for mode, part in parts:

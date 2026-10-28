@@ -52,7 +52,7 @@ def _plan(code: str, title: str, status: str, evidence: list[dict], reason: str,
 
 
 def _verify(metric: dict, guardrail: str) -> str:
-    return (f"같은 모드·카드·강화·자리의 다음 정상 종료 경기에서 {metric['label']} 성공/시도 수를 이전 구간과 비교하세요. "
+    return (f"같은 모드·카드·강화·자리의 다음 기록이 확인된 경기에서 {metric['label']} 성공/시도 수를 이전 구간과 비교하세요. "
             f"{guardrail} 과거 성공률은 달성해야 할 정상 기준이나 효과 예측이 아닙니다.")
 
 
@@ -136,9 +136,9 @@ def build_contextual_coaching(snapshot: dict, coaching: dict, rows: list, compar
     team = {s['key']: s for s in snapshot['team_tactics'] if s['status'] == 'present'}
     team_plans = []
     if linked and len(matched_rows) >= 5 and mode != 52 and team.get('offensive_style_buildup', {}).get('value') == '긴 패스':
-        history_matched = [row for row in history_rows or [] if row.match_end_type == 0 and starters == {
+        history_matched = [row for row in history_rows or [] if row.match_end_type in (0, 1, 2) and starters == {
             (p['sp_id'], p['sp_grade'], positions.get(p['sp_position'])) for p in active_players(row)}]
-        passing = build_passing_coaching(matched_rows, mode, history_rows=history_matched)
+        passing = build_passing_coaching(matched_rows, mode, include_forfeits=True, history_rows=history_matched)
         long = next((v for v in passing['types'] if v['metric'] == 'long'), None)
         if long and any(p['metric'] == 'long' for p in passing['priorities']):
             evidence = [{'label': '긴 패스 성공률', 'success': long['success'], 'trials': long['trials'], 'value': long['success_rate'],
@@ -159,4 +159,4 @@ def build_contextual_coaching(snapshot: dict, coaching: dict, rows: list, compar
             unique.append(item)
             seen.add(key)
     return {'rule_version': VERSION, 'priorities': unique[:3], 'team_plans': team_plans,
-            'matched_roster_sample_count': len(matched_rows), 'rule_note': '현재와 이전 정상 종료 경기의 비교 근거가 있는 변화만 코칭합니다. 저장 설정의 사용·특성 발동과 인과 효과는 확인되지 않습니다.'}
+            'matched_roster_sample_count': len(matched_rows), 'rule_note': '현재와 이전 기록이 확인된 경기의 비교 근거가 있는 변화만 코칭합니다. 저장 설정의 사용·특성 발동과 인과 효과는 확인되지 않습니다.'}

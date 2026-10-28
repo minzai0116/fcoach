@@ -6,6 +6,7 @@ from typing import Any
 from app.services.analysis_models import MatchStats
 from app.services.match_selection import eligible_match_rows
 from app.services.comparison_evidence import compare_rates, rate_sample, previous_matches
+from app.services.coaching_data import number
 
 
 PASS_TYPES = {
@@ -42,9 +43,16 @@ def build_passing_coaching(rows: list[MatchStats], match_type: int, *, include_f
     completed = eligible_match_rows(rows, include_forfeits, include_forfeits)
     totals = {key: {"trials": 0, "success": 0} for key in ("overall", *PASS_TYPES)}
     active = {key: [] for key in totals}
-    matched = 0
+    overall = {'trials': 0, 'success': 0}
+    matched = overall_matches = 0
     for row in completed:
         breakdown = row.pass_breakdown
+        trials, success = number(breakdown.get('overall', {}), 'trials'), number(breakdown.get('overall', {}), 'success')
+        if trials is None or success is None or success > trials:
+            continue
+        overall_matches += 1
+        overall['trials'] += trials
+        overall['success'] += success
         if any(key not in breakdown for key in totals):
             continue
         # 같은 경기의 분모를 맞추고, 누락·중복 분류를 전체 기록과 대조한다.
@@ -58,13 +66,13 @@ def build_passing_coaching(rows: list[MatchStats], match_type: int, *, include_f
             for field in total:
                 total[field] += breakdown[key][field]
 
-    overall = totals.pop("overall")
-    attempts = overall["trials"]
-    failures = attempts - overall["success"]
+    type_overall = totals.pop("overall")
+    attempts = type_overall["trials"]
+    failures = attempts - type_overall["success"]
     remainder_trials = attempts - sum(total["trials"] for total in totals.values())
-    remainder_success = overall["success"] - sum(total["success"] for total in totals.values())
-    history = previous_matches(history_rows or [], rows)
-    previous = build_passing_coaching(history, match_type) if history else None
+    remainder_success = type_overall["success"] - sum(total["success"] for total in totals.values())
+    history = previous_matches(history_rows or [], rows, include_forfeits=include_forfeits)
+    previous = build_passing_coaching(history, match_type, include_forfeits=include_forfeits) if history else None
     before = {item["metric"]: item["sample"] for item in previous["types"]} if previous else {}
     types = []
     for metric, (label, _) in PASS_TYPES.items():
@@ -92,17 +100,18 @@ def build_passing_coaching(rows: list[MatchStats], match_type: int, *, include_f
         prior = item["comparison"]["previous"]
         priorities.append({
             "metric": item["metric"], "label": item["label"],
-            "evidence": f"현재 정상 종료 {matched}경기에서 {item['label']} {item['success']:g}/{item['trials']:g}회 ({item['success_rate']:.1%}), 이전 {prior['matches']}경기 {prior['success']:g}/{prior['trials']:g}회 ({prior['value']:.1%})입니다. 95% Wilson 구간이 겹치지 않는 하락입니다.",
-            "interpretation": "같은 모드의 이전 정상 종료 경기와 비교했습니다. 상대·패스 난이도·찬스 기여는 달라질 수 있어 원인이나 나쁜 선택으로 단정하지 않습니다.",
+            "evidence": f"현재 기록이 확인된 {matched}경기에서 {item['label']} {item['success']:g}/{item['trials']:g}회 ({item['success_rate']:.1%}), 이전 {prior['matches']}경기 {prior['success']:g}/{prior['trials']:g}회 ({prior['value']:.1%})입니다. 95% Wilson 구간이 겹치지 않는 하락입니다.",
+            "interpretation": "같은 모드의 이전 기록이 확인된 경기와 비교했습니다. 상대·패스 난이도·찬스 기여는 달라질 수 있어 원인이나 나쁜 선택으로 단정하지 않습니다.",
             "adjustment": ("감독 모드는 직접 조작을 교정하지 않습니다. 선수·포메이션을 유지하고 같은 유형의 사용 비중과 실패 비중이 반복되는지 추가 자동 경기에서 확인하세요."
                            if match_type == 52 else _ADJUSTMENTS[item["metric"]]),
             "verification": f"같은 모드에서 다음 5경기 이상·{item['label']} 20회 이상을 모아 성공률, 사용 비중, 전체 패스 100회당 이 유형의 실패 수(현재 {item['loss_per_100_passes']:g}회)를 함께 비교하세요. 시도만 줄여 성공률이 올라간 경우도 구분하고, 팀 슈팅·득점이 함께 줄지 않았는지 확인하세요.",
         })
     return {
-        "scope": "team", "sample_count": len(completed), "observed_matches": matched,
-        "excluded_matches": len(completed) - matched,
-        "overall": {**overall, "failures": failures, "success_rate": round(overall["success"] / attempts, 6) if attempts else None},
+        "scope": "team", "sample_count": len(completed), "observed_matches": overall_matches,
+        "excluded_matches": len(completed) - overall_matches,
+        "type_observed_matches": matched, "type_overall": type_overall,
+        "overall": {**overall, "failures": overall['trials'] - overall['success'], "success_rate": round(overall["success"] / overall['trials'], 6) if overall['trials'] else None},
         "remainder": {"trials": remainder_trials, "success": remainder_success, "failures": remainder_trials - remainder_success},
         "types": types, "priorities": priorities,
-        "note": "팀 전체의 패스 유형 기록입니다. 선수·포지션별 유형과 전진·횡·후방 방향은 제공되지 않습니다. 사용 비중은 유형 시도/전체 시도, 실패 비중은 유형 실패/전체 실패입니다. 6유형이 모두 유효한 경기만 집계하며 전체 기록과의 차이는 별도 표시합니다. 차이에 해당하는 패스 종류는 추정하지 않으므로 유형 비중의 합은 100%보다 작을 수 있습니다. 차이의 성공 수가 음수이거나 차이의 시도 수보다 크면 해당 경기를 제외합니다. 교정은 현재·이전 정상 종료 구간이 각각 5경기·해당 유형 20회 이상이고 95% Wilson 구간이 겹치지 않는 하락에만 제시합니다. 사용·실패 비중만으로 문제를 판단하지 않습니다.",
+        "note": "전체 패스는 유효한 전체 성공·시도 기록을 합산합니다. 유형별 지표·사용 비중은 6유형의 합계가 검증된 동일 경기만 사용합니다. 미분류는 전체와 유형 합계의 차이이며 종류를 추정하지 않습니다.",
     }

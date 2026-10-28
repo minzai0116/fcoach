@@ -51,16 +51,16 @@ class RecentModesTest(unittest.TestCase):
         self.assertEqual(result['actions'], [])
         self.assertTrue(all(c['status'] == 'unavailable' for c in result['comparisons'].values()))
 
-    def test_direct_comparison_uses_paired_valid_normal_matches(self):
+    def test_direct_comparison_uses_paired_valid_records_including_forfeits(self):
         valid = [row(i) for i in range(1, 11)]
         invalid = replace(row(11), coaching_data={'shoot': {'effectiveShootTotal': 10, 'shootTotal': 10}})
         forfeit = replace(row(12, mine=0, opponent=10), match_end_type=1)
         result = opponent_comparison(valid + [invalid, forfeit])['metrics'][0]
-        self.assertEqual(result['mine']['matches'], 10)
+        self.assertEqual(result['mine']['matches'], 11)
         self.assertEqual(result['mine']['success'], 90)
-        self.assertEqual(result['opponent']['success'], 30)
+        self.assertEqual(result['opponent']['success'], 40)
         self.assertEqual(result['status'], 'higher')
-        self.assertEqual(result['gap_pp'], 60)
+        self.assertEqual(result['gap_pp'], 45.45)
 
     def test_close_or_missing_comparisons_never_become_weaknesses(self):
         equal = opponent_comparison([row(i, mine=5, opponent=5) for i in range(1, 11)])['metrics']

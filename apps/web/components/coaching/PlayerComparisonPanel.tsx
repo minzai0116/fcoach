@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import type { PositionPlayer } from "../../types/coaching";
 import { positionPlayerKey } from "../../types/coaching";
 import type { PlayerReportEntry } from "../../types/analysis";
-import { pairPlayerMetrics } from "../../lib/playerComparison";
+import { pairPlayerMetrics, playerOptionLabel } from "../../lib/playerComparison";
 import { PlayerPortrait } from "../player/PlayerPortrait";
 import { OfficialPlayerBadges } from "../player/OfficialPlayerBadges";
 import { MetricComparisonCards } from "./MetricComparisonCards";
@@ -32,7 +32,7 @@ export function PlayerComparisonPanel({ players, reports = [], feed }: { players
   return <section className="player-comparison" aria-label="우리 팀 선수 비교"><h4>선수 비교</h4>
     <div className="player-compare-selectors">{sides.map(({ player, set, other, title }) => {
       const report = reports.find(item => item.sp_id === player.sp_id && item.sp_grade === player.sp_grade);
-      return <div className="player-compare-identity" key={title}><label>{title}<select aria-label={title} value={positionPlayerKey(player)} onChange={event => set(event.target.value)}>{ordered.map(option => <option key={positionPlayerKey(option)} value={positionPlayerKey(option)} disabled={positionPlayerKey(option) === positionPlayerKey(other)}>{option.player_name} · {option.season_name} +{option.sp_grade} · {option.position_name}</option>)}</select></label>
+      return <div className="player-compare-identity" key={title}><label>{title}<select aria-label={title} value={positionPlayerKey(player)} onChange={event => set(event.target.value)}>{ordered.map(option => <option key={positionPlayerKey(option)} value={positionPlayerKey(option)} disabled={positionPlayerKey(option) === positionPlayerKey(other)}>{playerOptionLabel(option)}</option>)}</select></label>
         <div><PlayerPortrait player={report ?? player} preferredImage={images.get(player.sp_id) || images.get(player.sp_id % 1_000_000)} actionFirst alt="" className="player-compare-face" /><div><strong>{player.player_name}</strong><OfficialPlayerBadges seasonImg={report?.season_img} seasonName={player.season_name} grade={player.sp_grade} /><small>{player.position_name} · {player.appearances}경기 출전</small></div></div>
       </div>;
     })}</div>
