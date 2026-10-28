@@ -78,7 +78,7 @@ def search_public_feeds(nickname: str, page: int = 1) -> dict:
 
 def get_public_feed(feed_id: str, *, refresh: bool = False) -> dict:
     validate_feed_id(feed_id)
-    key = f'squad_feed:detail:v4:{feed_id}'
+    key = f'squad_feed:detail:v5:{feed_id}'
     if not refresh:
         cached = _cache.get_json(key)
         if cached is not None:

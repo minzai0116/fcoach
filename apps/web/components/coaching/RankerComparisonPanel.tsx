@@ -24,6 +24,9 @@ export function RankerComparisonPanel({ analysis, onSearch, onRefresh, loading =
   const mine = analysis?.comparison_metrics?.all?.find(item => item.id === group);
   const mineById = new Map(mine?.metrics.map(metric => [metric.id, metric]));
   const mineCount = analysis?.sample_selection?.normal_count ?? 0;
+  const findings = analysis?.ranker_coaching?.by_group?.[group];
+  const highlighted = new Set([...findings?.strengths ?? [], ...findings?.weaknesses ?? []].map(item => item.id));
+  const remaining = reference?.metrics.filter(metric => !highlighted.has(metric.id)) ?? [];
   return <section className="panel ranker-comparison-panel"><div className="coaching-section-heading"><div><h2 className="section-title">랭커 비교</h2><p>최근 30경기 기록과 랭커 평균을 비교합니다.</p></div><button type="button" className="btn secondary" disabled={busy || loading} onClick={analysis ? onRefresh : () => setRetry(value => value + 1)}>{busy || loading ? "불러오는 중…" : analysis ? "최근 30경기 다시 비교" : "랭커 평균 새로고침"}</button></div>
     {error && <p role="alert" className="notice error">{error}</p>}
     {data?.status === "available" && <>
@@ -31,7 +34,9 @@ export function RankerComparisonPanel({ analysis, onSearch, onRefresh, loading =
       <nav className="comparison-domain-nav" aria-label="랭커 비교 지표">{data.groups.map(item => <button key={item.id} aria-pressed={group === item.id} onClick={() => setGroup(item.id)}>{item.label}</button>)}</nav>
       <RankerHighlights data={analysis?.ranker_coaching} group={group} />
       {!analysis && <button type="button" className="btn" onClick={onSearch}>내 경기 분석 시작하기</button>}
-      <MetricComparisonCards tone="purple" referenceLabel="랭커 평균" metrics={(reference?.metrics ?? []).map(metric => ({ reference: metric, mine: mineById.get(metric.id) }))} />
+      {!!remaining.length && <section className="comparison-remaining" aria-label={highlighted.size ? "그 외 지표" : "전체 지표"}><h3>{highlighted.size ? "그 외 지표" : "전체 지표"}</h3>
+        <MetricComparisonCards tone="purple" referenceLabel="랭커 평균" metrics={remaining.map(metric => ({ reference: metric, mine: mineById.get(metric.id) }))} />
+      </section>}
 
     </>}
     {!busy && data?.status !== "available" && !error && <p>아직 비교할 랭커 경기 기록이 없습니다. 실제 경기 기록이 연결되면 평균을 표시합니다.</p>}

@@ -352,7 +352,7 @@ export type CoachKpiTarget = {
 export type OpponentComparison = {
   source: string; matches: number; note: string;
   metrics: Array<{
-    metric: string; label: string; status: string; gap_pp: number | null; action: string;
+    metric: string; label: string; status: string; gap_pp: number | null; action?: string;
     mine: { success: number | null; trials: number | null; value: number | null; matches: number };
     opponent: { success: number | null; trials: number | null; value: number | null; matches: number };
   }>;

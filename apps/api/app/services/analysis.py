@@ -2084,6 +2084,7 @@ def run_analysis(
 ) -> dict[str, Any]:
     if match_type == 0:
         window_size, start_match_id, end_match_id = 30, None, None
+        include_forfeit_wins = include_forfeit_losses = True
     purge_stale_nexon_api_data()
     tactic_input_known = isinstance(current_tactic, dict) and len(current_tactic) > 0
     live_sync_enabled = (
@@ -2109,13 +2110,13 @@ def run_analysis(
     selected, selection = select_match_sample(rows, window_size, include_forfeit_wins=include_forfeit_wins,
                                              include_forfeit_losses=include_forfeit_losses, start_match_id=start_match_id, end_match_id=end_match_id)
     if not selected:
-        message = '정상 종료 경기 내역이 없습니다. 몰수 경기 포함 설정을 확인해주세요.' if match_type == 0 else '선택한 범위와 몰수 포함 조건에 맞는 경기 내역이 없습니다. 경기 범위나 포함 조건을 바꿔주세요.'
+        message = '조회할 수 있는 최근 경기 내역이 없습니다.' if match_type == 0 else '선택한 범위와 몰수 포함 조건에 맞는 경기 내역이 없습니다. 경기 범위나 포함 조건을 바꿔주세요.'
         raise AnalysisRequestError(message,
                                    'no_matching_matches', 'change_filters')
     if window_size is not None and len(selected) < window_size:
         sample_warning = f"선택한 조건에 맞는 경기 {len(selected)}경기만 확인되어 해당 경기만 분석했습니다."
         refresh_warning = f"{refresh_warning} {sample_warning}".strip() if refresh_warning else sample_warning
-    if selection['forfeit_win_count'] or selection['forfeit_loss_count']:
+    if match_type != 0 and (selection['forfeit_win_count'] or selection['forfeit_loss_count']):
         warning = '몰수승·몰수패를 포함한 분석입니다. 경기 길이와 통계가 정상 종료 경기와 달라 수치를 직접 비교하기 어렵습니다.'
         refresh_warning = f'{refresh_warning} {warning}'.strip() if refresh_warning else warning
     if match_type == 0:
@@ -2128,7 +2129,7 @@ def run_analysis(
     history = previous_matches(rows, selected) if match_type != 0 else []
     coaching = build_position_coaching(
         selected, visuals.get("player_report", {}), _position_name_map(), match_type=match_type,
-        include_forfeits=include_forfeit_wins or include_forfeit_losses,
+        include_forfeits=match_type != 0 and (include_forfeit_wins or include_forfeit_losses),
         player_names=_spid_name_map(), history_rows=history,
     )
     if match_type == 0:

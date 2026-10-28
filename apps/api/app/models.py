@@ -25,6 +25,7 @@ class AnalysisRunRequest(BaseModel):
         if self.match_type == 0:
             self.window = 30
             self.start_match_id = self.end_match_id = None
+            self.include_forfeit_wins = self.include_forfeit_losses = True
         return self
 
 

@@ -36,7 +36,7 @@ export function PositionCoachingPanel({ section, coaching, reportPlayers, render
     <div className="analysis-view-body">
     {view === "overview" && renderOverview?.()}
     {view === "players" && <PlayerPitch coaching={coaching} reportPlayers={reportPlayers} />}
-    {view === "compare" && <PlayerComparisonPanel players={coaching.players} reports={reportPlayers} />}
+    {view === "compare" && <PlayerComparisonPanel players={coaching.players} reports={reportPlayers} feed={feed} />}
     {view === "team" && <AllMetricsCoachingPanel coaching={coaching} comparisonGroups={comparisonGroups} benchmark={benchmark} rankerCoaching={rankerCoaching} />}
     {view === "report" && renderReport?.()}
     {view === "tactics" && (feed ? <section className="team-tactics-view"><div className="coaching-section-heading"><h4>{feed.snapshot.title}</h4><span className="coaching-badge">{feed.snapshot.formation}</span></div>

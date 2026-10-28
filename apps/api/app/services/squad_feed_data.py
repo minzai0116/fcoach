@@ -7,6 +7,16 @@ from typing import Any
 from app.services.feed_features import labels, feature, intrinsic_features
 
 
+def player_image(value: Any, sp_id: int) -> str:
+    if not isinstance(value, str):
+        return ''
+    path = value.removeprefix('https://fco.dn.nexoncdn.co.kr/live/externalAssets/common')
+    match = re.fullmatch(r'/players(?:Action(?:High)?)?/p(\d+)(?:_[A-Za-z0-9]+)?\.png(?:\?rd=\d{1,20})?', path)
+    if not match or int(match[1]) % 1_000_000 != sp_id % 1_000_000:
+        return ''
+    return f'https://fco.dn.nexoncdn.co.kr/live/externalAssets/common{path}'
+
+
 def integer(value: Any, minimum: int = 0, maximum: int = 10_000) -> int | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool) and minimum <= value <= maximum and int(value) == value:
         return int(value)
@@ -90,6 +100,8 @@ def normalize_player(data: dict) -> dict | None:
     if all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and 0 <= v <= 100 for v in coords):
         pitch_position = field('present', dict(zip(('x', 'y'), coords)))
     return {'sp_id': sp_id, 'grade': integer(data.get('buildUp'), 1, 13), 'position': role,
+            'portrait_img': player_image(data.get('thumb_custom'), sp_id) or player_image(data.get('thumb'), sp_id),
+            'overall': integer(data.get('ovr'), 1, 300), 'salary': integer(data.get('pay'), 1, 100),
             'pitch_position': pitch_position, 'season_code': season,
             'season_img': f'https://ssl.nexon.com/s2/game/fc/online/obt/externalAssets/new/season/{season}.png' if season else '',
             'lineup_role': 'starter' if state == 1 else 'substitute' if state == 0 else 'unknown',

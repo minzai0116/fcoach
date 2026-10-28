@@ -46,6 +46,7 @@ import type {
   WindowSize,
 } from "../types/analysis";
 import { PlayerPortrait } from "./player/PlayerPortrait";
+import { feedPortraits } from "../lib/pitchLineup";
 import { GuideScreen } from "./guide/GuideScreen";
 import { OpponentComparisonPanel } from "./coaching/OpponentComparisonPanel";
 import { SquadFeedSelector } from "./coaching/SquadFeedSelector";
@@ -593,7 +594,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
   const matchType: MatchType = 0;
   const windowSize: WindowSize = 30;
   const [nicknameInput, setNicknameInput] = useState("");
-  const [sampleOptions, setSampleOptions] = useState<MatchSampleOptions>({ include_forfeit_wins: false, include_forfeit_losses: false, start_match_id: null, end_match_id: null });
+  const sampleOptions: MatchSampleOptions = { include_forfeit_wins: true, include_forfeit_losses: true, start_match_id: null, end_match_id: null };
   const [selectedFeed, setSelectedFeed] = useState<SquadFeedSnapshot | null>(null);
   const [feedLoading, setFeedLoading] = useState(false);
   const [resolvedUser, setResolvedUser] = useState<UserSearchResponse | null>(null);
@@ -625,6 +626,8 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
 
   const analysisSampleCount = Number(analysis?.sample_count ?? analysisWindowSize);
   const feedContext = analysis?.coaching?.squad_feed;
+  const savedPortraits = useMemo(() => feedPortraits(feedContext?.status === "available" ? feedContext : undefined), [feedContext]);
+  const preferredPortrait = (spId: number) => savedPortraits.get(spId) || savedPortraits.get(spId % 1_000_000);
   const hasContextualFeed = feedContext?.status === "available" && !!feedContext.rule_version && feedContext.summary.linked > 0;
   const tacticInputKnown = (analysis?.tactic_input_mode ?? (appliedTactic ? "provided" : "missing")) === "provided";
 
@@ -924,7 +927,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
       {screen === "search" && (
         <section className="panel grid">
           <h2 className="section-title">경기 검색</h2>
-          <p>닉네임만 입력하면 공식경기·공식 친선을 합쳐 최신순 30경기를 분석합니다.</p>
+          <p>공식경기·공식 친선 최근 30경기를 분석합니다. 몰수승·몰수패도 포함합니다.</p>
           <div className="form-row single">
             <input
               placeholder="닉네임"
@@ -936,7 +939,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                 setNicknameInput(nextValue);
                 setError("");
                 setNotice("");
-                setSampleOptions(current => ({ ...current, start_match_id: null, end_match_id: null }));
                 setSelectedFeed(null);
                 if (resolvedUser && resolvedUser.nickname !== nextValue.trim()) {
                   setResolvedUser(null);
@@ -944,10 +946,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
               }}
             />
           </div>
-          <details className="search-extra-options"><summary>몰수 경기 포함 설정</summary><div className="button-row">
-            <label><input type="checkbox" checked={sampleOptions.include_forfeit_wins} disabled={loading} onChange={event => setSampleOptions(current => ({ ...current, include_forfeit_wins: event.target.checked }))} /> 몰수승 포함</label>
-            <label><input type="checkbox" checked={sampleOptions.include_forfeit_losses} disabled={loading} onChange={event => setSampleOptions(current => ({ ...current, include_forfeit_losses: event.target.checked }))} /> 몰수패 포함</label>
-          </div><p>기본은 정상 종료 경기만 최신순 30경기입니다. 30경기보다 적으면 조회된 경기를 분석합니다.</p></details>
           <SquadFeedSelector key={nicknameInput.trim()} nickname={nicknameInput} selected={selectedFeed} disabled={loading} onChange={setSelectedFeed} onLoadingChange={setFeedLoading} />
           <div className="button-row">
             <button className="btn" onClick={() => void onQuickRun()} disabled={loading || feedLoading || nicknameInput.trim().length < 2}>
@@ -1098,7 +1096,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                   {playerSpotlights.map((item) => (
                     <article key={`${item.title}-${playerStableKey(item.player)}`} className="panel player-spotlight-card">
                       <div className="player-spotlight-head">
-                        <PlayerPortrait player={item.player} alt={`${item.player.player_name} 미니페이스온`} className="player-face spotlight" />
+                        <PlayerPortrait player={item.player} preferredImage={preferredPortrait(item.player.sp_id)} actionFirst alt={`${item.player.player_name} 미니페이스온`} className="player-face spotlight" />
                         <div>
                           <p className="action-title">{item.title}</p>
                           <h4>{item.player.player_name}</h4>
@@ -1138,7 +1136,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                               <div key={`${player.sp_id}-${player.sp_grade}`} className="chemistry-player-step">
                               {index === 1 && <span className="chemistry-direction" role="img" aria-label="찬스 제공에서 슈팅으로">→</span>}
                               <div className="chemistry-player"><small>{index === 0 ? "찬스 제공" : "슈팅"}</small>
-                                <PlayerPortrait player={player} alt={`${player.player_name} 미니페이스온`} className="player-face chemistry" />
+                                <PlayerPortrait player={player} preferredImage={preferredPortrait(player.sp_id)} actionFirst alt={`${player.player_name} 미니페이스온`} className="player-face chemistry" />
                                 <strong>{player.player_name}</strong>
                                 <span>
                                   {player.position_name} · +{normalizedGrade(player.sp_grade)}
@@ -1213,7 +1211,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                     <article key={`${player.sp_id}-${player.sp_position}`} className="player-mobile-card">
                       <div className="player-mobile-head">
                         <div className="season-cell">
-                          <PlayerPortrait player={player} alt={`${player.player_name} 미니페이스온`} className="player-face table" />
+                          <PlayerPortrait player={player} preferredImage={preferredPortrait(player.sp_id)} actionFirst alt={`${player.player_name} 미니페이스온`} className="player-face table" />
                           <strong>{player.player_name}</strong>
                         </div>
                         <span className={`enhance-badge ${enhanceLevelClass(player.sp_grade)}`}>+{normalizedGrade(player.sp_grade)}</span>
@@ -1296,7 +1294,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                         <tr key={`${player.sp_id}-${player.sp_position}`}>
                           <td>
                             <div className="season-cell">
-                              <PlayerPortrait player={player} alt={`${player.player_name} 미니페이스온`} className="player-face table" />
+                              <PlayerPortrait player={player} preferredImage={preferredPortrait(player.sp_id)} actionFirst alt={`${player.player_name} 미니페이스온`} className="player-face table" />
                               <span>{player.player_name}</span>
                             </div>
                           </td>

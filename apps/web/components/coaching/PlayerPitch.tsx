@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PositionCoaching } from "../../types/coaching";
 import type { PlayerReportEntry } from "../../types/analysis";
-import { buildPitchLineup, layoutPitchPlayers, lineupKey, type PitchPlayer } from "../../lib/pitchLineup";
-import { PlayerPortrait } from "../player/PlayerPortrait";
+import { buildPitchLineup, feedPortraits, layoutPitchPlayers, lineupKey, pitchPositionOptions, selectedPitchLineup, type PitchPlayer } from "../../lib/pitchLineup";
+import { PitchPlayerAppearance } from "./PitchPlayerAppearance";
 import { OfficialPlayerBadges } from "../player/OfficialPlayerBadges";
 import { PlayerDetailPanel } from "./PlayerDetailPanel";
 import { layoutPitchCards, type PitchCardLayout } from "../../lib/pitchCardLayout";
+import { feedTraitResolver, newPlayerTraits } from "../../lib/playerTraits";
 
 function playerState(player: PitchPlayer) {
   if (!player.record) return { label: "이 자리 기록 없음", tone: "empty" };
@@ -17,46 +18,56 @@ function playerState(player: PitchPlayer) {
 }
 
 export function PlayerPitch({ coaching, reportPlayers = [] }: { coaching: PositionCoaching; reportPlayers?: PlayerReportEntry[] }) {
-  const [source, setSource] = useState<"feed" | "match">("feed");
+  const [replacements, setReplacements] = useState<Record<string, string>>({});
+  const [showPlayerOptions, setShowPlayerOptions] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [mobileDetails, setMobileDetails] = useState(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const pitchRef = useRef<HTMLDivElement>(null);
   const [cardLayout, setCardLayout] = useState<PitchCardLayout | null>(null);
   const detailId = useId();
+  const optionsId = useId();
   const feed = coaching.squad_feed?.status === "available" ? coaching.squad_feed : undefined;
-  const currentSource = feed?.snapshot.players.some(p => p.lineup_role === "starter") ? source : "match";
-  const lineup = useMemo(() => buildPitchLineup(coaching, currentSource), [coaching, currentSource]);
-  const nodes = useMemo(() => layoutPitchPlayers(lineup), [lineup]);
-  const savedPositions = feed?.snapshot.players.filter(p => p.lineup_role === "starter").every(p => p.pitch_position?.status === "present");
+  const feedImages = useMemo(() => feedPortraits(feed), [feed]);
+  const resolveTraits = useMemo(() => feedTraitResolver(feed), [feed]);
+  const latestLineup = useMemo(() => buildPitchLineup(coaching, "match").map(player => ({ ...player,
+    traitSource: player.settings ?? resolveTraits(player.spId, player.grade),
+    portraitImage: player.settings?.portrait_img || feedImages.get(player.spId) || feedImages.get(player.spId % 1_000_000) })), [coaching, feedImages, resolveTraits]);
   const portraits = useMemo(() => new Map(reportPlayers.map(p => [`${p.sp_id}:${p.sp_grade}`, p])), [reportPlayers]);
   const records = useMemo(() => {
-    const all = new Map(lineup.map(p => [p.key, p]));
+    const all = new Map(latestLineup.map(p => [p.key, p]));
     const comparisons = new Map(feed?.comparisons.map(p => [lineupKey(p.sp_id, p.sp_grade, p.position_name), p]));
     coaching.players.forEach(record => {
       const key = lineupKey(record.sp_id, record.sp_grade, record.position_name);
       if (all.has(key)) return;
       const comparison = comparisons.get(key);
       all.set(key, { key, spId: record.sp_id, grade: record.sp_grade, position: record.position_name, name: record.player_name,
-        record, comparison, settings: comparison?.linked ? comparison.settings ?? undefined : undefined });
+        record, comparison, settings: comparison?.linked ? comparison.settings ?? undefined : undefined,
+        traitSource: (comparison?.linked ? comparison.settings ?? undefined : undefined) ?? resolveTraits(record.sp_id, record.sp_grade),
+        portraitImage: (comparison?.linked ? comparison.settings?.portrait_img : undefined) || feedImages.get(record.sp_id) || feedImages.get(record.sp_id % 1_000_000) });
     });
     return all;
-  }, [coaching.players, feed, lineup]);
+  }, [coaching.players, feed, feedImages, latestLineup, resolveTraits]);
+  const lineup = useMemo(() => selectedPitchLineup(latestLineup, records, replacements), [latestLineup, records, replacements]);
+  const nodes = useMemo(() => layoutPitchPlayers(lineup), [lineup]);
+  const positionOptions = useMemo(() => pitchPositionOptions(records.values(), latestLineup), [records, latestLineup]);
   const defaultPlayer = lineup.find(p => p.comparison?.plans?.some(plan => plan.status === "priority" || plan.status === "review")) ?? lineup[0] ?? records.values().next().value;
   const selected = selectedKey ? records.get(selectedKey) ?? defaultPlayer : defaultPlayer;
-  const pitchKeys = new Set(nodes.map(node => node.key));
-  const otherRecords = [...records.values()].filter(p => !pitchKeys.has(p.key));
-  const portrait = (player: PitchPlayer) => portraits.get(`${player.spId}:${player.grade}`) ?? { sp_id: player.spId, face_img: "", action_img: "", fallback_img: "" };
+  const pitchPositions = new Set(latestLineup.map(player => player.position));
+  const otherRecords = [...records.values()].filter(player => !pitchPositions.has(player.position));
   const badges = (player: PitchPlayer) => <OfficialPlayerBadges seasonImg={portraits.get(`${player.spId}:${player.grade}`)?.season_img || player.settings?.season_img} seasonName={player.record?.season_name || player.settings?.season_code} grade={player.grade} />;
   function selectPlayer(player: PitchPlayer) { setSelectedKey(player.key); }
-  useEffect(() => {
+  useLayoutEffect(() => {
     const field = pitchRef.current;
     if (!field) return;
-    const observer = new ResizeObserver(() => {
+    const update = () => {
       const bounds = field.getBoundingClientRect();
       if (!bounds.width || !bounds.height) return;
-      setCardLayout(layoutPitchCards(nodes, bounds.width, bounds.height, window.innerWidth <= 900));
-    });
+      setCardLayout(layoutPitchCards(nodes, bounds.width, bounds.height, window.innerWidth <= 900,
+        nodes.some(player => newPlayerTraits(player.traitSource ?? player.settings).length > 0)));
+    };
+    update();
+    const observer = new ResizeObserver(update);
     observer.observe(field);
     return () => observer.disconnect();
   }, [nodes]);
@@ -67,24 +78,29 @@ export function PlayerPitch({ coaching, reportPlayers = [] }: { coaching: Positi
   }, [mobileDetails, selectedKey]);
   return <div className="player-pitch-workspace compact-player-workspace" data-mobile-view={mobileDetails ? "detail" : "formation"} ref={workspaceRef}>
     <div className="player-pitch-overview">
+      <div className="pitch-controls">
       <div className="coaching-section-heading"><div><h4>포메이션</h4></div>
-        {feed && <label className="pitch-source">배치 기준<select aria-label="선수 배치 기준" value={currentSource} onChange={event => { setSource(event.target.value as "feed" | "match"); setSelectedKey(null); setMobileDetails(false); }}>
-          <option value="feed">{savedPositions ? "피드 포메이션" : "피드 등록 포지션"} · {feed.snapshot.formation}</option><option value="match">최근 경기 등록 포지션</option>
-        </select></label>}
-        {!!otherRecords.length && <details className="pitch-other-records"><summary>다른 선수 {otherRecords.length}</summary><div className="pitch-other-popover"><div className="pitch-other-players">{otherRecords.map(player => <button key={player.key} type="button" aria-pressed={selected?.key === player.key} aria-controls={detailId} onClick={event => { selectPlayer(player); event.currentTarget.closest("details")?.removeAttribute("open"); }}>{player.position} · {player.name} +{player.grade}</button>)}</div></div></details>}
+        <span className="pitch-registration">최근 경기 등록 포지션</span>
+        {!!positionOptions.length && <button type="button" className="pitch-change-button" aria-expanded={showPlayerOptions} aria-controls={optionsId} onClick={() => setShowPlayerOptions(value => !value)}>선수 변경 · {positionOptions.length}개 자리</button>}
+        {!!otherRecords.length && <details className="pitch-other-records"><summary>다른 자리 기록 {otherRecords.length}</summary><div className="pitch-other-popover"><div className="pitch-other-players">{otherRecords.map(player => <button key={player.key} type="button" aria-pressed={selected?.key === player.key} aria-controls={detailId} onClick={event => { selectPlayer(player); event.currentTarget.closest("details")?.removeAttribute("open"); }}>{player.position} · {player.name} +{player.grade}</button>)}</div></div></details>}
       </div>
-      <p className="pitch-source-note">{currentSource === "feed" ? `${feed?.snapshot.title} · 선발 ${nodes.length}명` : coaching.latest_lineup ? `${new Date(coaching.latest_lineup.match_date).toLocaleString("ko-KR")} · 등록 자리 ${nodes.length}명` : "이전 분석에는 경기 배치 정보가 없습니다. 다시 분석하면 최근 경기의 배치를 볼 수 있습니다."}</p>
+      {showPlayerOptions && <div className="pitch-lineup-options" id={optionsId}>
+        <div className="pitch-position-options">{positionOptions.map(([position, players]) => <label key={position}><span>{position}</span><select aria-label={`${position} 출전 선수`} value={lineup.find(player => player.position === position)?.key} onChange={event => { setReplacements(current => ({ ...current, [position]: event.target.value })); setSelectedKey(event.target.value); setMobileDetails(false); setShowPlayerOptions(false); }}>
+          {players.map(player => <option key={player.key} value={player.key}>{player.name} · {player.record?.season_name} +{player.grade} · {player.record?.appearances}경기</option>)}
+        </select></label>)}</div>
+        <button type="button" className="pitch-reset-button" disabled={!Object.keys(replacements).length} onClick={() => { setReplacements({}); setSelectedKey(null); }}>최근 경기 선수로 되돌리기</button>
+      </div>}
+      </div>
+      {!coaching.latest_lineup && <p>최근 경기 선수 배치를 불러오려면 다시 분석해주세요.</p>}
       <div className="pitch-fit-area" role="region" aria-label="포메이션 경기장">
-      <div className="player-pitch" ref={pitchRef} data-compact={cardLayout?.compact} style={cardLayout ? { "--pitch-card-width": `${cardLayout.cardWidth}px`, "--pitch-face": `${cardLayout.photoSize}px`, "--pitch-font": `${cardLayout.fontSize}px`, "--pitch-badge-height": `${cardLayout.badgeHeight}px`, "--pitch-card-height": `${cardLayout.cardHeight}px` } as React.CSSProperties : undefined} role="group" aria-label={currentSource === "feed" ? "공개 피드 선발 포메이션" : "최근 분석 경기 선수 배치"}>
+      <div className="player-pitch" ref={pitchRef} data-compact={cardLayout?.compact} style={cardLayout ? { "--pitch-card-width": `${cardLayout.cardWidth}px`, "--pitch-face": `${cardLayout.photoSize}px`, "--pitch-font": `${cardLayout.fontSize}px`, "--pitch-badge-height": `${cardLayout.badgeHeight}px`, "--pitch-card-height": `${cardLayout.cardHeight}px`, "--pitch-trait-height": `${cardLayout.traitHeight}px` } as React.CSSProperties : undefined} role="group" aria-label="최근 경기 등록 포지션 선수 배치">
         <div className="player-pitch-markings" aria-hidden="true"><i className="pitch-half" /><i className="pitch-circle" /><i className="pitch-area north" /><i className="pitch-area south" /><i className="pitch-goal north" /><i className="pitch-goal south" /></div>
         <div className="player-pitch-players">{nodes.map(player => {
           const state = playerState(player);
           const card = cardLayout?.positions[player.key];
           return <button type="button" className={`pitch-player tone-${state.tone}`} data-player-key={player.key} data-position-source={player.exact ? "saved" : "role"} data-pitch-role={player.position} key={player.key} title={`${player.position} · ${player.name}`} style={card ? { left: `${card.x}px`, top: `${card.y}px` } : { left: `${player.left}%`, top: `${player.top}%` }}
             aria-label={`${player.position} ${player.name} +${player.grade ?? "?"} · ${state.label} · 상세 보기`} aria-pressed={selected?.key === player.key} aria-controls={detailId} onClick={() => selectPlayer(player)}>
-            <span className="pitch-position">{player.position}<span className="pitch-state-dot" aria-hidden="true" /></span>
-            <span className="pitch-face-circle"><PlayerPortrait player={portrait(player)} alt="" className="pitch-portrait" /></span>
-            <span className="pitch-player-caption"><span className="pitch-card-badges">{badges(player)}</span><strong className="pitch-name-full">{player.name}</strong><strong className="pitch-name-short">{player.name.trim().split(/\s+/).at(-1)}</strong></span>
+            <PitchPlayerAppearance player={player} report={portraits.get(`${player.spId}:${player.grade}`)} />
           </button>;
         })}
         {!nodes.length && <p className="pitch-empty">배치할 선수 정보가 없습니다.</p>}</div>

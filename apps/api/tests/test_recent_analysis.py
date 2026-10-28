@@ -33,6 +33,8 @@ class RecentModesTest(unittest.TestCase):
         self.assertEqual(request.window, 30)
         self.assertIsNone(request.start_match_id)
         self.assertIsNone(request.end_match_id)
+        self.assertTrue(request.include_forfeit_wins)
+        self.assertTrue(request.include_forfeit_losses)
 
     def test_unavailable_mode_keeps_warning_and_does_not_become_zero_usage(self):
         def load(**kw):
@@ -65,3 +67,37 @@ class RecentModesTest(unittest.TestCase):
         self.assertEqual(equal[0]['status'], 'no_clear_change')
         self.assertTrue(all(metric['status'] != 'lower' for metric in equal))
         self.assertTrue(all(metric['status'] == 'unavailable' for metric in opponent_comparison([])['metrics']))
+
+    def test_recent_selection_includes_forfeits_without_exposing_filter_options(self):
+        request = AnalysisRunRequest(ouid='private-user', match_type=0, include_forfeit_wins=False, include_forfeit_losses=False)
+        records = [replace(row(i), match_end_type=1 if i == 6 else 2 if i == 7 else 0) for i in range(1, 8)]
+        selected, counts = select_match_sample(records, request.window, include_forfeit_wins=request.include_forfeit_wins,
+                                               include_forfeit_losses=request.include_forfeit_losses)
+        self.assertEqual(len(selected), 7)
+        self.assertEqual(counts['forfeit_win_count'], 1)
+        self.assertEqual(counts['forfeit_loss_count'], 1)
+
+    def test_opponent_comparison_covers_pass_types_shot_regions_and_blocks(self):
+        data = {'pass': {'longPassSuccess': 1, 'longPassTry': 10, 'shortPassSuccess': 9, 'shortPassTry': 10},
+                'opponent_pass': {'longPassSuccess': 8, 'longPassTry': 10, 'shortPassSuccess': 5, 'shortPassTry': 10},
+                'shoot': {'goalOutPenalty': 2, 'shootOutPenalty': 5},
+                'opponent_shoot': {'goalOutPenalty': 0, 'shootOutPenalty': 5},
+                'defence': {'blockSuccess': 1, 'blockTry': 5},
+                'opponent_defence': {'blockSuccess': 3, 'blockTry': 5}}
+        records = [replace(row(i), coaching_data=data) for i in range(1, 7)]
+        metrics = {item['metric']: item for item in opponent_comparison(records)['metrics']}
+        self.assertEqual(len(metrics), 16)
+        self.assertEqual(metrics['long']['status'], 'lower')
+        self.assertEqual(metrics['short']['status'], 'higher')
+        self.assertEqual(metrics['box_outside']['mine']['success'], 12)
+        self.assertEqual(metrics['box_outside']['opponent']['value'], 0)
+        self.assertEqual(metrics['block']['gap_pp'], -40)
+
+    def test_unpaired_or_rare_attempts_are_not_promoted_to_findings(self):
+        records = [replace(row(i), coaching_data={'pass': {'longPassSuccess': 1, 'longPassTry': 1},
+                    'opponent_pass': {'longPassSuccess': 0, 'longPassTry': 1}}) for i in range(1, 7)]
+        records.append(replace(row(8), coaching_data={'pass': {'longPassSuccess': 10, 'longPassTry': 10}}))
+        metric = next(item for item in opponent_comparison(records)['metrics'] if item['metric'] == 'long')
+        self.assertEqual(metric['mine']['matches'], 6)
+        self.assertEqual(metric['mine']['trials'], 6)
+        self.assertEqual(metric['status'], 'unavailable')

@@ -48,6 +48,21 @@ def link(feed=None, rows=None, mode=60):
 
 
 class FeedNormalizationTest(unittest.TestCase):
+    def test_selected_portrait_and_saved_overall_are_preserved(self):
+        player = snapshot(players=[raw_player(spid=863231747, thumb_custom='/playersActionHigh/p854231747.png?rd=202610280410',
+                                              thumb='/players/p231747.png', ovr=150, pay=31)])['players'][0]
+        self.assertTrue(player['portrait_img'].endswith('/playersActionHigh/p854231747.png?rd=202610280410'))
+        self.assertEqual((player['overall'], player['salary']), (150, 31))
+
+    def test_portraits_reject_other_players_and_untrusted_paths(self):
+        for path in ('https://example.com/p12345.png', '/playersAction/p99999.png', '//evil.test/p12345.png',
+                     '/playersAction/../p12345.png', '/players/p12345.png?url=https://evil.test'):
+            self.assertEqual(snapshot(players=[raw_player(thumb_custom=path)])['players'][0]['portrait_img'], '')
+        player = snapshot(players=[raw_player(thumb_custom='', thumb='/players/p12345.png', ovr=True, pay=-1)])['players'][0]
+        self.assertTrue(player['portrait_img'].endswith('/players/p12345.png'))
+        self.assertIsNone(player['overall'])
+        self.assertIsNone(player['salary'])
+
     def test_saved_xy_coordinates_are_preserved_and_not_guessed(self):
         p = snapshot(players=[raw_player(x=89.612605, y=15.575539)])['players'][0]
         self.assertEqual(p['pitch_position'], {'status': 'present', 'value': {'x': 89.612605, 'y': 15.575539}})

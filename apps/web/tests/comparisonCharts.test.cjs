@@ -16,6 +16,68 @@ function load(file, parent = `${__dirname}/../components/coaching`) {
   return output.exports;
 }
 const chart = load('MetricComparisonCards');
+const traitIcons = tree => tree.props.children[0].props.children.flat().filter(item=>item?.type==='img');
+test('포메이션 카드는 기본·획득 신규 특성만 두 개까지 표시하고 급여 결측을 숫자로 만들지 않는다', () => {
+  const {PitchPlayerAppearance}=load('PitchPlayerAppearance');
+  const player={spId:863231747,grade:9,name:'킬리안 음바페',position:'LS',settings:{overall:150,salary:31,
+    intrinsic_features:{status:'present',value:[65,13].map(code=>({code,known:true,label:`특성 ${code}`,icon_url:`icon-${code}`}))},
+    acquired_traits:{status:'present',value:[22,63,55].map(code=>({code,known:true,label:`특성 ${code}`,icon_url:`icon-${code}`}))}}};
+  const tree=PitchPlayerAppearance({player});
+  const traits=traitIcons(tree);
+  assert.deepEqual(Array.from(traits,item=>item.props.alt),['특성 65','특성 63']);
+  assert.ok(JSON.stringify(tree).includes('급여 31'));
+  const single=PitchPlayerAppearance({player:{...player,settings:{...player.settings,
+    acquired_traits:{status:'unset',value:[]}}}});
+  assert.equal(traitIcons(single).length,1);
+  const empty=JSON.stringify(PitchPlayerAppearance({player:{...player,settings:{acquired_traits:{status:'unset',value:[]}}}}));
+  assert.ok(!empty.includes('pitch-salary'));
+  assert.ok(!empty.includes('icon-'));
+  assert.ok(!empty.includes('pitch-overall'));
+});
+test('벤제마·음바페는 포지션이 달라도 같은 카드의 피드 특성을 찾고 추아메니의 다른 강화는 출처를 보존한다', () => {
+  const {feedTraitResolver,traitSourceLabel}=load('../../lib/playerTraits');
+  const benzema={sp_id:846165153,grade:10,position:'RF'},mbappe={sp_id:863231747,grade:9,position:'LS'},tchouameni={sp_id:851241637,grade:10,position:'RCB'};
+  const feed={author_status:'matched',mode_status:'matched',snapshot:{players:[benzema,mbappe,tchouameni]}};
+  const resolve=feedTraitResolver(feed);
+  assert.equal(resolve(846165153,10),benzema);
+  assert.equal(resolve(863231747,9),mbappe);
+  assert.equal(resolve(851241637,9),tchouameni);
+  assert.equal(traitSourceLabel(resolve(851241637,9),9),'피드 10강');
+  assert.equal(traitSourceLabel(resolve(863231747,9),9),'');
+  assert.equal(resolve(866241637,9),undefined,'다른 시즌의 같은 선수를 대입하지 않음');
+  assert.equal(feedTraitResolver({...feed,author_status:'mismatch'})(846165153,10),undefined);
+  assert.equal(feedTraitResolver({...feed,mode_status:'mismatch'})(846165153,10),undefined);
+  const ambiguous=feedTraitResolver({...feed,snapshot:{players:[tchouameni,{...tchouameni,grade:11}]}});
+  assert.equal(ambiguous(851241637,10),tchouameni);
+  assert.equal(ambiguous(851241637,9),undefined,'피드에 여러 강화가 있으면 임의 선택하지 않음');
+});
+test('피드 특성 표시는 다른 강화의 능력치·급여·현재 강화 단계를 덮어쓰지 않는다', () => {
+  const {PitchPlayerAppearance}=load('PitchPlayerAppearance');
+  const traitSource={grade:10,overall:150,salary:31,intrinsic_features:{status:'present',value:[{code:54,known:true,label:'체이서',icon_url:'chaser'}]},
+    acquired_traits:{status:'present',value:[{code:56,known:true,label:'파이터',icon_url:'fighter'}]}};
+  const tree=PitchPlayerAppearance({player:{spId:851241637,grade:9,name:'A. 추아메니',position:'RCB',traitSource}});
+  assert.deepEqual(Array.from(traitIcons(tree),item=>item.props.alt),['체이서','파이터']);
+  const serialized=JSON.stringify(tree);
+  assert.ok(serialized.includes('피드 10강'));
+  assert.ok(serialized.includes('9강'));
+  assert.ok(!serialized.includes('pitch-overall'));
+  assert.ok(!serialized.includes('pitch-salary'));
+});
+test('신규 특성은 기본·획득의 중복을 제거하고 회색 특성이나 미확인 코드는 포함하지 않는다', () => {
+  const {newPlayerTraits}=load('../../lib/playerTraits');
+  const field=codes=>({status:'present',value:codes.map(code=>({code,known:true,label:String(code),icon_url:`icon-${code}`}))});
+  assert.deepEqual(Array.from(newPlayerTraits({intrinsic_features:field([52,13]),acquired_traits:field([52,55,22])}),f=>f.code),[52,55]);
+  assert.deepEqual(Array.from(newPlayerTraits({intrinsic_features:field([20,21,23]),acquired_traits:field([68,49])}),f=>f.code),[68]);
+  assert.equal(newPlayerTraits({intrinsic_features:field([13,22]),acquired_traits:field([49,69])}).length,0);
+  assert.equal(newPlayerTraits().length,0);
+});
+test('선택 사진은 같은 선수에게만 연결하고 다른 사용자의 피드는 적용하지 않는다', () => {
+  const {feedPortraits}=load('../../lib/pitchLineup');
+  const feed={author_status:'matched',snapshot:{players:[{sp_id:863231747,portrait_img:'saved-image'}]}};
+  assert.equal(feedPortraits(feed).get(231747),'saved-image');
+  assert.equal(feedPortraits(feed).get(252371),undefined);
+  assert.equal(feedPortraits({...feed,author_status:'mismatch'}).size,0);
+});
 test('직접 비교는 % 차이와 %p 차이를 구분하고 결측을 0으로 만들지 않는다', () => {
   assert.equal(chart.comparisonGap(.808, .772, 'rate'), '+3.6%p');
   assert.equal(chart.comparisonGap(.5, .6, 'rate'), '−10.0%p');
@@ -23,15 +85,56 @@ test('직접 비교는 % 차이와 %p 차이를 구분하고 결측을 0으로 �
   assert.equal(chart.comparisonGap(null, .2, 'rate'), null);
   assert.equal(chart.comparisonValue(null, 'rate'), '—');
 });
-test('장점·보완점이 없으면 빈 안내 카드 대신 그래프만 표시한다', () => {
+test('상대보다 앞서거나 낮은 지표가 없으면 고정 다섯 그래프를 강제로 표시하지 않는다', () => {
   const component = load('OpponentComparisonPanel');
   const result = component.OpponentComparisonPanel({ comparison: { note: '기준', metrics: [{ metric: 'pass', label: '패스', status: 'no_clear_change',
     mine: { value: .8, matches: 30 }, opponent: { value: .79, matches: 30 } }] }, modeCounts: { 50: 2, 60: 28 } });
-  const tree = JSON.stringify(result);
-  assert.ok(tree.includes('metric-paired-bars'));
-  assert.ok(tree.includes('+1.0%p'));
-  assert.ok(!tree.includes('comparison-findings'));
-  assert.ok(!tree.includes('확인되지 않았습니다'));
+  assert.equal(result, null);
+});
+
+test('상대 비교는 실제 차이가 큰 순으로 양쪽 세 개씩만 고르고 결측을 제외한다', () => {
+  const {opponentHighlights} = load('../../lib/comparisonInsights');
+  const rows = [-1, 3, -4, 5, 2, -6, 7, -8].map((gap,i)=>({metric:String(i),status:gap>0?'higher':'lower',gap_pp:gap,
+    mine:{value:.5+gap/100},opponent:{value:.5}}));
+  rows.push({metric:'missing',status:'higher',gap_pp:90,mine:{value:null},opponent:{value:.5}});
+  const result = opponentHighlights(rows);
+  assert.deepEqual(Array.from(result.strengths, item=>item.gap_pp),[7,5,3]);
+  assert.deepEqual(Array.from(result.weaknesses, item=>item.gap_pp),[-8,-6,-4]);
+});
+
+test('선수 비교는 우열에 따라 막대 색이 바뀌지 않고 두 선수 색을 고정한다', () => {
+  const tree = JSON.stringify(chart.MetricComparisonCards({identityColors:true,tone:'purple',mineLabel:'A',referenceLabel:'B',metrics:[{
+    mine:{id:'pass',label:'패스',unit:'rate',direction:'higher',value:.3,matches:10},
+    reference:{id:'pass',label:'패스',unit:'rate',direction:'higher',value:.8,matches:20}
+  }]}));
+  assert.ok(tree.includes('identity-comparison'));
+  assert.ok(tree.includes('identity-gap'));
+  assert.ok(!tree.includes('tone-worse'));
+  assert.ok(!tree.includes('tone-neutral'));
+});
+
+test('랭커 강점과 보완점은 각각 제목·개수가 있는 독립 영역으로 표시한다', () => {
+  const {RankerHighlights} = load('RankerHighlights');
+  const metric = {id:'pass',label:'패스',unit:'rate',direction:'higher',value:.8,matches:20};
+  const finding = {id:'pass',mine:metric,reference:{...metric,value:.7}};
+  const tree = JSON.stringify(RankerHighlights({data:{ranker_count:20,strengths:[finding],weaknesses:[finding]},group:undefined}));
+  assert.ok(tree.includes('finding-better'));
+  assert.ok(tree.includes('finding-worse'));
+  assert.ok(tree.includes('강점 지표'));
+  assert.ok(tree.includes('보완 지표'));
+  assert.ok(!tree.includes('내 최근 30경기'));
+});
+
+test('포메이션 선수 변경은 같은 자리 한 명만 교체하고 다른 자리 선택은 무시한다', () => {
+  const {selectedPitchLineup,pitchPositionOptions} = load('../../lib/pitchLineup');
+  const a={key:'a',position:'LS',record:{}}, b={key:'b',position:'LS',record:{}}, c={key:'c',position:'GK',record:{}};
+  const records=new Map([a,b,c].map(p=>[p.key,p]));
+  const selected=selectedPitchLineup([a,c],records,{LS:'b',GK:'b'});
+  assert.deepEqual(Array.from(selected,p=>p.key),['b','c']);
+  const options=pitchPositionOptions(records.values(),[a,c]);
+  assert.equal(options.length,1);
+  assert.equal(options[0][0],'LS');
+  assert.equal(options[0][1].length,2);
 });
 test('비교할 수치 자체가 없으면 상대 비교 영역도 숨긴다', () => {
   assert.equal(load('OpponentComparisonPanel').OpponentComparisonPanel({ comparison: { metrics: [] } }), null);

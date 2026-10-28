@@ -1,6 +1,7 @@
 export type FeedSetting<T> = { status: "present" | "unset" | "missing" | "invalid"; value: T | null };
 export type FeedFeature = { code: number | null; label: string; known: boolean; icon_url?: string | null };
 export type FeedPlayer = {
+  portrait_img?: string; overall?: number | null; salary?: number | null;
   season_code?: string; season_img?: string;
   pitch_position?: FeedSetting<{ x: number; y: number }>;
   sp_id: number; grade: number | null; position: string | null; name: string;

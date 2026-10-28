@@ -38,6 +38,10 @@ jobs:
         run: |
           cd apps/web
           npm ci
+      - name: Run web tests
+        run: |
+          cd apps/web
+          node --test tests/*.test.cjs
       - name: Build web
         run: |
           cd apps/web

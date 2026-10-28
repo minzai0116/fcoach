@@ -40,3 +40,32 @@ for (const [width, height, mobile] of [[838, 622, false], [612, 569, false], [50
 }
 
 test("빈 포메이션", () => assert.equal(Object.keys(layoutPitchCards([], 300, 400).positions).length, 0));
+
+test('특성 표시 공간도 카드 크기에 포함하고 작은 화면에서는 사진 공간을 우선한다', () => {
+  for (const [width,height,mobile] of [[838,622,false],[364,571,true],[294,281,true]]) {
+    const layout=layoutPitchCards(players,width,height,mobile,true);
+    assert.ok(layout.photoSize>=26);
+    assert.ok(layout.traitHeight>=14);
+    for (const [key,a] of Object.entries(layout.positions)) {
+      assert.ok(a.y-layout.cardHeight/2>=0 && a.y+layout.cardHeight/2<=height,key);
+      for (const [other,b] of Object.entries(layout.positions)) if(key!==other)
+        assert.ok(Math.abs(a.x-b.x)>=layout.cardWidth || Math.abs(a.y-b.y)>=layout.cardHeight,`${key}/${other}`);
+    }
+  }
+});
+
+test("짧은 모바일의 등록 포지션은 공격·수비 인접 행을 묶어 11명을 겹치지 않게 표시한다", () => {
+  const registered = [["GK",50,93],["LS",39,12],["RF",68,22],["LM",13,44],["RM",87,44],
+    ["LDM",35,61],["RDM",65,61],["LB",12,73],["LCB",36,82],["RCB",64,82],["RB",88,73]]
+    .map(([key,left,top])=>({key,left,top}));
+  for (const height of [278,290,328,440]) {
+    const layout=layoutPitchCards(registered,294,height,true);
+    const boxes=registered.map(p=>({x:layout.positions[p.key].x-layout.cardWidth/2,y:layout.positions[p.key].y-layout.cardHeight/2}));
+    for (const [i,a] of boxes.entries()) {
+      assert.ok(a.x>=0 && a.y>=0 && a.x+layout.cardWidth<=294 && a.y+layout.cardHeight<=height);
+      for (const b of boxes.slice(i+1)) assert.ok(a.x+layout.cardWidth<=b.x || b.x+layout.cardWidth<=a.x || a.y+layout.cardHeight<=b.y || b.y+layout.cardHeight<=a.y);
+    }
+    assert.ok(layout.positions.LS.y<layout.positions.RF.y);
+    assert.ok(layout.positions.GK.y>layout.positions.RCB.y);
+  }
+});

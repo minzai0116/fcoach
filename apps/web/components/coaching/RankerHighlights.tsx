@@ -1,11 +1,15 @@
 import type { RankerCoaching } from "../../types/comparison";
 import { MetricComparisonCards } from "./MetricComparisonCards";
+import { ComparisonFindingGroups } from "./ComparisonFindingGroups";
 
 export function RankerHighlights({ data, group }: { data?: RankerCoaching; group?: string }) {
   const findings = group ? data?.by_group?.[group] : data;
   if (!data || !findings || (!findings.strengths.length && !findings.weaknesses.length)) return null;
-  return <section className="ranker-highlights" aria-label="랭커 대비 강점과 보완점"><div className="coaching-section-heading"><h3>랭커 대비 강점·보완점</h3><span className="comparison-sample">내 최근 30경기 · 랭커 {data.ranker_count}명 평균</span></div>
-    <div className={`ranker-highlight-columns${!findings.strengths.length || !findings.weaknesses.length ? " single-highlight-group" : ""}`}>{[{ title: "강점 지표", items: findings.strengths, tone: "better" }, { title: "보완 지표", items: findings.weaknesses, tone: "worse" }].filter(group => group.items.length).map(group => <div key={group.tone}><h4 className={`tone-${group.tone}`}>{group.title}</h4><MetricComparisonCards compact referenceLabel="랭커 평균" tone="purple" metrics={group.items.slice(0, 2).map(finding => ({ mine: finding.mine, reference: finding.reference }))} /></div>)}</div>
+  return <section className="ranker-highlights" aria-label="랭커 대비 강점과 보완점"><div className="coaching-section-heading"><h3>랭커 대비 강점·보완점</h3><span className="comparison-sample">랭커 {data.ranker_count}명 평균</span></div>
+    <ComparisonFindingGroups referenceLabel="랭커 평균" groups={[
+      { title: "강점 지표", tone: "better", metrics: findings.strengths.slice(0, 2).map(finding => ({ mine: finding.mine, reference: finding.reference })) },
+      { title: "보완 지표", tone: "worse", metrics: findings.weaknesses.slice(0, 2).map(finding => ({ mine: finding.mine, reference: finding.reference })) },
+    ]} />
   </section>;
 }
 export function RankerAdvicePanel({ data }: { data?: RankerCoaching }) {

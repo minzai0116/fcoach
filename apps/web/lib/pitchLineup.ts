@@ -1,11 +1,25 @@
 import type { PositionCoaching, PositionPlayer } from "../types/coaching";
-import type { FeedComparison, FeedPlayer } from "../types/squadFeed";
+import type { AvailableFeedCoaching, FeedComparison, FeedPlayer } from "../types/squadFeed";
 
 export type PitchPlayer = {
   key: string; spId: number; grade: number | null; position: string; name: string;
   record?: PositionPlayer; comparison?: FeedComparison; settings?: FeedPlayer;
   coordinates?: { x: number; y: number };
+  portraitImage?: string;
+  traitSource?: FeedPlayer;
 };
+
+export function feedPortraits(feed?: AvailableFeedCoaching): Map<number, string> {
+  const images = new Map<number, string>();
+  if (feed?.author_status !== "matched") return images;
+  // 사진만 같은 선수의 다른 시즌에 공유하며, 능력치와 설정은 기존의 정확한 카드 연결을 따른다.
+  for (const player of feed.snapshot.players) {
+    const pid = player.sp_id % 1_000_000;
+    if (player.portrait_img && !images.has(player.sp_id)) images.set(player.sp_id, player.portrait_img);
+    if (player.portrait_img && (!images.has(pid) || player.lineup_role === "starter")) images.set(pid, player.portrait_img);
+  }
+  return images;
+}
 export const lineupKey = (spId: number, grade: number | null, position: string) => `${spId}:${grade}:${position}`;
 
 export function buildPitchLineup(coaching: PositionCoaching, source: "feed" | "match") {
@@ -26,6 +40,19 @@ export function buildPitchLineup(coaching: PositionCoaching, source: "feed" | "m
     const record = records.get(key), comparison = comparisons.get(key);
     return [{ ...entry, key, name: "name" in entry ? entry.name : record?.player_name ?? `선수 ${entry.spId}`,
       record, comparison, settings: "settings" in entry ? entry.settings : comparison?.linked ? comparison.settings ?? undefined : undefined } as PitchPlayer];
+  });
+}
+
+export function pitchPositionOptions(records: Iterable<PitchPlayer>, lineup: PitchPlayer[]) {
+  const positions = new Map(lineup.map(player => [player.position, [] as PitchPlayer[]]));
+  for (const player of records) if (player.record) positions.get(player.position)?.push(player);
+  return [...positions].filter(([, players]) => players.length > 1);
+}
+
+export function selectedPitchLineup(lineup: PitchPlayer[], records: Map<string, PitchPlayer>, selected: Record<string, string>) {
+  return lineup.map(player => {
+    const alternative = records.get(selected[player.position]);
+    return alternative?.position === player.position ? alternative : player;
   });
 }
 

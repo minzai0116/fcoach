@@ -10,12 +10,21 @@ export function PlayerPortrait({
   player,
   alt,
   className,
+  preferredImage,
+  actionFirst = false,
 }: {
   player: Pick<PlayerReportEntry, "face_img" | "action_img" | "fallback_img" | "sp_id">;
   alt: string;
   className: string;
+  preferredImage?: string;
+  actionFirst?: boolean;
 }) {
-  const candidates = useMemo(() => playerFaceCandidates(player), [player]);
+  const { sp_id, face_img, action_img, fallback_img } = player;
+  const candidates = useMemo(() => Array.from(new Set([
+    preferredImage,
+    ...(actionFirst ? [action_img, `https://fco.dn.nexoncdn.co.kr/live/externalAssets/common/playersAction/p${sp_id}.png`] : []),
+    ...playerFaceCandidates({ sp_id, face_img, action_img, fallback_img }),
+  ].filter((value): value is string => !!value))), [preferredImage, actionFirst, sp_id, face_img, action_img, fallback_img]);
   const [imageIndex, setImageIndex] = useState(0);
 
   useEffect(() => {

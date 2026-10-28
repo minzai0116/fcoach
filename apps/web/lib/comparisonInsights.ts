@@ -1,4 +1,11 @@
 import type { ComparableMetric, MatchTrends, MetricUnit } from "../types/comparison";
+import type { OpponentComparison } from "../types/analysis";
+export function opponentHighlights(metrics: OpponentComparison["metrics"]) {
+  const valid = metrics.filter(metric => metric.mine.value != null && metric.opponent.value != null && metric.gap_pp != null && Number.isFinite(metric.gap_pp));
+  const select = (status: string) => valid.filter(metric => metric.status === status)
+    .sort((a, b) => Math.abs(b.gap_pp!) - Math.abs(a.gap_pp!) || a.metric.localeCompare(b.metric)).slice(0, 3);
+  return { strengths: select("higher"), weaknesses: select("lower") };
+}
 export type DifferenceTone = "better" | "worse" | "neutral";
 export function differenceTone(mine: number | null | undefined, reference: number | null | undefined, direction: ComparableMetric["direction"], unit?: MetricUnit): DifferenceTone {
   if (mine == null || reference == null || !Number.isFinite(mine) || !Number.isFinite(reference) || direction === "neutral" || Math.abs(mine - reference) < (unit ? (["rate", "percent"].includes(unit) ? .0005 : .05) : 1e-8)) return "neutral";
