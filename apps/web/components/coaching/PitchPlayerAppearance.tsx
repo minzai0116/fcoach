@@ -10,8 +10,8 @@ export function PitchPlayerAppearance({ player, report }: { player: PitchPlayer;
   const source = player.traitSource ?? player.settings;
   const traits = newPlayerTraits(source);
   const sourceLabel = traitSourceLabel(source, player.grade);
-  const seasonImg = report?.season_img || player.settings?.season_img;
-  const seasonName = player.record?.season_name || player.settings?.season_code || "선수";
+  const seasonImg = report?.season_img || source?.season_img;
+  const seasonName = player.record?.season_name || source?.season_code || "선수";
   return <>
     <span className="pitch-saved-traits" aria-label={traits.length ? "신규 특성" : undefined}>
       {traits.map(feature => <img key={feature.code} src={feature.icon_url!} alt={feature.label} title={feature.label}

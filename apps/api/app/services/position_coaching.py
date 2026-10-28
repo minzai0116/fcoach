@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.services.player_names import player_name
+
 import math
 from typing import Any
 
@@ -171,7 +173,7 @@ def build_position_coaching(
         findings.sort(key=lambda f: f["gap_pp"], reverse=True)
         players.append({
             "sp_id": sp_id, "sp_grade": grade, "sp_position": position_id,
-            "player_name": meta.get("player_name", f"spId {sp_id}"), "position_name": position,
+            "player_name": meta.get("player_name") or player_name(player_names or {}, sp_id), "position_name": position,
             "season_name": meta.get("season_name", ""), "appearances": aggregate["appearances"],
             "measurements": measurements, "findings": findings,
             "goalkeeper_metrics": _keeper_metrics(aggregate, previous.get(key, {})) if position_id == 0 else None,

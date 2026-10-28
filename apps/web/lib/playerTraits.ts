@@ -17,6 +17,10 @@ export function traitSourceLabel(source: FeedPlayer | undefined, grade: number |
   return !source || source.grade === grade ? "" : source.grade == null ? "피드" : `피드 ${source.grade}강`;
 }
 
+export function savedPlayerSettings(source: FeedPlayer | undefined, spId: number, position: string): FeedPlayer | undefined {
+  return source?.sp_id === spId && source.position === position ? source : undefined;
+}
+
 // 공식 스쿼드 피드의 신규 특성 코드만 사용하며, 미확인 코드는 포함하지 않는다.
 const NEW_TRAIT_CODES = new Set([50, 51, 52, 53, 54, 55, 56, 57, 59, 60, 62, 63, 64, 65, 66, 67, 68]);
 

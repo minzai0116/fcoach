@@ -2931,7 +2931,13 @@ code {
 .compact-records > .detail-block { margin-top: 8px; }
 .compact-records .detail-block > summary { min-height: 36px; padding: 8px; font-size: 12px; }
 .compact-records .record-method { font-size: 11px; line-height: 1.7; }
-.player-settings-features { display: grid; gap: 10px; }
+.player-settings-source { margin: 10px 0; font-size: 12px; }
+.player-settings-features { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.player-settings-features > section:first-child { grid-column: 1 / -1; }
+.player-settings-features .feed-value-state { margin: 0; }
+.player-detail-body .feed-player-settings { gap: 6px; margin: 10px 0 0; }
+.player-detail-body .feed-player-settings > div { padding: 8px; }
+.player-detail-body .feed-player-settings dd { margin-top: 4px; font-size: 12px; line-height: 1.5; }
 .player-settings-features h5 { font-size: 12px; margin: 0 0 5px; }
 .player-settings-features .feature-icon { width: 40px; height: 40px; }
 .player-settings-features .feature-icon img { width: 30px; height: 30px; }

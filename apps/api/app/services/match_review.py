@@ -7,6 +7,7 @@ from contextlib import closing
 from app.db import connect, nexon_api_data_cutoff_iso
 from app.services.coaching_data import extract_coaching_data, number
 from app.services.opponent_profile import get_competitive_profile
+from app.services.player_names import player_name
 
 # 경기 수치는 상대와 직접 비교한다. 포지션별 수동 점검값은 사용하지 않는다.
 _RATIOS = (
@@ -75,7 +76,7 @@ def build_match_review(payload: dict, ouid: str, names: dict[int, str]) -> dict:
         shoot = participant.get('shoot') or {}
         return {'ouid': participant.get('ouid'), 'nickname': participant.get('nickname') or '닉네임 미제공',
                 'score': number(shoot, 'goalTotalDisplay'), 'record_goals': number(shoot, 'goalTotal'),
-                'shots': [{**shot, 'player_name': names.get(int(shot.get('sp_id') or 0)), 'is_goal': shot['result'] == 3,
+                'shots': [{**shot, 'player_name': player_name(names, int(shot.get('sp_id') or 0), None), 'is_goal': shot['result'] == 3,
                            'date': payload.get('matchDate', '') + 'Z', 'match_id': payload.get('matchId')} for shot in shots if shot.get('x') is not None and shot.get('y') is not None]}
     return {'match_id': payload.get('matchId'), 'match_date': str(payload.get('matchDate', '')) + 'Z',
             'match_type': payload.get('matchType'), 'result': detail.get('matchResult'), 'match_end_type': detail.get('matchEndType'),

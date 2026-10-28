@@ -9,7 +9,7 @@ import { FeatureIcons } from "./FeatureIcons";
 import { FeedPlayerSettings } from "./SquadFeedSettings";
 import { PlayerCoachingSummary } from "./PlayerCoachingSummary";
 import { PlayerRecordDetails } from "./PlayerRecordDetails";
-import { newPlayerTraits, traitSourceLabel } from "../../lib/playerTraits";
+import { newPlayerTraits, savedPlayerSettings, traitSourceLabel } from "../../lib/playerTraits";
 
 export function PlayerDetailPanel({ player, report, observation, id, onBack }: {
   player?: PitchPlayer; report?: PlayerReportEntry; observation: boolean; id: string; onBack: () => void;
@@ -19,6 +19,7 @@ export function PlayerDetailPanel({ player, report, observation, id, onBack }: {
   const source = player?.traitSource ?? player?.settings;
   const savedTraits = newPlayerTraits(source);
   const sourceLabel = traitSourceLabel(source, player?.grade ?? null);
+  const settings = player?.settings ?? (player ? savedPlayerSettings(source, player.spId, player.position) : undefined);
 
   function moveTab(event: React.KeyboardEvent<HTMLDivElement>) {
     const keys = ["record", "settings", "coaching"];
@@ -37,20 +38,21 @@ export function PlayerDetailPanel({ player, report, observation, id, onBack }: {
       <header className="selected-player-header">
         <PlayerPortrait player={report ?? { sp_id: player.spId, face_img: "", action_img: "", fallback_img: "" }} preferredImage={player.portraitImage} actionFirst alt="" className="selected-player-portrait" />
         <div className="selected-player-identity"><span className="coaching-eyebrow">{player.position} · {player.record ? `${player.record.appearances}경기` : "경기 기록 없음"}</span><h4>{player.name}</h4>
-          <OfficialPlayerBadges seasonImg={report?.season_img || player.settings?.season_img} seasonName={player.record?.season_name || player.settings?.season_code} grade={player.grade} />
+          <OfficialPlayerBadges seasonImg={report?.season_img || source?.season_img} seasonName={player.record?.season_name || source?.season_code} grade={player.grade} />
           {player.settings?.overall != null && <span className="player-saved-overall">능력치 {player.settings.overall}</span>}
         </div>
-        {player.comparison && <span className={`coaching-badge ${player.comparison.linked ? "feed-matched" : "muted-badge"}`}>{player.comparison.linked ? "피드 연결" : savedTraits.length ? "피드 특성" : "연결 보류"}</span>}
+        {player.comparison && <span className={`coaching-badge ${player.comparison.linked ? "feed-matched" : "muted-badge"}`}>{player.comparison.linked ? "피드 연결" : settings ? "피드 설정" : savedTraits.length ? "피드 특성" : "연결 보류"}</span>}
       </header>
       <div className="player-detail-tabs" role="tablist" aria-label="선수 상세 항목" onKeyDown={moveTab}>{[["record", "경기 기록"], ["settings", "설정·특성"], ["coaching", "종합 코칭"]].map(([key, label]) => <button key={key} id={`${tabId}-${key}`} type="button" role="tab" tabIndex={tab === key ? 0 : -1} aria-selected={tab === key} aria-controls={`${tabId}-panel`} onClick={() => setTab(key)}>{label}</button>)}</div>
       <div className="player-detail-body" role="tabpanel" id={`${tabId}-panel`} aria-labelledby={`${tabId}-${tab}`} key={`${player.key}:${tab}`}>
         {tab === "record" && (player.record ? <PlayerRecordDetails player={player.record} observation={observation} /> : <p>같은 카드·강화·자리의 경기 기록이 없습니다.</p>)}
-        {tab === "settings" && (player.settings ? <>
+        {tab === "settings" && (settings ? <>
+          {settings !== player.settings && <h5 className="player-settings-source">피드 저장 설정 · {settings.position} · {settings.grade == null ? "강화 미확인" : `${settings.grade}강`}</h5>}
           <div className="player-settings-features">{([["intrinsic_features", "기본 특성"], ["acquired_traits", "획득 특성"], ["training_coach", "훈련코치"]] as const).map(([key, label]) => {
-            const setting = player.settings![key];
+            const setting = settings[key];
             return <section key={key}><h5>{label}</h5>{setting?.status === "present" ? <FeatureIcons features={setting.value ?? []} label={label} /> : <p className="feed-value-state">{setting?.status === "unset" ? "피드에서 미설정" : "피드에서 확인 불가"}</p>}</section>;
           })}</div>
-          <FeedPlayerSettings player={player.settings} includeFeatures={false} />
+          <FeedPlayerSettings player={settings} includeFeatures={false} />
         </> : <>
           {!!savedTraits.length && <section><h5>피드에 저장된 신규 특성{sourceLabel && ` · ${sourceLabel}`}</h5><FeatureIcons features={savedTraits} label="피드에 저장된 신규 특성" /></section>}
           <p className="feed-value-state">{player.comparison?.label ?? "연결된 피드 설정이 없습니다."}</p>

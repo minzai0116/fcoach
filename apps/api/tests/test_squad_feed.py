@@ -265,7 +265,7 @@ class FeedClientTest(unittest.TestCase):
 
 
 class FeedPersistenceTest(unittest.TestCase):
-    @patch('app.services.analysis._spid_name_map', return_value={12345: '테스트 선수'})
+    @patch('app.services.analysis._spid_name_map', return_value={})
     @patch('app.services.analysis._position_name_map', return_value=POSITIONS)
     @patch('app.services.analysis._season_meta_map', return_value={})
     @patch('app.services.analysis._load_official_rankers', return_value=[])
@@ -278,6 +278,8 @@ class FeedPersistenceTest(unittest.TestCase):
                 result = run_analysis('test-ouid', 60, 5, squad_feed_id=FEED_ID)
             fetch.assert_called_once_with(FEED_ID, refresh=True)
             self.assertEqual(result['tactic_input_mode'], 'missing')
+            self.assertEqual(result['visuals']['player_report']['players'][0]['player_name'], '테스트 선수')
+            self.assertEqual(result['coaching']['players'][0]['player_name'], '테스트 선수')
             self.assertEqual(result['coaching']['squad_feed']['summary']['linked'], 1)
             self.assertEqual(get_latest_analysis('test-ouid', 60, 5)['coaching'], result['coaching'])
             with patch('app.services.analysis.get_public_feed', side_effect=SquadFeedError('조회 불가')):

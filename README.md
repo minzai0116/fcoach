@@ -129,7 +129,7 @@ cd apps/web && npm install && npm run dev
 
 ## 업데이트
 
-- [2026-10-27~28 통합 패치노트](docs/releases/2026-10-28.md) · [게시용 짧은 버전](docs/releases/2026-10-28.txt)
+- [2026-10-28~29 통합 패치노트](docs/releases/2026-10-29.md) · [게시용 짧은 버전](docs/releases/2026-10-29.txt)
 - [2026-10-22 패치노트](docs/releases/2026-10-22.md)
 - [넥슨 Open API 게시용 글](docs/promo/2026-10-22/nexon-openapi-post.md)
 - [커뮤니티 홍보 글](docs/promo/2026-10-22/community-post.md)

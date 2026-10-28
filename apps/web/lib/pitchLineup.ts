@@ -38,7 +38,7 @@ export function buildPitchLineup(coaching: PositionCoaching, source: "feed" | "m
     if (seen.has(key)) return [];
     seen.add(key);
     const record = records.get(key), comparison = comparisons.get(key);
-    return [{ ...entry, key, name: "name" in entry ? entry.name : record?.player_name ?? `선수 ${entry.spId}`,
+    return [{ ...entry, key, name: "name" in entry ? entry.name : record?.player_name ?? "이름 확인 중",
       record, comparison, settings: "settings" in entry ? entry.settings : comparison?.linked ? comparison.settings ?? undefined : undefined } as PitchPlayer];
   });
 }

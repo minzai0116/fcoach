@@ -5,18 +5,39 @@ const path = require('node:path');
 const { runInNewContext } = require('node:vm');
 const ts = require('typescript');
 const render = (type, props) => typeof type === 'function' ? type(props) : ({ type, props });
+let detailTab = 'record';
 function load(file, parent = `${__dirname}/../components/coaching`) {
   const base = path.resolve(parent, file);
   const source = [base, base + '.tsx', base + '.ts'].find(p => existsSync(p));
   const output = { exports: {} };
   runInNewContext(ts.transpileModule(readFileSync(source, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
-  }).outputText, { exports: output.exports, require: name => name === 'react' ? { useState: initial => [initial, () => {}], useRef: () => ({current:null}), useEffect: () => {}, useMemo: fn => fn(), useId: () => 'test-id' } : name === 'react/jsx-runtime'
+  }).outputText, { exports: output.exports, require: name => name === 'react' ? { useState: initial => [initial === 'record' ? detailTab : initial, () => {}], useRef: () => ({current:null}), useEffect: () => {}, useMemo: fn => fn(), useId: () => 'test-id' } : name === 'react/jsx-runtime'
     ? { jsx: render, jsxs: render, Fragment: 'fragment' } : load(name, path.dirname(source)) });
   return output.exports;
 }
 const chart = load('MetricComparisonCards');
 const traitIcons = tree => tree.props.children[0].props.children.flat().filter(item=>item?.type==='img');
+test('강화만 다른 피드는 저장된 특성·코치·전술을 보여주고 경기의 강화와 능력치는 유지한다', () => {
+  const { savedPlayerSettings } = load('../../lib/playerTraits');
+  const source = {sp_id:877138449,grade:9,position:'RF',overall:145,
+    intrinsic_features:{status:'present',value:[{code:65,known:true,label:'라인브레이커',icon_url:'linebreaker'}]},
+    acquired_traits:{status:'present',value:[{code:63,known:true,label:'두 개의 심장',icon_url:'hearts'}]},
+    training_coach:{status:'present',value:[{code:1,known:true,label:'침투 요청 즉각 반응',icon_url:'coach'}]},
+    personal_tactics:{status:'present',value:[{label:'뒤에서 침투'}]},participation:{status:'present',value:[3,1]}};
+  assert.equal(savedPlayerSettings(source,877138449,'RF'),source);
+  assert.equal(savedPlayerSettings(source,877138449,'LS'),undefined);
+  assert.equal(savedPlayerSettings(source,863231747,'RF'),undefined);
+  detailTab='settings';
+  try {
+    const {PlayerDetailPanel}=load('PlayerDetailPanel');
+    const tree=JSON.stringify(PlayerDetailPanel({player:{key:'kaka',spId:877138449,grade:8,position:'RF',name:'카카',traitSource:source,
+      comparison:{label:'강화 불일치',linked:false}},id:'detail',onBack:()=>{}}));
+    for (const label of ['피드 저장 설정','9강','8강','라인브레이커','두 개의 심장','침투 요청 즉각 반응','뒤에서 침투','공격 3 · 수비 1']) assert.ok(tree.includes(label),label);
+    assert.ok(!tree.includes('강화 불일치'));
+    assert.ok(!tree.includes('player-saved-overall'));
+  } finally { detailTab='record'; }
+});
 test('포메이션 카드는 기본·획득 신규 특성만 두 개까지 표시하고 급여 결측을 숫자로 만들지 않는다', () => {
   const {PitchPlayerAppearance}=load('PitchPlayerAppearance');
   const player={spId:863231747,grade:9,name:'킬리안 음바페',position:'LS',settings:{overall:150,salary:31,

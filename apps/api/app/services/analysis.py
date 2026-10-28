@@ -28,7 +28,6 @@ from app.services.analysis_constants import (
     OFFICIAL_RANKER_FALLBACK_CACHE_TTL,
     SEASON_META_URL,
     SPPOSITION_META_URL,
-    SPID_META_URL,
     STATIC_BENCHMARK_SOURCE,
 )
 from app.services.analysis_models import MatchStats
@@ -55,6 +54,7 @@ from app.services.metric_catalog import metric_catalog
 from app.services.match_trends import build_match_trends
 from app.services.recent_analysis import load_recent_modes, mode_history, opponent_comparison
 from app.services.team_history_coaching import VERSION as COACHING_VERSION, build_team_history_coaching
+from app.services.player_names import name_index, player_name, player_name_catalog
 
 _MATCH_CACHE = CacheClient()
 _OFFICIAL_RANKER_FALLBACK_CACHE_AT: datetime | None = None
@@ -135,21 +135,8 @@ def _safe_get_json(url: str) -> Any:
         return None
 
 
-@lru_cache(maxsize=1)
 def _spid_name_map() -> dict[int, str]:
-    payload = _safe_get_json(SPID_META_URL)
-    if not isinstance(payload, list):
-        return {}
-    mapping: dict[int, str] = {}
-    for row in payload:
-        if not isinstance(row, dict):
-            continue
-        spid = _to_int(row.get("id"))
-        name = str(row.get("name", "")).strip()
-        if spid is None or not name:
-            continue
-        mapping[spid] = name
-    return mapping
+    return player_name_catalog.get()
 
 
 @lru_cache(maxsize=1)
@@ -831,7 +818,7 @@ def _normalize_to_unit(value: float, low: float, high: float) -> float:
     return max(0.0, min(1.0, (value - low) / (high - low)))
 
 
-def _player_report_summary(rows: list[MatchStats]) -> dict[str, Any]:
+def _player_report_summary(rows: list[MatchStats], names: dict[int, str] | None = None) -> dict[str, Any]:
     def participated_in_match(player: dict[str, float | int]) -> bool:
         rating = _to_float(player.get("rating"), default=0.0)
         if rating > 0:
@@ -943,7 +930,7 @@ def _player_report_summary(rows: list[MatchStats]) -> dict[str, Any]:
                 target["connected_matches"] += 1.0
                 match_link_keys.add(link_key)
 
-    spid_names = _spid_name_map()
+    spid_names = _spid_name_map() if names is None else names
     position_names = _position_name_map()
     season_meta = _season_meta_map()
     raw_players: list[dict[str, Any]] = []
@@ -994,7 +981,7 @@ def _player_report_summary(rows: list[MatchStats]) -> dict[str, Any]:
         raw_players.append(
             {
                 "sp_id": sp_id,
-                "player_name": spid_names.get(sp_id, f"spId {sp_id}"),
+                "player_name": player_name(spid_names, sp_id),
                 "season_id": season_id,
                 "season_name": season_meta.get(season_id, {}).get("name", f"시즌 {season_id}"),
                 "season_img": season_meta.get(season_id, {}).get("image", ""),
@@ -1178,14 +1165,14 @@ def _player_report_summary(rows: list[MatchStats]) -> dict[str, Any]:
     }
 
 
-def _build_visual_summary(rows: list[MatchStats]) -> dict[str, Any]:
+def _build_visual_summary(rows: list[MatchStats], names: dict[int, str] | None = None) -> dict[str, Any]:
     shot_points: list[dict[str, Any]] = []
-    player_names = _spid_name_map()
+    player_names = _spid_name_map() if names is None else names
     goals_for_minutes: list[float] = []
     goals_against_minutes: list[float] = []
     goals_for_types: list[int] = []
     for row in rows:
-        shot_points.extend({**point, "player_name": player_names.get(point.get("sp_id")),
+        shot_points.extend({**point, "player_name": player_name(player_names, int(point.get("sp_id") or 0), None),
                             "date": row.match_date, "match_id": row.match_id} for point in row.shots_for_points)
         goals_for_minutes.extend(row.goals_for_minutes)
         goals_against_minutes.extend(row.goals_against_minutes)
@@ -1198,7 +1185,7 @@ def _build_visual_summary(rows: list[MatchStats]) -> dict[str, Any]:
         "goal_timing_for": _time_bucket_counts(goals_for_minutes),
         "goal_timing_against": _time_bucket_counts(goals_against_minutes),
         "goal_profile": _goal_profile_summary(rows),
-        "player_report": _player_report_summary(rows),
+        "player_report": _player_report_summary(rows, player_names),
         "goal_type_for": _goal_type_summary(goals_for_types),
         "goal_type_note": "공식 문서에 정의된 1~12번 유형을 사용합니다. 코드 14는 실제 경기에서도 반환되지만 공식 이름이 공개되지 않아 종류 미확인으로 구분합니다.",
     }
@@ -2124,22 +2111,27 @@ def run_analysis(
         selection['end_match_date'] = selected[0].match_date
         selection['direction'] = 'latest_30'
     window_size = window_size if window_size is not None else len(selected)
+    snapshot, feed_error = None, None
+    if squad_feed_id:
+        try:
+            snapshot = get_public_feed(squad_feed_id, refresh=True)
+        except SquadFeedError as error:
+            feed_error = str(error)
+    names = {**(name_index(snapshot['players'], 'sp_id') if snapshot else {}), **_spid_name_map()}
     metrics = _compute_metrics(selected)
-    visuals = _build_visual_summary(selected)
+    visuals = _build_visual_summary(selected, names)
     history = previous_matches(rows, selected) if match_type != 0 else []
     coaching = build_position_coaching(
         selected, visuals.get("player_report", {}), _position_name_map(), match_type=match_type,
         include_forfeits=match_type != 0 and (include_forfeit_wins or include_forfeit_losses),
-        player_names=_spid_name_map(), history_rows=history,
+        player_names=names, history_rows=history,
     )
     if match_type == 0:
         coaching["reference_note"] = "공식경기·공식 친선을 합친 현재 기록입니다. 선수별 누적 기록은 함께 보여주되 모드가 다른 이전 기록과 비교해 문제라고 판단하지 않습니다. 팀의 이전 기록 비교는 모드별로 분리하고, 장점·보완점은 같은 경기의 상대 기록과 직접 비교합니다."
-    if squad_feed_id:
-        try:
-            snapshot = get_public_feed(squad_feed_id, refresh=True)
-            coaching['squad_feed'] = build_feed_coaching(snapshot, coaching, [row for row in selected if row.match_end_type == 0], match_type, history_rows=history)
-        except SquadFeedError as error:
-            coaching['squad_feed'] = {'status': 'unavailable', 'requested_feed_id': squad_feed_id, 'message': str(error)}
+    if snapshot:
+        coaching['squad_feed'] = build_feed_coaching(snapshot, coaching, [row for row in selected if row.match_end_type == 0], match_type, history_rows=history)
+    elif squad_feed_id:
+        coaching['squad_feed'] = {'status': 'unavailable', 'requested_feed_id': squad_feed_id, 'message': feed_error}
     empirical = mode_history(selected, rows) if match_type == 0 else build_team_history_coaching(selected, history, match_type)
     benchmark, benchmark_meta = empirical['benchmark'], empirical['benchmark_meta']
     metric_gap_table, issues = empirical['metric_gap_table'], empirical['issues']
