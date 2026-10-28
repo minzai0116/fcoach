@@ -2867,6 +2867,7 @@ code {
 .analysis-focus .analysis-section-nav span { display: none; }
 .analysis-view-body { min-width: 0; min-height: 0; }
 .analysis-focus .analysis-view-body { flex: 1; overflow: auto; overscroll-behavior: contain; }
+.analysis-focus .position-coaching-panel[data-view="compare"] .analysis-view-body { overflow-x: hidden; }
 .analysis-focus .position-coaching-panel[data-view="players"] .analysis-view-body { display: flex; overflow: hidden; }
 .compact-player-workspace { align-items: stretch; width: 100%; height: 100%; min-height: 0; margin: 0; grid-template-columns: minmax(0, 1.35fr) minmax(320px, .85fr); gap: 16px; }
 .compact-player-workspace .player-pitch-overview { min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
