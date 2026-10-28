@@ -3,11 +3,11 @@ import type { MetadataRoute } from "next";
 const baseUrl = "https://fcoach.fun";
 
 const routes = [
-  { path: "/guide", frequency: "weekly", priority: 1 },
-  { path: "/search", frequency: "weekly", priority: 0.8 },
+  { path: "/guide", frequency: "weekly", priority: 0.5 },
+  { path: "/search", frequency: "weekly", priority: 1 },
   { path: "/diagnosis", frequency: "weekly", priority: 0.8 },
   { path: "/players", frequency: "weekly", priority: 0.8 },
-  { path: "/habits", frequency: "weekly", priority: 0.8 },
+  { path: "/matches", frequency: "weekly", priority: 0.8 },
   { path: "/coaching", frequency: "weekly", priority: 0.8 },
   { path: "/rankers", frequency: "weekly", priority: 0.8 },
   { path: "/tracking", frequency: "weekly", priority: 0.8 },

@@ -44,3 +44,4 @@ class MatchStats:
     coaching_data: dict = field(default_factory=dict)
     user_nickname: str = ''
     match_id: str = ''
+    match_type: int = 60

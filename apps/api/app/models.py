@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 MatchType = Literal[50, 60, 52]
@@ -10,7 +10,7 @@ MatchType = Literal[50, 60, 52]
 
 class AnalysisRunRequest(BaseModel):
     ouid: str = Field(min_length=8)
-    match_type: MatchType
+    match_type: Literal[0, 50, 60, 52]
     window: Literal[5, 10, 30] | None = 30
     current_tactic: dict[str, Any] | None = None
     squad_feed_id: str | None = Field(default=None, pattern=r'^[A-Za-z0-9]{8,32}$')
@@ -18,6 +18,14 @@ class AnalysisRunRequest(BaseModel):
     include_forfeit_losses: bool = False
     start_match_id: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_-]{8,128}$')
     end_match_id: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_-]{8,128}$')
+
+
+    @model_validator(mode='after')
+    def fixed_recent_modes(self):
+        if self.match_type == 0:
+            self.window = 30
+            self.start_match_id = self.end_match_id = None
+        return self
 
 
 class ExperimentCreateRequest(BaseModel):

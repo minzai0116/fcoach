@@ -29,7 +29,7 @@ export function MetricTrend({ metric, compact = false }: { metric: CoachingMetri
   return (
     <div className={compact ? "metric-trend compact" : "metric-trend"}>
       {!compact && <div className="metric-trend-caption"><strong>경기별 변화</strong></div>}
-      <svg viewBox={compact ? "0 0 280 80" : "0 0 350 136"} role="img" aria-label={`${metric.label}의 경기별 추이. 각 지표 자체의 척도이며 다른 단위와 높이를 비교하지 않습니다.`}>
+      <svg viewBox={compact ? "0 0 280 80" : "0 0 350 136"} role="img" aria-label={`${metric.label}의 경기별 추이`}>
         {[0, .5, 1].map(fraction => <g key={fraction}>
           <path d={`M${left} ${bottom - fraction * plotHeight} H${left + plotWidth}`} stroke="#dce5f1" strokeDasharray="3 4" />
           {!compact && <text x={left - 7} y={bottom - fraction * plotHeight + 3} textAnchor="end" className="chart-axis-label">{metricValue({ ...metric, value: maximum * fraction }).replace(/\.0(?=[^\d])/, "")}</text>}

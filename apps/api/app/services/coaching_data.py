@@ -102,6 +102,8 @@ def extract_coaching_data(user: dict, opponent: dict) -> dict:
         detail['offsideCount'] = detail['OffsideCount']
     return {
         'shoot': _numbers(user.get('shoot')), 'defence': _numbers(user.get('defence')),
+        'pass': _numbers(user.get('pass')), 'opponent_pass': _numbers(opponent.get('pass')),
+        'opponent_defence': _numbers(opponent.get('defence')),
         'detail': detail, 'opponent_shoot': _numbers(opponent.get('shoot')),
         'shots': _shots(user.get('shootDetail')), 'shots_observed': isinstance(user.get('shootDetail'), list),
         'opponent_shots': _shots(opponent.get('shootDetail')), 'opponent_shots_observed': isinstance(opponent.get('shootDetail'), list),

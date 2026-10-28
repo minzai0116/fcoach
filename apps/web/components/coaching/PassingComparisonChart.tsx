@@ -1,11 +1,13 @@
 import type { PassingCoaching } from "../../types/coaching";
 import { formatPercent, PercentageBar } from "./CoachingVisuals";
+import { MetricReferenceLine, type TeamComparisons } from "./TeamMetricComparison";
 
-export function PassingComparisonChart({ passing, selected, mode, onSelect }: {
+export function PassingComparisonChart({ passing, selected, mode, onSelect, comparisons }: {
   passing: PassingCoaching;
   selected: string;
   mode: "share" | "success";
   onSelect: (metric: string) => void;
+  comparisons?: TeamComparisons;
 }) {
   const priorities = new Map(passing.priorities.map((item, index) => [item.metric, index + 1]));
   return (
@@ -27,10 +29,10 @@ export function PassingComparisonChart({ passing, selected, mode, onSelect }: {
               <span className="passing-chart-line"><PercentageBar value={value} /><b>{formatPercent(value)}</b></span>
               {mode === "share" && <span className="passing-chart-line"><PercentageBar value={item.failure_share} tone="amber" /><b>{formatPercent(item.failure_share)}</b></span>}
             </span>
+            <MetricReferenceLine pair={comparisons?.get(`passing:${item.metric}:${mode === "share" ? "usage" : "success"}`)} />
           </button>
         );
       })}
-      <p className="passing-chart-caption">막대는 모두 0~100% 척도입니다. 유형을 누르면 아래 카드가 바뀝니다.</p>
     </div>
   );
 }

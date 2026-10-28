@@ -128,7 +128,7 @@ function recommendationForOutcome(
   const currentLabel = issueLabelMap[actionCode] ?? actionCode;
   const fallback = {
     title: "재진단 권장",
-    description: "전술 처방 탭에서 최신 진단에 맞는 새 실험 후보를 확인하세요.",
+    description: "맞춤 코칭 탭에서 최신 진단에 맞는 새 실험 후보를 확인하세요.",
     reason: "현재 비교 가능한 보조 추천이 없습니다.",
   };
 

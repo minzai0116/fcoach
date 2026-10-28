@@ -172,8 +172,8 @@ def ensure_official_rankers(
     mode: str = OFFICIAL_MODE_DEFAULT,
     match_type: int = OFFICIAL_MATCH_TYPE_DEFAULT,
     pages: int = 2,
-    max_rankers: int = 30,
-    per_ranker_matches: int = 8,
+    max_rankers: int = 20,
+    per_ranker_matches: int = 30,
     max_age_hours: int = 12,
     force_refresh: bool = False,
 ) -> dict[str, Any]:
@@ -236,6 +236,8 @@ def ensure_official_rankers(
                 time.sleep(0.15)
 
     _upsert_official_rankers(selected, fetched_at=fetched_at)
+    from app.services.ranker_benchmark import get_ranker_benchmark
+    get_ranker_benchmark(refresh=True)
     return {
         "status": "refreshed",
         "mode": mode,

@@ -13,7 +13,7 @@
   <rect x="80" y="80" width="170" height="170" rx="42" fill="url(#fcoach-og-logo)"/>
   <path d="M132 192V132h70v18h-51v14h43v18h-43v10h-19z" fill="#fff"/>
   <text x="295" y="157" fill="#172033" font-family="Arial, sans-serif" font-size="72" font-weight="800">FCOACH</text>
-  <text x="295" y="225" fill="#35506f" font-family="Arial, sans-serif" font-size="32" font-weight="600">FC온라인 전술 코칭 · 선수 리포트 · 개선 추적</text>
+  <text x="295" y="225" fill="#35506f" font-family="Arial, sans-serif" font-size="32" font-weight="600">FC온라인 전술 코칭 · 선수 리포트 · 경기 흐름</text>
   <text x="86" y="392" fill="#172033" font-family="Arial, sans-serif" font-size="54" font-weight="800">닉네임만 입력하면 최근 경기 로그를 분석합니다</text>
   <text x="88" y="458" fill="#35506f" font-family="Arial, sans-serif" font-size="34">핵심 지표와 전술 코칭을 확인하고 직접 실험해 개선을 추적하세요.</text>
 </svg>

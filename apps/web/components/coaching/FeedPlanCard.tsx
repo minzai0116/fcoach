@@ -18,6 +18,5 @@ export function FeedPlanCard({ plan }: { plan: FeedPlan }) {
       <p>{action.reason}</p>
     </li>)}</ol></section>}
 
-    <details className="detail-block plan-reasoning"><summary>판단 근거</summary><p>{plan.reason}</p>{plan.settings.map((setting, index) => <div key={index}><strong>{setting.features.length ? "특성·코치 활용" : setting.label}</strong>{!setting.features.length && <p>{setting.value}</p>}<p>{setting.reason}</p></div>)}<p>{plan.limitation}</p><p>{plan.verification}</p></details>
   </article>;
 }

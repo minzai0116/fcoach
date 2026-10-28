@@ -20,7 +20,6 @@ function Finding({ finding, observation }: { finding: PositionFinding; observati
         <p>{finding.adjustment}</p>
       </div>
       <div className="coaching-recheck"><span className="coaching-step-number">↻</span><div><strong>같은 선수·같은 자리로 5경기 이상</strong><small>성공률과 시도 수를 함께 비교</small></div></div>
-      <details className="detail-block"><summary>비교 근거와 확인 방법</summary><p>{finding.evidence}</p><p className="muted">{finding.hypothesis}</p><p className="muted">{finding.verification}</p></details>
     </div>
   );
 }
@@ -63,7 +62,7 @@ export function PlayerRecordDetails({ player, observation }: { player: PositionP
       {keeper && keeperMain.slice(1).map(metric => <KeeperCard key={metric.metric} metric={metric} />)}
     </dl>
     {findings.length > 0 && <details className="detail-block"><summary>이전 기록 대비 변화 {findings.length}개</summary>{findings.map(finding => <Finding key={finding.metric} finding={finding} observation={observation} />)}</details>}
-    <details className="detail-block player-extra-metrics"><summary>{keeper ? "무실점 기록·집계 기준" : "전체 경기 기록"}</summary>
+    <details className="detail-block player-extra-metrics"><summary>{keeper ? "무실점 기록" : "전체 경기 기록"}</summary>
       {!keeper && <><dl className="position-measurements">{other.map(metric => <MeasurementCard key={metric.metric} metric={metric} />)}</dl>
         {!!player.observations?.length && <dl className="position-observations">{player.observations.map(metric => <div key={metric.metric}>
           <dt>{OBSERVATIONS[metric.metric]?.[0] ?? metric.metric}</dt><dd>{(metric.metric === "dribble_distance" ? metres(metric.per_match) : metric.per_match).toFixed(metric.metric === "rating" ? 2 : 1)}{OBSERVATIONS[metric.metric]?.[1]} / 경기</dd>
@@ -71,10 +70,8 @@ export function PlayerRecordDetails({ player, observation }: { player: PositionP
         {!!player.shot_types?.length && <div className="player-shot-types">{player.shot_types.map(metric => <div key={metric.metric}><strong>{metric.label}</strong><PercentageBar value={metric.conversion} /><small>득점 {metric.goals}/{metric.trials}회 · 유효 {metric.on_target}회</small></div>)}</div>}
       </>}
       {keeper && <><dl className="position-measurements">{player.goalkeeper_metrics?.filter(metric => metric.metric === "clean_sheets").map(metric => <KeeperCard key={metric.metric} metric={metric} />)}</dl>
-        <p className="record-method">선방은 공식 선수 기록의 ‘선방(골 차단)’ 횟수입니다. 개인 선방률은 제공된 시도 분모가 없어 계산하지 않습니다. 팀 실점·무실점은 해당 골키퍼가 출전한 정상 종료 경기의 팀 기록입니다.</p>
         <a href="https://fconline.nexon.com/DataCenter/PlayerStat" target="_blank" rel="noreferrer">공식 기록 기준 ↗</a>
       </>}
-      <p className="record-method">이전 값은 같은 카드·강화·자리의 앞선 정상 종료 경기 기록입니다. 비교할 근거가 없으면 문제로 판단하지 않습니다.</p>
     </details>
   </div>;
 }

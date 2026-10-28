@@ -18,7 +18,7 @@ export default function PrivacyPage() {
       <section className="panel">
         <h2 className="section-title">2. 처리 목적</h2>
         <ul className="list">
-          <li>전술 코칭 리포트 생성 및 개선 추적 제공</li>
+          <li>전술 코칭 리포트 생성 및 최근 경기 추이 제공</li>
           <li>랭커 비교/선수 리포트/전술 코칭 제공</li>
           <li>서비스 안정성 확보 및 품질 개선</li>
         </ul>

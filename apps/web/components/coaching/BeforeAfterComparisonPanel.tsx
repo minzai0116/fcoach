@@ -6,7 +6,6 @@ import { analyticsError, trackEvent } from "../../lib/analytics";
 import { MATCH_LABELS, MATCH_TYPE_OPTIONS } from "../../lib/uiConstants";
 import type { MatchType, RecentMatchSummary, UserSearchResponse } from "../../types/analysis";
 import type { BeforeAfterPayload, ComparisonMetric } from "../../types/comparison";
-import { AnalysisInfo } from "./AnalysisInfo";
 
 function valueText(value: number | null | undefined, unit: string, delta = false) {
   if (value == null) return "—";
@@ -114,7 +113,7 @@ export function BeforeAfterComparisonPanel({ initialNickname, initialMatchType }
   const categories = result ? [...new Map(result.metrics.map(m => [m.category, m.category_label])).entries()] : [];
   const primary = new Set(["pass_overall", "on_target", "conversion", "display_goals", "goals_against", "team_tackle", "pass_through", "win_rate"]);
   return <section className="before-after-comparison grid">
-    <article className="panel"><div className="coaching-section-heading"><div><h2 className="section-title">개선 전·후 경기 비교</h2><p>비교할 경기를 두 구간으로 나눠 수치 변화와 유지·보완할 플레이를 확인하세요.</p></div><AnalysisInfo><p>두 구간은 경기 수가 달라도 비교할 수 있습니다. 득점·실점·횟수는 경기당 평균, 성공률은 성공 합계 ÷ 시도 합계를 사용합니다.</p><p>같은 경기를 두 구간에 중복해서 넣을 수 없습니다. 상대·선수 구성·난이도가 다를 수 있어 설정 변경의 효과로 단정하지 않습니다.</p></AnalysisInfo></div>
+    <article className="panel"><div className="coaching-section-heading"><div><h2 className="section-title">전후 비교</h2><p>비교할 경기를 두 구간으로 나눠 수치 변화와 유지·보완할 플레이를 확인하세요.</p></div></div>
       <div className="comparison-search"><input aria-label="전후 비교 닉네임" placeholder="닉네임" value={nickname} disabled={busy} onChange={e => { setNickname(e.target.value); clear(); }} /><select aria-label="전후 비교 경기 모드" value={matchType} disabled={busy} onChange={e => { setMatchType(Number(e.target.value) as MatchType); clear(); }}>{MATCH_TYPE_OPTIONS.map(mode => <option key={mode} value={mode}>{MATCH_LABELS[mode]}</option>)}</select><button type="button" className="btn" disabled={busy || nickname.trim().length < 2} onClick={() => void load()}>{busy ? "처리 중…" : "경기 목록 불러오기"}</button></div>
       {!!matches.length && <><div className="comparison-selection-toolbar"><button type="button" className="btn secondary" disabled={busy || eligible.length < 2} onClick={() => { const half = Math.ceil(eligible.length / 2); setAfter(eligible.slice(0, half).map(m => m.match_id!)); setBefore(eligible.slice(half).map(m => m.match_id!)); setResult(null); }}>조회 경기를 앞·뒤 절반으로 나누기</button><label><input type="checkbox" checked={wins} disabled={busy} onChange={e => { setWins(e.target.checked); setResult(null); }} />몰수승 포함</label><label><input type="checkbox" checked={losses} disabled={busy} onChange={e => { setLosses(e.target.checked); setResult(null); }} />몰수패 포함</label></div>
       <div className="comparison-group-grid"><MatchGroupPicker title="개선 전" matches={eligible} selected={pre} other={post} disabled={busy} onChange={ids => { setBefore(ids); setResult(null); }} /><MatchGroupPicker title="개선 후" matches={eligible} selected={post} other={pre} disabled={busy} onChange={ids => { setAfter(ids); setResult(null); }} /></div>

@@ -1,27 +1,51 @@
 import type { MatchType, ScreenKey } from "../types/analysis";
 
 export const SCREEN_LABELS: Record<ScreenKey, string> = {
-  search: "검색/설정",
-  diagnosis: "진단 대시보드",
-  players: "선수·플레이 분석",
-  habits: "선수·플레이 분석",
-  actions: "전술 처방",
-  rankers: "랭커 분석",
-  tracking: "개선 추적",
-  guide: "이용 가이드",
+  search: "경기 검색",
+  diagnosis: "팀 분석",
+  players: "선수 분석",
+  matches: "경기별 분석",
+  habits: "선수 분석",
+  actions: "맞춤 코칭",
+  rankers: "랭커 비교",
+  tracking: "최근 경기 추이",
+  guide: "이용 방법",
 };
 
-export const SCREEN_FLOW: { key: ScreenKey; icon: string; hint: string }[] = [
-  { key: "guide", icon: "📘", hint: "서비스 활용법" },
-  { key: "search", icon: "🔎", hint: "대상/옵션 선택" },
-  { key: "diagnosis", icon: "📊", hint: "핵심 지표 진단" },
-  { key: "players", icon: "⚽", hint: "포메이션·경기 기록" },
-  { key: "actions", icon: "🎯", hint: "바꿀 설정·플레이" },
-  { key: "rankers", icon: "🏅", hint: "랭커 비교 분석" },
-  { key: "tracking", icon: "📈", hint: "선택한 경기 전후 비교" },
+export const SCREEN_FLOW: { key: ScreenKey; label: string; icon: string }[] = [
+  { key: "search", label: SCREEN_LABELS.search, icon: "🔎" },
+  { key: "diagnosis", label: "경기 분석", icon: "📊" },
+  { key: "actions", label: SCREEN_LABELS.actions, icon: "🎯" },
+  { key: "tracking", label: SCREEN_LABELS.tracking, icon: "📈" },
+  { key: "rankers", label: SCREEN_LABELS.rankers, icon: "🏅" },
 ];
 
+export const ANALYSIS_SCREENS = ["diagnosis", "players", "matches"] as const;
+export function isAnalysisScreen(screen: ScreenKey): boolean {
+  return ANALYSIS_SCREENS.some(key => key === screen);
+}
+export function primaryScreen(screen: ScreenKey): ScreenKey {
+  return isAnalysisScreen(screen) || screen === "habits" ? "diagnosis" : screen;
+}
+
+export const SCREEN_PATHS: Record<ScreenKey, string> = {
+  guide: "/guide", search: "/search", diagnosis: "/diagnosis",
+  players: "/players", matches: "/matches", habits: "/habits",
+  actions: "/coaching", rankers: "/rankers", tracking: "/tracking",
+};
+const PATH_TO_SCREEN = Object.fromEntries(
+  Object.entries(SCREEN_PATHS).map(([key, path]) => [path, key]),
+) as Record<string, ScreenKey>;
+export function normalizePathname(pathname: string | null): string {
+  return !pathname || pathname === "/" ? "/guide" : pathname.replace(/\/+$/, "");
+}
+export function screenFromPath(pathname: string | null): ScreenKey | null {
+  const path = normalizePathname(pathname);
+  return path === "/habits" ? "players" : PATH_TO_SCREEN[path] ?? null;
+}
+
 export const MATCH_LABELS: Record<MatchType, string> = {
+  0: "공식경기·공식 친선",
   50: "공식경기",
   60: "공식 친선",
   52: "감독모드",
@@ -86,6 +110,7 @@ export const METRIC_LABEL_KO: Record<string, string> = {
 
 export const BENCHMARK_SOURCE_LABEL: Record<string, string> = {
   own_history_v1: "내 이전 정상 종료 경기",
+  own_history_by_mode: "내 이전 경기 · 모드별 비교",
   unavailable: "비교 기록 없음",
   official_rank_1vs1: "공식 랭킹(1vs1)",
   ranker_proxy_v1: "기본 기준(공식 랭커 매핑 전)",

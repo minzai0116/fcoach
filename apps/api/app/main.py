@@ -109,8 +109,8 @@ def _ensure_daily_rankers(force: bool = False) -> None:
             mode="1vs1",
             match_type=50,
             pages=2,
-            max_rankers=30,
-            per_ranker_matches=8,
+            max_rankers=20,
+            per_ranker_matches=30,
             max_age_hours=24,
             force_refresh=False,
         )
@@ -513,11 +513,8 @@ def analysis_run(request: Request, req: AnalysisRunRequest) -> dict[str, Any]:
             start_match_id=req.start_match_id,
             end_match_id=req.end_match_id,
         )
-        _trigger_match_sync_async(
-            ouid=req.ouid,
-            match_type=int(req.match_type),
-            desired_matches=max(req.window or 30, 12),
-        )
+        for mode in ((50, 60) if req.match_type == 0 else (int(req.match_type),)):
+            _trigger_match_sync_async(ouid=req.ouid, match_type=mode, desired_matches=max(req.window or 30, 12))
         result["request_fingerprint"] = request_fingerprint
         cache.set_json(
             cache_key,
@@ -662,8 +659,8 @@ def rankers_refresh(
     request: Request,
     mode: str = Query("1vs1"),
     pages: int = Query(2, ge=1, le=5),
-    max_rankers: int = Query(30, ge=5, le=80),
-    per_ranker_matches: int = Query(8, ge=1, le=20),
+    max_rankers: int = Query(20, ge=5, le=80),
+    per_ranker_matches: int = Query(30, ge=1, le=30),
     x_admin_key: str | None = Header(default=None, alias="x-admin-key"),
 ) -> dict[str, Any]:
     _enforce_rate_limit(request, scope="rankers_refresh", max_requests=3, window_sec=300)
@@ -677,6 +674,14 @@ def rankers_refresh(
         max_age_hours=12,
         force_refresh=True,
     )
+
+
+@app.get("/rankers/benchmark")
+def rankers_benchmark(request: Request) -> dict[str, Any]:
+    _enforce_rate_limit(request, scope="rankers_benchmark", max_requests=20, window_sec=60)
+    _trigger_ranker_sync_async(force=False)
+    from app.services.ranker_benchmark import get_ranker_benchmark
+    return get_ranker_benchmark()
 
 
 @app.get("/rankers/latest")

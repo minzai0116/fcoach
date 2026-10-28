@@ -1,5 +1,5 @@
-export type ScreenKey = "search" | "diagnosis" | "players" | "habits" | "actions" | "rankers" | "tracking" | "guide";
-export type MatchType = 50 | 60 | 52;
+export type ScreenKey = "search" | "diagnosis" | "players" | "matches" | "habits" | "actions" | "rankers" | "tracking" | "guide";
+export type MatchType = 0 | 50 | 60 | 52;
 export type WindowSize = 5 | 10 | 30;
 
 export type IssueCode =
@@ -29,6 +29,14 @@ export type MatchSampleSelection = MatchSampleOptions & {
 };
 
 export type AnalysisPayload = {
+  ranker_benchmark?: import("./comparison").RankerBenchmark;
+  domain_scores?: import("./comparison").DomainScores;
+  ranker_coaching?: import("./comparison").RankerCoaching;
+  match_trends?: import("./comparison").MatchTrends;
+  comparison_metrics?: { official: import("./comparison").MetricGroup[]; all: import("./comparison").MetricGroup[] };
+  opponent_comparison?: OpponentComparison;
+  mode_counts?: Record<string, number>;
+  normal_mode_counts?: Record<string, number>;
   coaching_version?: string;
   coaching?: import("./coaching").PositionCoaching | null;
   ouid: string;
@@ -91,6 +99,7 @@ export type ImpactComponent = {
 };
 
 export type RecentMatchSummary = {
+  match_type?: MatchType;
   match_id?: string;
   match_end_type?: number;
   match_date: string;
@@ -338,4 +347,13 @@ export type CoachKpiTarget = {
   target: number;
   displayCurrent: string;
   displayTarget: string;
+};
+
+export type OpponentComparison = {
+  source: string; matches: number; note: string;
+  metrics: Array<{
+    metric: string; label: string; status: string; gap_pp: number | null; action: string;
+    mine: { success: number | null; trials: number | null; value: number | null; matches: number };
+    opponent: { success: number | null; trials: number | null; value: number | null; matches: number };
+  }>;
 };

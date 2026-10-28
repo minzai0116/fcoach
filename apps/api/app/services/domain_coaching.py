@@ -131,6 +131,11 @@ def build_domain_coaching(rows: list[MatchStats], *, include_forfeits: bool = Fa
         item['usage_share'] = round(item['trials'] / total_detail_shots, 4) if item['trials'] else None
         item['failure_share'] = round(item['failures'] / total_detail_misses, 6) if total_detail_misses else None
         metrics[key] = item
+    for pair in (('box_inside', 'box_outside'),):
+        if [v[0] for v in series[pair[0]]] == [v[0] for v in series[pair[1]]]:
+            attempts = sum(metrics[key]['trials'] for key in pair)
+            for key in pair:
+                metrics[key]['usage_share'] = metrics[key]['trials'] / attempts if attempts else None
     for key, label in (('team_tackle', '태클 성공률'), ('team_block', '블록 성공률'), ('late_conceded', '60분 이후 실점 비중')):
         metrics[key] = _metric(key, label, series[key], 10, guide='defend')
     for key, label in PLAYER_LABELS.items():

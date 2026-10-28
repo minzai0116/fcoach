@@ -51,6 +51,9 @@ from app.services.feed_coaching import build_feed_coaching
 from app.services.match_selection import select_match_sample
 from app.services.analysis_errors import AnalysisRequestError, MatchSyncWarning
 from app.services.comparison_evidence import previous_matches
+from app.services.metric_catalog import metric_catalog
+from app.services.match_trends import build_match_trends
+from app.services.recent_analysis import load_recent_modes, mode_history, opponent_comparison
 from app.services.team_history_coaching import VERSION as COACHING_VERSION, build_team_history_coaching
 
 _MATCH_CACHE = CacheClient()
@@ -400,6 +403,7 @@ def _extract_user_match(payload: dict[str, Any], ouid: str) -> MatchStats | None
     # 넥슨의 시간대 없는 matchDate는 명세상 UTC0이다.
     match_date = _parse_iso_datetime(str(payload.get("matchDate") or utc_now_iso()))
     return MatchStats(
+        match_type=int(payload.get("matchType") or 60),
         match_date=match_date.isoformat() if match_date else str(payload.get("matchDate", "")),
         result=result,
         opponent_nickname=str(opp.get("nickname", "")).strip(),
@@ -1204,6 +1208,7 @@ def _recent_match_summary(rows: list[MatchStats], limit: int = 5) -> list[dict[s
     return [
         {
             "match_id": row.match_id,
+            "match_type": row.match_type,
             "match_end_type": row.match_end_type,
             "match_date": row.match_date,
             "opponent_nickname": row.opponent_nickname or "알 수 없음",
@@ -2077,6 +2082,8 @@ def run_analysis(
     start_match_id: str | None = None,
     end_match_id: str | None = None,
 ) -> dict[str, Any]:
+    if match_type == 0:
+        window_size, start_match_id, end_match_id = 30, None, None
     purge_stale_nexon_api_data()
     tactic_input_known = isinstance(current_tactic, dict) and len(current_tactic) > 0
     live_sync_enabled = (
@@ -2084,13 +2091,16 @@ def run_analysis(
         or manual_refresh_probe
         or _is_truthy(os.getenv("HABIT_LAB_ENABLE_LIVE_MATCH_SYNC", "0"))
     )
-    rows, refreshed_match_rows, refresh_warning, should_refresh = _load_rows_for_analysis(
+    rows, refreshed_match_rows, refresh_warning, should_refresh = (
+        load_recent_modes(ouid=ouid, loader=_load_rows_for_analysis,
+                          window_size=59, live_sync_enabled=live_sync_enabled, manual_refresh_probe=manual_refresh_probe)
+        if match_type == 0 else _load_rows_for_analysis(
         ouid=ouid,
         match_type=match_type,
         window_size=window_size or 30,
         live_sync_enabled=live_sync_enabled,
         manual_refresh_probe=manual_refresh_probe,
-    )
+    ))
     if not rows:
         unavailable = isinstance(refresh_warning, MatchSyncWarning)
         raise AnalysisRequestError(refresh_warning or '이 경기 모드에서 조회할 수 있는 경기 내역이 없습니다.',
@@ -2099,7 +2109,8 @@ def run_analysis(
     selected, selection = select_match_sample(rows, window_size, include_forfeit_wins=include_forfeit_wins,
                                              include_forfeit_losses=include_forfeit_losses, start_match_id=start_match_id, end_match_id=end_match_id)
     if not selected:
-        raise AnalysisRequestError('선택한 범위와 몰수 포함 조건에 맞는 경기 내역이 없습니다. 경기 범위나 포함 조건을 바꿔주세요.',
+        message = '정상 종료 경기 내역이 없습니다. 몰수 경기 포함 설정을 확인해주세요.' if match_type == 0 else '선택한 범위와 몰수 포함 조건에 맞는 경기 내역이 없습니다. 경기 범위나 포함 조건을 바꿔주세요.'
+        raise AnalysisRequestError(message,
                                    'no_matching_matches', 'change_filters')
     if window_size is not None and len(selected) < window_size:
         sample_warning = f"선택한 조건에 맞는 경기 {len(selected)}경기만 확인되어 해당 경기만 분석했습니다."
@@ -2107,54 +2118,52 @@ def run_analysis(
     if selection['forfeit_win_count'] or selection['forfeit_loss_count']:
         warning = '몰수승·몰수패를 포함한 분석입니다. 경기 길이와 통계가 정상 종료 경기와 달라 수치를 직접 비교하기 어렵습니다.'
         refresh_warning = f'{refresh_warning} {warning}'.strip() if refresh_warning else warning
+    if match_type == 0:
+        selection['start_match_date'] = selected[-1].match_date
+        selection['end_match_date'] = selected[0].match_date
+        selection['direction'] = 'latest_30'
     window_size = window_size if window_size is not None else len(selected)
     metrics = _compute_metrics(selected)
     visuals = _build_visual_summary(selected)
-    history = previous_matches(rows, selected)
+    history = previous_matches(rows, selected) if match_type != 0 else []
     coaching = build_position_coaching(
         selected, visuals.get("player_report", {}), _position_name_map(), match_type=match_type,
         include_forfeits=include_forfeit_wins or include_forfeit_losses,
         player_names=_spid_name_map(), history_rows=history,
     )
+    if match_type == 0:
+        coaching["reference_note"] = "공식경기·공식 친선을 합친 현재 기록입니다. 선수별 누적 기록은 함께 보여주되 모드가 다른 이전 기록과 비교해 문제라고 판단하지 않습니다. 팀의 이전 기록 비교는 모드별로 분리하고, 장점·보완점은 같은 경기의 상대 기록과 직접 비교합니다."
     if squad_feed_id:
         try:
             snapshot = get_public_feed(squad_feed_id, refresh=True)
             coaching['squad_feed'] = build_feed_coaching(snapshot, coaching, [row for row in selected if row.match_end_type == 0], match_type, history_rows=history)
         except SquadFeedError as error:
             coaching['squad_feed'] = {'status': 'unavailable', 'requested_feed_id': squad_feed_id, 'message': str(error)}
-    official_rankers = _load_official_rankers(limit=80)
-    official_ranker_ouids = {str(row["ouid"]) for row in official_rankers if row.get("ouid")}
-    official_ranker_nicknames = set()
-    for row in official_rankers:
-        normalized_nickname = _normalize_nickname(str(row.get("nickname", "")))
-        if normalized_nickname:
-            official_ranker_nicknames.add(normalized_nickname)
-    ranker_profiles: list[dict[str, Any]] = []
-    if match_type == 50 and (official_ranker_ouids or official_ranker_nicknames):
-        profiles = _collect_user_profiles(match_type=50, limit_rows=3000)
-        ranker_profiles = [
-            profile
-            for profile in profiles
-            if str(profile["ouid"]) in official_ranker_ouids
-            or _normalize_nickname(str(profile.get("nickname", ""))) in official_ranker_nicknames
-        ]
-
-    empirical = build_team_history_coaching(selected, history, match_type)
+    empirical = mode_history(selected, rows) if match_type == 0 else build_team_history_coaching(selected, history, match_type)
     benchmark, benchmark_meta = empirical['benchmark'], empirical['benchmark_meta']
     metric_gap_table, issues = empirical['metric_gap_table'], empirical['issues']
-    similar_rankers = _similar_rankers(
-        target_metrics=metrics,
-        top_k=3,
-        official_rankers=official_rankers,
-        ranker_profiles=ranker_profiles,
-    ) if match_type == 50 else []
     created_at = utc_now_iso()
 
     actions = empirical['actions']
 
+    from app.services.ranker_benchmark import get_ranker_benchmark
+    from app.services.ranker_coaching import build_ranker_coaching
+    from app.services.domain_scores import build_domain_scores
+    benchmark_snapshot = get_ranker_benchmark()
+    current_comparison = metric_catalog([row for row in selected if row.match_end_type == 0])
+    ranker_coaching = build_ranker_coaching(current_comparison, benchmark_snapshot, coaching)
     result = {
+        "ranker_benchmark": benchmark_snapshot,
+        "ranker_coaching": ranker_coaching,
+        "domain_scores": build_domain_scores(current_comparison, benchmark_snapshot),
         "coaching_version": COACHING_VERSION,
         "comparisons": empirical["comparisons"],
+        "opponent_comparison": opponent_comparison(selected),
+        "match_trends": build_match_trends(rows),
+        "comparison_metrics": {"all": current_comparison,
+                               "official": metric_catalog([row for row in selected if row.match_type == 50 and row.match_end_type == 0])},
+        "mode_counts": {str(mode): sum(row.match_type == mode for row in selected) for mode in (50, 60, 52)},
+        "normal_mode_counts": {str(mode): sum(row.match_type == mode and row.match_end_type == 0 for row in selected) for mode in (50, 60, 52)},
         "ouid": ouid,
         "match_type": match_type,
         "window_size": window_size,
@@ -2172,7 +2181,7 @@ def run_analysis(
         "benchmark": benchmark,
         "benchmark_meta": benchmark_meta,
         "metric_gap_table": metric_gap_table,
-        "similar_rankers": similar_rankers,
+        "similar_rankers": [],
         "metrics": metrics,
         "visuals": visuals,
         "coaching": coaching,

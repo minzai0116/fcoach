@@ -14,8 +14,13 @@ import {
   BENCHMARK_SOURCE_LABEL,
   ISSUE_LABELS,
   MATCH_LABELS,
-  MATCH_TYPE_OPTIONS,
   METRIC_LABEL_KO,
+  ANALYSIS_SCREENS,
+  isAnalysisScreen,
+  primaryScreen,
+  SCREEN_PATHS,
+  normalizePathname,
+  screenFromPath,
   SCREEN_FLOW,
   SCREEN_LABELS,
   TACTIC_DIRECTION_KO,
@@ -26,13 +31,10 @@ import type {
   CoachExplanation,
   MatchType,
   MatchSampleOptions,
-  MetricMap,
-  OfficialRanker,
   PlayerChemistryPair,
   PlayerReportEntry,
   PlayerSortDirection,
   PlayerSortMetric,
-  RankersLatestPayload,
   RawActionCard,
   RecentMatchSummary,
   ScreenKey,
@@ -45,14 +47,17 @@ import type {
 } from "../types/analysis";
 import { PlayerPortrait } from "./player/PlayerPortrait";
 import { GuideScreen } from "./guide/GuideScreen";
-import { MatchSampleSelector } from "./coaching/MatchSampleSelector";
+import { OpponentComparisonPanel } from "./coaching/OpponentComparisonPanel";
 import { SquadFeedSelector } from "./coaching/SquadFeedSelector";
 import { FeedConnectionSummary } from "./coaching/FeedCoachingPanel";
 import type { SquadFeedSnapshot } from "../types/squadFeed";
 import { InteractiveShotMap } from "./coaching/InteractiveShotMap";
+import { DomainScorePanel } from "./coaching/DomainScorePanel";
 import { PrescriptionPanel } from "./coaching/PrescriptionPanel";
+import { MatchReviewPanel } from "./coaching/MatchReviewPanel";
 import { PositionCoachingPanel } from "./coaching/PositionCoachingPanel";
-import { BeforeAfterComparisonPanel } from "./coaching/BeforeAfterComparisonPanel";
+import { MatchTrendPanel } from "./coaching/MatchTrendPanel";
+import { RankerComparisonPanel } from "./coaching/RankerComparisonPanel";
 import {
   enhanceLevelClass,
   formatImpactRaw,
@@ -64,31 +69,6 @@ import {
   tablePositionGroup,
   tablePositionOrder,
 } from "../lib/playerReport";
-
-const SCREEN_PATHS: Record<ScreenKey, string> = {
-  guide: "/guide",
-  search: "/search",
-  diagnosis: "/diagnosis",
-  players: "/players",
-  habits: "/habits",
-  actions: "/coaching",
-  rankers: "/rankers",
-  tracking: "/tracking",
-};
-
-const PATH_TO_SCREEN = Object.fromEntries(
-  Object.entries(SCREEN_PATHS).map(([screenKey, path]) => [path, screenKey]),
-) as Record<string, ScreenKey>;
-
-function normalizePathname(pathname: string | null): string {
-  if (!pathname || pathname === "/") return "/guide";
-  return pathname.endsWith("/") && pathname.length > 1 ? pathname.slice(0, -1) : pathname;
-}
-
-function screenFromPath(pathname: string | null): ScreenKey | null {
-  const path = normalizePathname(pathname);
-  return path === "/habits" ? "players" : PATH_TO_SCREEN[path] ?? null;
-}
 
 type HabitLabWireframeProps = {
   initialScreen?: ScreenKey;
@@ -117,10 +97,6 @@ function toActionCards(raw: RawActionCard[] | undefined): ActionCard[] {
       createdAt: item.created_at,
     }))
     .sort((left, right) => left.rank - right.rank);
-}
-
-function toKpiValue(metrics: MetricMap, key: string): number {
-  return Number(metrics[key] ?? 0);
 }
 
 function formatPercent(value: number): string {
@@ -406,28 +382,6 @@ function getSimilarRankers(evidence: Record<string, unknown> | undefined): Simil
   return parsed;
 }
 
-function similarRankerSourceLabel(source: string): string {
-  if (source.includes("nickname_proxy")) return "닉네임 매핑 기반";
-  if (source.includes("meta_only")) return "랭커 메타 기반";
-  if (source.includes("client_winrate_proxy")) return "승률 근접 임시 계산";
-  if (source.includes("official_rank_1vs1")) return "공식 랭커 프로필 기반";
-  return "기준 정보";
-}
-
-function compareText(gapValue: number, higherIsBetter: boolean): string {
-  const absGap = Math.abs(gapValue);
-  if (absGap < 1e-9) return "같음";
-  if (higherIsBetter) {
-    return gapValue > 0 ? "내 수치가 높음" : "랭커 후보가 높음";
-  }
-  return gapValue < 0 ? "내 수치가 낮음" : "랭커 후보가 낮음";
-}
-
-function formatDeltaSigned(value: number, metric: string): string {
-  const rate = ["win_rate", "shot_on_target_rate", "goals_per_sot", "in_box_shot_ratio", "pass_success_rate", "through_pass_success_rate", "tackle_success_rate", "late_concede_ratio"].includes(metric);
-  return `${value > 0 ? "+" : ""}${formatFixed(value * (rate ? 100 : 1), rate ? 1 : 2)}${rate ? "%p" : ""}`;
-}
-
 function toProgressPercent(value: number, maxValue: number): number {
   if (!Number.isFinite(value) || !Number.isFinite(maxValue) || maxValue <= 0) return 0;
   const ratio = Math.max(0, Math.min(1, value / maxValue));
@@ -436,7 +390,7 @@ function toProgressPercent(value: number, maxValue: number): number {
 
 function normalizeMatchType(value: unknown, fallback: MatchType): MatchType {
   const numeric = Number(value);
-  if (numeric === 50 || numeric === 52 || numeric === 60) return numeric;
+  if (numeric === 0 || numeric === 50 || numeric === 52 || numeric === 60) return numeric;
   return fallback;
 }
 
@@ -444,72 +398,6 @@ function normalizeWindowSize(value: unknown, fallback: WindowSize): WindowSize {
   const numeric = Number(value);
   if (numeric === 5 || numeric === 10 || numeric === 30) return numeric;
   return fallback;
-}
-
-type VisualMetricItem = {
-  key: string;
-  label: string;
-  userValue: number;
-  benchmarkValue: number | null;
-  userDisplay: string;
-  benchmarkDisplay: string;
-  reverse: boolean;
-  scaleMax: number;
-};
-
-function buildVisualMetricItems(metrics: MetricMap, benchmark: MetricMap | undefined): VisualMetricItem[] {
-  const winRate = toKpiValue(metrics, "win_rate");
-  const shotOnTargetRate = toKpiValue(metrics, "shot_on_target_rate");
-  const lateConcedeRatio = toKpiValue(metrics, "late_concede_ratio");
-  const offsideAvg = toKpiValue(metrics, "offside_avg");
-
-  const benchmarkWinRate = typeof benchmark?.win_rate === "number" ? benchmark.win_rate : null;
-  const benchmarkShotOnTargetRate = typeof benchmark?.shot_on_target_rate === "number" ? benchmark.shot_on_target_rate : null;
-  const benchmarkLateConcedeRatio = typeof benchmark?.late_concede_ratio === "number" ? benchmark.late_concede_ratio : null;
-  const benchmarkOffsideAvg = typeof benchmark?.offside_avg === "number" ? benchmark.offside_avg : null;
-
-  return [
-    {
-      key: "win_rate",
-      label: "승률",
-      userValue: winRate,
-      benchmarkValue: benchmarkWinRate,
-      userDisplay: formatPercent(winRate),
-      benchmarkDisplay: benchmarkWinRate === null ? "" : formatPercent(benchmarkWinRate),
-      reverse: false,
-      scaleMax: 1,
-    },
-    {
-      key: "shot_on_target_rate",
-      label: "유효슈팅 비율",
-      userValue: shotOnTargetRate,
-      benchmarkValue: benchmarkShotOnTargetRate,
-      userDisplay: formatPercent(shotOnTargetRate),
-      benchmarkDisplay: benchmarkShotOnTargetRate === null ? "" : formatPercent(benchmarkShotOnTargetRate),
-      reverse: false,
-      scaleMax: 1,
-    },
-    {
-      key: "late_concede_ratio",
-      label: "60분 이후 실점 비중",
-      userValue: lateConcedeRatio,
-      benchmarkValue: benchmarkLateConcedeRatio,
-      userDisplay: formatPercent(lateConcedeRatio),
-      benchmarkDisplay: benchmarkLateConcedeRatio === null ? "" : formatPercent(benchmarkLateConcedeRatio),
-      reverse: true,
-      scaleMax: Math.max(1, (benchmarkLateConcedeRatio ?? 0) * 1.8, lateConcedeRatio * 1.3),
-    },
-    {
-      key: "offside_avg",
-      label: "오프사이드 평균 (낮을수록 좋음)",
-      userValue: offsideAvg,
-      benchmarkValue: benchmarkOffsideAvg,
-      userDisplay: formatFixed(offsideAvg, 2),
-      benchmarkDisplay: benchmarkOffsideAvg === null ? "" : formatFixed(benchmarkOffsideAvg, 2),
-      reverse: true,
-      scaleMax: Math.max(3, (benchmarkOffsideAvg ?? 0) * 2.2, offsideAvg * 1.3),
-    },
-  ];
 }
 
 type MetricGapEntry = {
@@ -593,7 +481,6 @@ function confidenceBand(value: number): { label: string; className: string } {
 function syncNoticeText(payload: AnalysisPayload, fallback: string): string {
   const warning = String(payload.sync_warning ?? "").trim();
   const details = [
-    payload.created_at ? `분석 시각 ${formatDate(payload.created_at)}` : "",
     payload.latest_match_date ? `최근 경기 ${formatDate(payload.latest_match_date)}` : "",
   ].filter(Boolean);
   const summary = details.length > 0 ? `${fallback} · ${details.join(" · ")}` : fallback;
@@ -703,13 +590,10 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
     return () => window.removeEventListener("popstate", handlePopState);
   }, [initialScreen]);
   useEffect(() => { window.scrollTo(0, 0); }, [screen]);
-  const [matchType, setMatchType] = useState<MatchType>(60);
+  const matchType: MatchType = 0;
   const windowSize: WindowSize = 30;
   const [nicknameInput, setNicknameInput] = useState("");
   const [sampleOptions, setSampleOptions] = useState<MatchSampleOptions>({ include_forfeit_wins: false, include_forfeit_losses: false, start_match_id: null, end_match_id: null });
-  const [matchListLoading, setMatchListLoading] = useState(false);
-  const [matchSelectionCount, setMatchSelectionCount] = useState<number | null>(null);
-  const [matchListRevision, setMatchListRevision] = useState(0);
   const [selectedFeed, setSelectedFeed] = useState<SquadFeedSnapshot | null>(null);
   const [feedLoading, setFeedLoading] = useState(false);
   const [resolvedUser, setResolvedUser] = useState<UserSearchResponse | null>(null);
@@ -720,7 +604,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
   const [error, setError] = useState<string>("");
   const [analysis, setAnalysis] = useState<AnalysisPayload | null>(null);
   const [actions, setActions] = useState<ActionCard[]>([]);
-  const [officialRankers, setOfficialRankers] = useState<OfficialRanker[]>([]);
 
   const appliedTactic: CurrentTactic | null = null;
   const [playerSortMetric, setPlayerSortMetric] = useState<PlayerSortMetric>("impact_score");
@@ -740,45 +623,14 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
     [analysis?.window_size, windowSize],
   );
 
-  const metrics = analysis?.metrics ?? analysis?.kpis ?? {};
   const analysisSampleCount = Number(analysis?.sample_count ?? analysisWindowSize);
-  const issues = analysis?.issues ?? analysis?.issue_scores ?? {};
   const feedContext = analysis?.coaching?.squad_feed;
   const hasContextualFeed = feedContext?.status === "available" && !!feedContext.rule_version && feedContext.summary.linked > 0;
   const tacticInputKnown = (analysis?.tactic_input_mode ?? (appliedTactic ? "provided" : "missing")) === "provided";
 
-  const issueTagClass = useMemo(() => {
-    const entries = Object.entries(issues);
-    if (entries.length === 0) return "issue-low";
-    const topScore = entries.sort((left, right) => right[1] - left[1])[0]?.[1] ?? 0;
-    if (topScore >= 70) return "issue-high";
-    if (topScore >= 30) return "issue-mid";
-    return "issue-low";
-  }, [issues]);
 
-  const topIssue = useMemo(() => {
-    const entries = Object.entries(issues);
-    if (entries.length === 0) return null;
-    const [issueCode, score] = entries.sort((left, right) => right[1] - left[1])[0];
-    return { issueCode, score };
-  }, [issues]);
 
-  const similarRankersForView = useMemo(() => {
-    if (analysis && Array.isArray(analysis.similar_rankers)) {
-      const parsed = getSimilarRankers({ similar_rankers: analysis.similar_rankers });
-      if (parsed.length > 0) return parsed;
-    }
-    if (actions.length > 0) {
-      const parsed = getSimilarRankers(actions[0].evidence);
-      if (parsed.length > 0) return parsed;
-    }
-    return [];
-  }, [analysis, actions]);
 
-  const visualMetricItems = useMemo(() => {
-    const comparable = Object.fromEntries((analysis?.metric_gap_table ?? []).map(row => [String(row.metric_name), Number(row.user_value)]));
-    return buildVisualMetricItems({ ...metrics, ...comparable }, analysis?.benchmark);
-  }, [analysis?.metric_gap_table, analysis?.benchmark, metrics]);
   const shotMap = useMemo(() => {
     const raw = analysis?.visuals?.shot_map;
     if (!Array.isArray(raw)) return [] as ShotPoint[];
@@ -819,7 +671,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
     }
     return deduped;
   }, [analysis?.recent_matches]);
-  const goalTypeNote = String(analysis?.visuals?.goal_type_note ?? "");
   const playerReport = analysis?.visuals?.player_report;
   const playerRows = useMemo(() => {
     const raw = playerReport?.players;
@@ -874,17 +725,9 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
     [playerRows, playerSortDirection, playerSortMetric],
   );
   const shotZone = analysis?.visuals?.shot_zone ?? {};
-  const controllerBreakdown = useMemo(() => {
-    const raw = playerReport?.controller_breakdown;
-    if (!raw || typeof raw !== "object") return [] as Array<{ controller: string; count: number }>;
-    return Object.entries(raw)
-      .map(([controller, count]) => ({ controller, count: Number(count ?? 0) }))
-      .filter((row) => Number.isFinite(row.count) && row.count > 0)
-      .sort((left, right) => right.count - left.count);
-  }, [playerReport?.controller_breakdown]);
 
   const currentContextLabel = useMemo(
-    () => `${MATCH_LABELS[analysisMatchType]} · ${analysis ? `${analysisSampleCount}경기` : "경기 범위 선택"}${analysis?.sample_selection?.start_match_date ? ` · ${formatDate(analysis.sample_selection.start_match_date)} ~ ${formatDate(analysis.sample_selection.end_match_date || analysis.latest_match_date || undefined)}` : ""}${analysis?.sample_selection ? ` · 정상 ${analysis.sample_selection.normal_count} / 몰수승 ${analysis.sample_selection.forfeit_win_count} / 몰수패 ${analysis.sample_selection.forfeit_loss_count}` : ""}`,
+    () => `${MATCH_LABELS[analysisMatchType]} · ${analysis ? `${analysisSampleCount}경기` : "최근 30경기"}${analysis?.sample_selection?.start_match_date ? ` · ${formatDate(analysis.sample_selection.start_match_date)} ~ ${formatDate(analysis.sample_selection.end_match_date || analysis.latest_match_date || undefined)}` : ""}${analysis?.sample_selection ? ` · 정상 ${analysis.sample_selection.normal_count} / 몰수승 ${analysis.sample_selection.forfeit_win_count} / 몰수패 ${analysis.sample_selection.forfeit_loss_count}` : ""}`,
     [analysisMatchType, analysisSampleCount, analysis],
   );
 
@@ -897,29 +740,11 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
       completed.add("habits");
     }
     if (actions.length > 0) completed.add("actions");
-    if (officialRankers.length > 0 || similarRankersForView.length > 0) completed.add("rankers");
     return completed;
-  }, [actions.length, analysis, officialRankers.length, ouidInput, playerRows.length, similarRankersForView.length]);
+  }, [actions.length, analysis, ouidInput, playerRows.length]);
 
-  async function loadOfficialRankers(limit = 30, silent = true) {
-    try {
-      const payload = await requestApi<RankersLatestPayload>(`/rankers/latest?mode=1vs1&limit=${limit}`, undefined, { timeoutMs: 30_000 });
-      setOfficialRankers(Array.isArray(payload.rankers) ? payload.rankers : []);
-      if (!silent) {
-        setNotice(`랭커 데이터 ${Number(payload.count ?? 0)}명을 불러왔습니다.`);
-      }
-    } catch (rankerError) {
-      if (!silent) {
-        setError(normalizeErrorMessage(rankerError, "랭커 데이터 조회 실패"));
-      }
-    }
-  }
 
-  useEffect(() => {
-    if (screen === "rankers" && officialRankers.length === 0) {
-      void loadOfficialRankers(30, true);
-    }
-  }, [officialRankers.length, screen]);
+
 
   async function resolveOuidFromNickname(mode: "quick" | "advanced"): Promise<string> {
     const targetNickname = nicknameInput.trim();
@@ -941,7 +766,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
       trackEvent("search_user_failed", {
         screen: "search",
         matchType,
-        windowSize: matchSelectionCount ?? undefined,
+        windowSize: 30,
         properties: {
           mode,
           stage: "user_search",
@@ -956,29 +781,26 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
     trackEvent("search_user", {
       screen: "search",
       matchType,
-      windowSize: matchSelectionCount ?? undefined,
+      windowSize: 30,
       properties: { mode, source: found.source },
     });
     return found.ouid;
   }
 
-  async function onQuickRun() {
+  async function onQuickRun(nextScreen: ScreenKey = "diagnosis") {
     const targetNickname = nicknameInput.trim();
     if (targetNickname.length < 2) {
       setError("닉네임을 2글자 이상 입력해주세요.");
       return;
     }
-    if (!matchSelectionCount) {
-      setError(matchSelectionCount === null ? "먼저 경기 목록을 불러오고 분석할 범위를 선택해주세요." : "선택한 조건에 맞는 경기 내역이 없습니다. 경기 범위나 몰수 포함 조건을 바꿔주세요.");
-      return;
-    }
-
     setAnalysisLoadingMode("quick");
     setLoading(true);
     setError("");
     setNotice("");
-    setAnalysis(null);
-    setActions([]);
+    if (nextScreen !== "tracking") {
+      setAnalysis(null);
+      setActions([]);
+    }
     let targetOuid = "";
     try {
       targetOuid = await resolveOuidFromNickname("quick");
@@ -987,7 +809,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
         body: JSON.stringify({
           ouid: targetOuid,
           match_type: matchType,
-          window: null,
+          window: 30,
           current_tactic: null,
           squad_feed_id: selectedFeed?.feed_id ?? null,
           ...sampleOptions,
@@ -995,13 +817,12 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
       }, { timeoutMs: 120_000 });
       setAnalysis(payload);
       setActions(payload.actions ? toActionCards(payload.actions) : []);
-      void loadOfficialRankers(30, true);
-      setNotice(syncNoticeText(payload, "완료: 진단 실행"));
-      goToScreen("diagnosis");
+      setNotice(syncNoticeText(payload, "완료: 경기 분석"));
+      goToScreen(nextScreen);
       trackEvent("run_analysis", {
         screen: "search",
         matchType,
-        windowSize: matchSelectionCount ?? undefined,
+        windowSize: 30,
         properties: {
           mode: "quick",
           has_tactic_input: false,
@@ -1013,17 +834,12 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
       if (selectedFeed) trackFeedConnection(payload.coaching?.squad_feed, matchType);
     } catch (quickRunError) {
       const errorMessage = normalizeErrorMessage(quickRunError, "빠른 실행 실패");
-      setError(errorMessage);
-      if ((quickRunError as { action?: string })?.action === "reload_matches") {
-        setMatchSelectionCount(null);
-        setSampleOptions(current => ({ ...current, start_match_id: null, end_match_id: null }));
-        setMatchListRevision(current => current + 1);
-      }
+      setError(nextScreen === "tracking" && analysis ? `${errorMessage} 이전 분석 결과를 표시합니다.` : errorMessage);
       if (targetOuid) {
         trackEvent("run_analysis_failed", {
           screen: "search",
           matchType,
-          windowSize: matchSelectionCount ?? undefined,
+          windowSize: 30,
           properties: {
             mode: "quick",
             stage: "analysis_run",
@@ -1064,21 +880,23 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
 
   return (
     <div className={`container grid${screen === "players" && analysis?.coaching ? " analysis-focus" : ""}`}>
-      <header>
+      <header className="app-header">
         <FCoachLogo />
+        <button type="button" className="link-like help-link" onClick={() => goToScreen("guide")} aria-current={screen === "guide" ? "page" : undefined}>이용 방법</button>
         {screen === "guide" && <p className="subtitle">
-          FC온라인 닉네임으로 최근 경기의 선수·플레이를 분석하고, 전술 코칭과 개선 추적을 제공합니다.
+          FC온라인 닉네임으로 최근 경기의 선수·플레이를 분석하고, 전술 코칭과 최근 경기 추이를 제공합니다.
         </p>}
       </header>
 
       <section className="panel grid app-navigation">
-        <div className="flow-rail">
+        <nav className="flow-rail" aria-label="주 메뉴">
           {SCREEN_FLOW.map((item) => (
             <button
               key={item.key}
-              className={`flow-step ${screen === item.key ? "active" : ""} ${completedScreenSet.has(item.key) ? "done" : ""}`}
-              aria-label={`${item.icon} ${SCREEN_LABELS[item.key]}`}
-              title={SCREEN_LABELS[item.key]}
+              className={`flow-step ${primaryScreen(screen) === item.key ? "active" : ""} ${completedScreenSet.has(item.key) ? "done" : ""}`}
+              aria-label={item.label}
+              aria-current={primaryScreen(screen) === item.key ? "page" : undefined}
+              title={item.label}
               onClick={() => {
                 goToScreen(item.key);
                 trackEvent("tab_click", {
@@ -1089,47 +907,24 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
               }}
             >
               <span className="flow-icon">{item.icon}</span>
-              <span className="flow-title">{SCREEN_LABELS[item.key]}</span>
-              <span className="flow-hint">{item.hint}</span>
+              <span className="flow-title">{item.label}</span>
             </button>
           ))}
-        </div>
-        {!["search", "tracking", "guide"].includes(screen) && <div className="context-banner">현재 분석 기준: {currentContextLabel}</div>}
-        {screen !== "tracking" && !!notice && !notice.startsWith("완료:") && !notice.startsWith("선택한 조건에 맞는 경기") && <div className="notice ok">{notice}</div>}
-        {screen !== "tracking" && !!error && <div className="notice error">{error}</div>}
+        </nav>
+        {isAnalysisScreen(screen) && <div className="analysis-navigation">
+          <h2 className="section-title">경기 분석</h2>
+          <nav className="analysis-tabs" aria-label="경기 분석 메뉴">{ANALYSIS_SCREENS.map(key => <button key={key} type="button" aria-current={screen === key ? "page" : undefined} onClick={() => { goToScreen(key); trackEvent("tab_click", { screen: key, matchType, properties: { from_screen: screen } }); }}>{SCREEN_LABELS[key]}</button>)}</nav>
+        </div>}
+        {!["search", "tracking", "guide", "rankers"].includes(screen) && <div className="context-banner">현재 분석 기준: {currentContextLabel}</div>}
+        {!!notice && !notice.startsWith("완료:") && !notice.startsWith("선택한 조건에 맞는 경기") && <div className="notice ok">{notice}</div>}
+        {!!error && <div className="notice error">{error}</div>}
 
       </section>
 
       {screen === "search" && (
         <section className="panel grid">
-          <h2 className="section-title">경기 분석 시작</h2>
-          <p>닉네임과 경기 모드를 정하고, 분석할 시작·종료 경기를 선택하세요.</p>
-          <div className="option-strip">
-            <div className="option-block">
-              <div className="option-label">경기 모드</div>
-              <div className="tabs">
-                {MATCH_TYPE_OPTIONS.map((typeValue) => (
-                  <button
-                    key={typeValue}
-                    disabled={loading || matchListLoading}
-                    className={`tab ${matchType === typeValue ? "active" : ""}`}
-                    onClick={() => {
-                      setMatchType(typeValue);
-                      setMatchSelectionCount(null);
-                      setSampleOptions(current => ({ ...current, start_match_id: null, end_match_id: null }));
-                      trackEvent("change_match_type", {
-                        screen: "search",
-                        matchType: typeValue,
-                      });
-                    }}
-                  >
-                    {MATCH_LABELS[typeValue]}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-          </div>
+          <h2 className="section-title">경기 검색</h2>
+          <p>닉네임만 입력하면 공식경기·공식 친선을 합쳐 최신순 30경기를 분석합니다.</p>
           <div className="form-row single">
             <input
               placeholder="닉네임"
@@ -1139,7 +934,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
               onChange={(event) => {
                 const nextValue = event.target.value;
                 setNicknameInput(nextValue);
-                setMatchSelectionCount(null);
                 setError("");
                 setNotice("");
                 setSampleOptions(current => ({ ...current, start_match_id: null, end_match_id: null }));
@@ -1150,17 +944,20 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
               }}
             />
           </div>
-          <MatchSampleSelector key={`${nicknameInput.trim()}:${matchType}:${matchListRevision}`} nickname={nicknameInput} matchType={matchType} value={sampleOptions} disabled={loading} onChange={setSampleOptions} onLoadingChange={setMatchListLoading} onSelectionCountChange={setMatchSelectionCount} />
+          <details className="search-extra-options"><summary>몰수 경기 포함 설정</summary><div className="button-row">
+            <label><input type="checkbox" checked={sampleOptions.include_forfeit_wins} disabled={loading} onChange={event => setSampleOptions(current => ({ ...current, include_forfeit_wins: event.target.checked }))} /> 몰수승 포함</label>
+            <label><input type="checkbox" checked={sampleOptions.include_forfeit_losses} disabled={loading} onChange={event => setSampleOptions(current => ({ ...current, include_forfeit_losses: event.target.checked }))} /> 몰수패 포함</label>
+          </div><p>기본은 정상 종료 경기만 최신순 30경기입니다. 30경기보다 적으면 조회된 경기를 분석합니다.</p></details>
           <SquadFeedSelector key={nicknameInput.trim()} nickname={nicknameInput} selected={selectedFeed} disabled={loading} onChange={setSelectedFeed} onLoadingChange={setFeedLoading} />
           <div className="button-row">
-            <button className="btn" onClick={onQuickRun} disabled={loading || feedLoading || matchListLoading || !matchSelectionCount}>
+            <button className="btn" onClick={() => void onQuickRun()} disabled={loading || feedLoading || nicknameInput.trim().length < 2}>
               {loading && analysisLoadingMode === "quick" ? (
                 <span className="btn-loading">
                   <span className="spinner" />
                   분석 중...
                 </span>
               ) : (
-                selectedFeed ? "피드를 연결해 경기 진단 시작" : "경기 진단 시작"
+                selectedFeed ? "피드를 연결해 경기 분석 시작" : "경기 분석 시작"
               )}
             </button>
           </div>
@@ -1168,9 +965,11 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
         </section>
       )}
 
-      {screen === "diagnosis" && !analysis && <section className="panel"><p>아직 분석한 경기 내역이 없습니다. 검색/설정에서 닉네임으로 경기를 불러와 분석해주세요.</p><button className="btn" onClick={() => goToScreen("search")}>경기 불러오기</button></section>}
+      {screen === "diagnosis" && !analysis && <section className="panel"><p>아직 분석한 경기 내역이 없습니다. 경기 검색에서 닉네임으로 경기를 불러와 분석해주세요.</p><button className="btn" onClick={() => goToScreen("search")}>경기 검색으로 이동</button></section>}
       {screen === "diagnosis" && analysis && (
-        <section className="grid grid-3">
+        <PositionCoachingPanel key="team" section="team" rankerCoaching={analysis.ranker_coaching} comparisonGroups={analysis.comparison_metrics?.all} benchmark={analysis.ranker_benchmark} coaching={analysis.coaching} renderOverview={() => <section className="grid grid-3">
+          <DomainScorePanel data={analysis.domain_scores} />
+          <OpponentComparisonPanel comparison={analysis.opponent_comparison} modeCounts={analysis.normal_mode_counts ?? analysis.mode_counts} />
           <FeedConnectionSummary context={analysis?.coaching?.squad_feed} onOpen={() => goToScreen("actions")} />
           {topRecommendedAction && !hasContextualFeed && (
             <article className="panel span-3 diagnosis-action-cta">
@@ -1179,63 +978,27 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                 <h3>{topRecommendedAction.title}</h3>
                 <p className="focus-line">{topRecommendedPrescription}</p>
                 <p className="muted compact">
-                  분석을 끝냈다면 여기서 바로 추천 내용을 확인하고, 개선 추적에서 원하는 두 경기 구간을 골라 변화를 비교하세요.
+                  추천 내용을 적용한 뒤 최근 경기 추이에서 기록의 변화를 확인하세요.
                 </p>
               </div>
               <div className="button-row">
                 <button className="btn secondary" type="button" onClick={() => goToScreen("actions")}>
-                  추천 1개 바로 보기
+                  맞춤 코칭 보기
                 </button>
                 <button className="btn" type="button" onClick={() => goToScreen("tracking")} disabled={loading}>
-                  전후 경기 비교하기
+                  최근 경기 추이 보기
                 </button>
               </div>
             </article>
           )}
-          <article className="panel">
-            <h3 className="section-title">승률</h3>
-              <div className="kpi-value">{formatPercent(toKpiValue(metrics, "win_rate"))}</div>
-            <div className="muted">모드: {MATCH_LABELS[analysisMatchType]}</div>
-          </article>
-          <article className="panel">
-            <h3 className="section-title">예상 득점 차이 · 자체 추정</h3>
-            <div className="kpi-value">
-              {formatFixed(toKpiValue(metrics, "xg_for") - toKpiValue(metrics, "xg_against"))}
-            </div>
-            <div className="muted">
-              내 예상 득점 {formatFixed(toKpiValue(metrics, "xg_for"))} / 상대 {formatFixed(toKpiValue(metrics, "xg_against"))}
-            </div>
-          </article>
-          <article className="panel">
-            <h3 className="section-title">이전 경기 대비 변화</h3>
-            <div className={`kpi-value ${issueTagClass}`}>{topIssue ? ISSUE_LABELS[topIssue.issueCode] ?? topIssue.issueCode : "기록 확인"}</div>
-            <div className="muted">관측 차이: {topIssue ? `${formatFixed(topIssue.score)}%p` : "뚜렷한 하락 확인 안 됨"}</div>
-          </article>
-          <article className="panel">
-            <h3 className="section-title">팀 득점 : 실점</h3>
-            <div className="kpi-value">
-              {formatFixed(toKpiValue(metrics, "goals_for"), 0)} : {formatFixed(toKpiValue(metrics, "goals_against"), 0)}
-            </div>
-            <div className="muted">실제 분석 {analysisSampleCount}경기 기준</div>
-          </article>
-          <article className="panel">
-            <h3 className="section-title">유효슈팅 비율</h3>
-            <div className="kpi-value">{toKpiValue(metrics, "shots_total") > 0 ? formatPercent(toKpiValue(metrics, "shot_on_target_rate")) : "—"}</div>
-            <div className="muted">오프사이드 평균 {formatFixed(toKpiValue(metrics, "offside_avg"))}</div>
-          </article>
-          <article className="panel">
-            <h3 className="section-title">분석 시각</h3>
-            <div className="kpi-value mini">{formatDate(analysis?.created_at)}</div>
-            <div className="muted">분석 {formatFixed(toKpiValue(metrics, "match_count"), 0)}경기</div>
-            <div className="muted">
-              비교 기준: {BENCHMARK_SOURCE_LABEL[String(analysis?.benchmark_meta?.source ?? "unknown")] ?? String(analysis?.benchmark_meta?.source ?? "unknown")}
-            </div>
-          </article>
+
+
+
+
+
+
           <article className="panel span-3">
             <h3 className="section-title">최근 경기 요약</h3>
-            <div className="muted compact">
-              분석 생성 {formatDate(analysis?.created_at)} · 최신 경기 반영 시각 {formatDate(analysis?.latest_match_date ?? undefined)}
-            </div>
             {recentMatches.length === 0 ? (
               <p className="muted">최근 경기 요약을 불러오지 못했습니다.</p>
             ) : (
@@ -1243,7 +1006,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                 {recentMatches.map((match, index) => (
                   <div key={`${match.match_date}-${match.opponent_nickname}-${index}`} className="recent-match-card">
                     <div className="recent-match-head">
-                      <strong>{match.match_end_type === 1 ? "몰수승" : match.match_end_type === 2 ? "몰수패" : match.result || "-"}</strong>
+                      <strong className={match.match_end_type === 1 || match.result === "승" ? "result-win" : match.match_end_type === 2 || match.result === "패" ? "result-loss" : "result-draw"}>{match.match_end_type === 1 ? "몰수승" : match.match_end_type === 2 ? "몰수패" : match.result || "-"}</strong>
                       <span>{formatDate(match.match_date)}</span>
                     </div>
                     <div className="recent-match-score">
@@ -1256,32 +1019,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
               </div>
             )}
           </article>
-          <article className="panel span-3">
-            <h3 className="section-title">핵심 지표 한눈에 보기</h3>
-            <div className="visual-metric-list">
-              {visualMetricItems.map((item) => {
-                const userProgress = item.reverse
-                  ? toProgressPercent(Math.max(0, item.scaleMax - item.userValue), item.scaleMax)
-                  : toProgressPercent(item.userValue, item.scaleMax);
-                const benchmarkProgress = item.benchmarkValue === null ? 0 : item.reverse
-                  ? toProgressPercent(Math.max(0, item.scaleMax - item.benchmarkValue), item.scaleMax)
-                  : toProgressPercent(item.benchmarkValue, item.scaleMax);
-                return (
-                  <div key={item.key} className="visual-metric-item">
-                    <div className="visual-metric-head">
-                      <span>{item.label}</span>
-                      <strong>{item.userDisplay}</strong>
-                    </div>
-                    <div className={`progress-track ${item.reverse ? "reverse" : ""}`}>
-                      <div className={`progress-fill ${item.reverse ? "reverse" : ""}`} style={{ width: `${userProgress}%` }} />
-                      {item.benchmarkValue !== null && <div className="benchmark-marker" style={{ left: `${benchmarkProgress}%` }} />}
-                    </div>
-                    {item.benchmarkValue !== null && <p className="muted compact">정상 종료 경기끼리 비교 · 이전 {item.benchmarkDisplay}</p>}
-                  </div>
-                );
-              })}
-            </div>
-          </article>
+
           <article className="panel span-3">
             <h3 className="section-title">경기장 분석</h3>
             <div className="pitch-layout">
@@ -1297,7 +1035,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                     <li>우측: {formatPercent(Number(shotZone.right_ratio ?? 0))}</li>
                     <li>박스 안: {formatPercent(Number(shotZone.in_box_ratio ?? 0))}</li>
                   </ul>
-                  <p className="muted compact">좌/중/우 기준: 골문 기준 횡축 45% / 10% / 45%</p>
                 </div>
                 <div className="zone-card">
                   <p className="action-title">시간대별 득점/실점</p>
@@ -1331,62 +1068,30 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                       ))}
                     </ul>
                   )}
-                  {!!goalTypeNote && <p className="muted compact">{goalTypeNote}</p>}
                 </div>
               </div>
             </div>
           </article>
-        </section>
+        </section>} />
       )}
+
+      {screen === "matches" && <section className="panel"><h3 className="section-title">경기별 분석</h3>{analysis ? <MatchReviewPanel key={`${analysis.ouid}:${analysis.created_at}`} analysis={analysis} /> : <><p>아직 분석한 경기 내역이 없습니다. 경기 검색에서 먼저 경기를 분석해주세요.</p><button className="btn" onClick={() => goToScreen("search")}>경기 검색으로 이동</button></>}</section>}
 
       {screen === "players" && (
         <section className="grid player-analysis-section">
-          <PositionCoachingPanel coaching={analysis?.coaching} reportPlayers={playerRows} analysis={analysis} renderReport={() => <>
-          <article className="panel">
-            <h3 className="section-title">전체 선수 성과 ({MATCH_LABELS[analysisMatchType]} · 실제 분석 {analysisSampleCount}경기)</h3>
-            <p className="muted">
-              선택한 경기의 선수별 기록을 모아 득점·도움과 주요 기여도를 보여줍니다.
-            </p>
-            {!!analysis?.sample_scope && (
-              <p className="muted compact">
-                분석 경기 조건:{" "}
-                {analysis.sample_scope === "completed_only"
-                  ? `몰수승·몰수패를 제외한 정상 종료 경기만 사용 (${Number(analysis.sample_count ?? 0)}경기)`
-                  : `조회된 경기 사용 (${Number(analysis.sample_count ?? 0)}경기)`}
-              </p>
-            )}
-            {controllerBreakdown.length > 0 && (
-              <p className="muted compact">
-                입력 방식 분포:{" "}
-                {controllerBreakdown.map((row) => `${row.controller} ${row.count}경기`).join(" · ")}
-              </p>
-            )}
-          </article>
-
+          <PositionCoachingPanel key="players" section="players" coaching={analysis?.coaching} reportPlayers={playerRows} renderReport={() => <>
           {playerRows.length === 0 && (
             <article className="panel">
-              <p className="muted">선수 리포트 데이터가 없습니다. 검색/설정에서 먼저 진단을 실행해주세요.</p>
+              <p className="muted">선수 리포트 데이터가 없습니다. 경기 검색에서 먼저 경기 분석을 시작해주세요.</p>
             </article>
           )}
 
           {playerRows.length > 0 && (
             <>
-              <section className="grid grid-2">
-                <article className="panel">
-                  <h4 className="section-title">최다 득점</h4>
-                  <div className="kpi-value mini">{playerReport?.top_scorer?.player_name ?? "-"}</div>
-                  <p className="muted">
-                    {formatFixed(Number(playerReport?.top_scorer?.goals ?? 0), 0)}골 · {String(playerReport?.top_scorer?.position_name ?? "-")}
-                  </p>
-                </article>
-                <article className="panel">
-                  <h4 className="section-title">최다 도움</h4>
-                  <div className="kpi-value mini">{playerReport?.top_assister?.player_name ?? "-"}</div>
-                  <p className="muted">
-                    {formatFixed(Number(playerReport?.top_assister?.assists ?? 0), 0)}도움 · {String(playerReport?.top_assister?.position_name ?? "-")}
-                  </p>
-                </article>
-              </section>
+              <section className="player-leaders" aria-label="득점·도움 선두">{[
+                { title: "최다 득점", player: playerReport?.top_scorer, value: playerReport?.top_scorer?.goals, unit: "골" },
+                { title: "최다 도움", player: playerReport?.top_assister, value: playerReport?.top_assister?.assists, unit: "도움" },
+              ].filter(item => item.player).map(item => <article key={item.title}><span>{item.title}</span><strong>{item.player?.player_name}</strong><b>{formatFixed(Number(item.value ?? 0), 0)}{item.unit}</b><small>{item.player?.position_name}</small></article>)}</section>
 
               {playerSpotlights.length > 0 && (
                 <section className="grid grid-4 player-spotlight-grid">
@@ -1632,7 +1337,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
 
       {screen === "actions" && (
         <section className="grid">
-          <PrescriptionPanel coaching={analysis?.coaching} onOpenAnalysis={() => goToScreen("players")} />
+          <PrescriptionPanel rankerCoaching={analysis?.ranker_coaching} coaching={analysis?.coaching} onOpenAnalysis={() => goToScreen("players")} />
           {!!primaryActions.length && <h3 className="section-title">팀 지표에서 확인된 개선 제안</h3>}
           {primaryActions.map((action) => {
             const benchmarkCompare = getBenchmarkCompare(action.evidence);
@@ -1662,7 +1367,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                     )}
                   </div>
                   <button className="btn secondary" onClick={() => goToScreen("players")}>
-                    선수 기록 보기
+                    선수 분석 보기
                   </button>
                 </div>
                 <h3 className="section-title">
@@ -1732,11 +1437,11 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                 </details>
                 <div className="button-row">
                   <button className="btn" onClick={() => goToScreen("tracking")} disabled={loading}>
-                    전후 경기 비교하기
+                    최근 경기 추이 보기
                   </button>
                 </div>
                 <p className="muted compact">
-                  플레이를 바꾼 전후의 경기를 개선 추적에서 직접 선택해 비교하세요.{" "}
+                  플레이를 바꾼 뒤 최근 경기 추이에서 최근 30경기 기록의 변화를 확인하세요.{" "}
                 </p>
               </article>
             );
@@ -1744,64 +1449,9 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
         </section>
       )}
 
-      {screen === "rankers" && (
-        <section className="grid grid-2">
-          <article className="panel">
-            <h3 className="section-title">공식 랭커 데이터</h3>
-            <div className="button-row">
-              <button className="btn secondary" onClick={() => void loadOfficialRankers(30, false)} disabled={loading}>
-                랭커 데이터 다시 불러오기
-              </button>
-            </div>
-            <p className="muted">
-              공식 1대1 랭킹 · {officialRankers.length}명 표시{officialRankers[0]?.fetched_at ? ` · 수집 ${formatDate(officialRankers[0].fetched_at)}` : ""}
-            </p>
-            {officialRankers.length === 0 && <p className="muted">저장된 랭커 데이터가 없습니다. 잠시 후 다시 불러와주세요.</p>}
-            {officialRankers.length > 0 && (
-              <ul className="list compact">
-                {officialRankers.slice(0, 15).map((ranker) => (
-                  <li key={`${ranker.ouid}-${ranker.rank_no}`}>
-                    #{ranker.rank_no} {ranker.nickname} · 승률 {formatPercent(ranker.win_rate)} · 포메이션 {ranker.formation || "-"} · 팀컬러 {ranker.team_color || "-"}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </article>
-          <article className="panel">
-            <h3 className="section-title">나와 성향이 비슷한 공식 랭커</h3>
-            {similarRankersForView.length === 0 && (
-              <p className="muted">
-                {analysis
-                  ? "같은 공식경기 모드의 실제 랭커 경기 기록이 있을 때만 비교합니다. 공식 친선 기록이나 승률만으로 플레이 성향을 추정하지 않습니다."
-                  : "먼저 진단을 실행하면 유사 랭커 후보가 표시됩니다."}
-              </p>
-            )}
-            {similarRankersForView.map((ranker) => (
-              <div key={ranker.ouid} className="similar-item">
-                <p>
-                  공식 #{ranker.ranker_proxy_rank} · {ranker.nickname || "닉네임 미확인"} · 기록 유사도 {formatFixed(ranker.similarity, 3)} · 승률{" "}
-                  {formatPercent(ranker.win_rate)}
-                </p>
-                <p className="muted">
-                  포메이션 {ranker.formation || "-"} / 팀컬러 {ranker.team_color || "-"} / 비교 기록 {ranker.match_count}경기 / {similarRankerSourceLabel(ranker.source)}
-                </p>
-                <ul className="list compact muted">
-                  {ranker.metric_comparisons.slice(0, 5).map((comparison) => (
-                    <li key={`${ranker.ouid}-${comparison.metric_name}`}>
-                      {comparison.metric_label}: 내 값 {formatMetricValue(comparison.metric_name, comparison.user_value)} / 랭커 {formatMetricValue(comparison.metric_name, comparison.candidate_value)} / 차이{" "}
-                      {formatDeltaSigned(comparison.gap_value, comparison.metric_name)} ({compareText(comparison.gap_value, comparison.higher_is_better)})
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </article>
-        </section>
-      )}
+      {screen === "rankers" && <RankerComparisonPanel analysis={analysis} loading={loading} onRefresh={() => void onQuickRun("rankers")} onSearch={() => goToScreen("search")} />}
 
-      <div style={{ display: screen === "tracking" ? undefined : "none" }}>
-        <BeforeAfterComparisonPanel initialNickname={nicknameInput} initialMatchType={matchType} />
-      </div>
+      {screen === "tracking" && <MatchTrendPanel analysis={analysis} loading={loading} onRefresh={() => void onQuickRun("tracking")} onSearch={() => goToScreen("search")} />}
 
       {screen === "guide" && (
         <GuideScreen
@@ -1818,7 +1468,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
           <strong>© 2026 FCOACH</strong>
           <div className="footer-links">
             <button className="link-like" onClick={() => goToScreen("guide")}>
-              이용 가이드
+              이용 방법
             </button>
             <a href="/privacy" target="_blank" rel="noreferrer">
               개인정보처리방침
