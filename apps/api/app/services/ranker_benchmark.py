@@ -1,14 +1,65 @@
 from collections import defaultdict
+from datetime import datetime, timezone
+import json
+from pathlib import Path
 from statistics import quantiles, pstdev
 
-from app.db import utc_now_iso
+from app.db import nexon_api_data_ttl_days, utc_now_iso
 from app.services.cache import CacheClient
 from app.services.metric_catalog import metric_catalog
 from app.services.domain_scores import score_inputs
 from app.services.ranker_source import list_official_rankers
 
 CACHE_KEY = 'rankers:benchmark:v5'
+LAST_VALID_KEY = f'{CACHE_KEY}:last_valid'
 _CACHE = CacheClient()
+_BUNDLED_SNAPSHOT = Path(__file__).resolve().parents[1] / 'data' / 'ranker-benchmark.json'
+
+
+def _snapshot_age(snapshot):
+    if not snapshot or snapshot.get('status') != 'available':
+        return None
+    try:
+        fetched = datetime.fromisoformat(snapshot['ranking_fetched_at'].replace('Z', '+00:00'))
+        if fetched.tzinfo is None:
+            fetched = fetched.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - fetched).total_seconds()
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def cached_ranker_benchmark(max_age_hours=None):
+    limit = min(nexon_api_data_ttl_days() * 86400, max_age_hours * 3600) if max_age_hours is not None else nexon_api_data_ttl_days() * 86400
+    for key in (CACHE_KEY, LAST_VALID_KEY):
+        snapshot = _CACHE.get_json(key)
+        age = _snapshot_age(snapshot)
+        if age is not None and 0 <= age < limit:
+            return snapshot
+    return None
+
+
+def store_ranker_benchmark(snapshot):
+    age = _snapshot_age(snapshot)
+    if age is None or not 0 <= age < nexon_api_data_ttl_days() * 86400:
+        return
+    _CACHE.set_json(CACHE_KEY, snapshot, ttl_sec=3600)
+    # 새 인스턴스의 빈 SQLite가 마지막 실제 집계를 덮어쓰지 않게 한다.
+    _CACHE.set_json(LAST_VALID_KEY, snapshot, ttl_sec=max(1, int(nexon_api_data_ttl_days() * 86400 - age)))
+
+
+def prime_ranker_benchmark():
+    cached = cached_ranker_benchmark()
+    if cached:
+        return cached
+    try:
+        snapshot = json.loads(_BUNDLED_SNAPSHOT.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    age = _snapshot_age(snapshot)
+    if age is not None and 0 <= age < nexon_api_data_ttl_days() * 86400:
+        store_ranker_benchmark(snapshot)
+        return snapshot
+    return None
 
 
 def aggregate_rankers(profiles, listed_count, fetched_at=None):
@@ -56,7 +107,7 @@ def aggregate_rankers(profiles, listed_count, fetched_at=None):
 
 
 def get_ranker_benchmark(refresh=False):
-    cached = _CACHE.get_json(CACHE_KEY)
+    cached = prime_ranker_benchmark()
     if cached and not refresh:
         return cached
     from app.services.analysis import _available_match_stats
@@ -70,5 +121,5 @@ def get_ranker_benchmark(refresh=False):
         profiles.append((member, _available_match_stats(ouid, 50)))
     result = aggregate_rankers(profiles, len(members), max((m['fetched_at'] for m in members), default=None))
     if result['status'] == 'available':
-        _CACHE.set_json(CACHE_KEY, result, ttl_sec=3600)
-    return result
+        store_ranker_benchmark(result)
+    return result if result['status'] == 'available' else cached or result

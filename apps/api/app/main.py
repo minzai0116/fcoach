@@ -104,6 +104,13 @@ def _ensure_daily_rankers(force: bool = False) -> None:
     now = datetime.now(timezone.utc)
     if not force and _LAST_AUTO_RANKER_SYNC_AT and now - _LAST_AUTO_RANKER_SYNC_AT < timedelta(hours=24):
         return
+    from app.services.ranker_benchmark import cached_ranker_benchmark, prime_ranker_benchmark
+    prime_ranker_benchmark()
+    if not force and cached_ranker_benchmark(max_age_hours=24):
+        return
+    token = cache.acquire_lock('rankers:daily_sync', ttl_sec=600)
+    if not token:
+        return
     try:
         ensure_official_rankers(
             mode="1vs1",
@@ -119,6 +126,7 @@ def _ensure_daily_rankers(force: bool = False) -> None:
         _LAST_AUTO_RANKER_SYNC_ERROR = str(exc)
     finally:
         _LAST_AUTO_RANKER_SYNC_AT = datetime.now(timezone.utc)
+        cache.release_lock('rankers:daily_sync', token)
 
 
 def _trigger_ranker_sync_async(force: bool = False) -> bool:
