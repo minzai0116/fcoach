@@ -30,7 +30,7 @@ export type MatchTrends = {
   point_count: number; window_size: number; note: string;
   points: Array<{ date: string; match_type: number; match_end_type?: number; result?: string; window_matches: number }>;
   groups: Array<{ id: string; label: string; metrics: Array<Pick<ComparableMetric, "id" | "label" | "unit" | "direction"> & {
-    history: Array<{ value: number | null; observed_matches: number; trials?: number; success?: number }>;
+    history: Array<{ value: number | null; observed_matches: number; trials?: number; success?: number; match?: {success: number; trials: number; total: number; observed: number} | null }>;
   }> }>;
 };
 

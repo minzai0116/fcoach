@@ -11,6 +11,12 @@ export function differenceTone(mine: number | null | undefined, reference: numbe
   if (mine == null || reference == null || !Number.isFinite(mine) || !Number.isFinite(reference) || direction === "neutral" || Math.abs(mine - reference) < (unit ? (["rate", "percent"].includes(unit) ? .0005 : .05) : 1e-8)) return "neutral";
   return (mine > reference) === (direction === "higher") ? "better" : "worse";
 }
+export function trendChangePresentation(current: number | null, previous: number | null, unit: MetricUnit, direction: ComparableMetric["direction"]) {
+  const tone = differenceTone(current, previous, direction, unit);
+  return tone === "better" ? { direction: "improved", label: "개선", color: "#c42e3a" }
+    : tone === "worse" ? { direction: "declined", label: "악화", color: "#2563eb" }
+    : { direction: "unchanged", label: direction === "neutral" ? "변화" : "비슷", color: "#74869b" };
+}
 export function notableTrends(data: MatchTrends) {
   const lastWindow = data.points.at(-1)?.window_matches;
   const fullWindows = data.points.flatMap((point, index) => point.window_matches === lastWindow ? [index] : []);

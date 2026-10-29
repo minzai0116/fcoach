@@ -190,6 +190,31 @@ test('변화 요약은 중립 지표·결측·중복 득점 지표를 제외하�
   assert.equal(result[0].firstWindow, 5);
   assert.equal(result[0].lastWindow, 14);
 });
+
+test('최근 경기 추이는 낮을수록 좋은 지표의 감소도 개선 빨강으로 표시한다', () => {
+  const {trendChangePresentation: change} = load('../../lib/comparisonInsights');
+  assert.equal(change(.823,.802,'rate','higher').color,'#c42e3a');
+  assert.equal(change(.4,.7,'average','lower').color,'#c42e3a');
+  assert.equal(change(.8,.7,'average','lower').color,'#2563eb');
+  assert.equal(change(.4,.7,'average','lower').label,'개선');
+  assert.equal(change(.8001,.8,'rate','higher').direction,'unchanged');
+  assert.equal(change(null,.8,'rate','higher').direction,'unchanged');
+  assert.equal(change(.7,.8,'rate','neutral').color,'#74869b');
+});
+test('기준 경기부터 변경 후에 포함하며 이동평균 대신 실제 성공·시도로 비교한다', () => {
+  const {compareTrendPeriods} = load('../../lib/trendPeriods');
+  const records=[{success:1,trials:1,total:0,observed:1},{success:0,trials:9,total:0,observed:1},{success:3,trials:4,total:0,observed:1},null];
+  const metric={id:'pass',label:'패스',unit:'rate',direction:'higher',history:records.map(match=>({value:.99,observed_matches:30,match}))};
+  const data={points:records.map(()=>({})),groups:[{id:'passing',metrics:[metric]}]};
+  const row=compareTrendPeriods(data,2,'passing')[0];
+  assert.equal(row.before.value,.1); assert.equal(row.before.matches,2);
+  assert.equal(row.after.value,.75); assert.equal(row.after.matches,1);
+  assert.equal(compareTrendPeriods(data,0).length,0);
+  assert.equal(compareTrendPeriods(data,4).length,0);
+  assert.equal(compareTrendPeriods(data,2,'shooting').length,0);
+  assert.equal(compareTrendPeriods({...data,groups:[{id:'passing',metrics:[{...metric,history:records.map(()=>({match:null}))}]}]},2).length,0);
+});
+
 test('슈팅 유형 필터는 공식 유형·미확인 코드·미제공을 구분한다', () => {
   const { shotTypeLabel, filterShotsByType } = load('../../lib/shotTypes');
   const points = [{ type: 2 }, { type: 3 }, { type: 14 }, { type: null }];

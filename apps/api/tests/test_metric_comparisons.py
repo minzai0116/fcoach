@@ -52,6 +52,8 @@ class MetricComparisonTest(unittest.TestCase):
         metric = find(data['groups'], 'shooting:on_target')
         self.assertEqual([point['value'] for point in metric['history']], [1, .1])
         self.assertEqual([point['trials'] for point in metric['history']], [1, 10])
+        self.assertEqual([point['match']['trials'] for point in metric['history']], [1, 9])
+        self.assertEqual([point['match']['success'] for point in metric['history']], [1, 0])
         self.assertEqual([point['window_matches'] for point in data['points']], [1, 2])
         self.assertEqual(len(metric['history']), len(data['points']))
 

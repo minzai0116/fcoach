@@ -3239,10 +3239,33 @@ code {
 .saved-setting { display: inline-block; color: #475e77; font-size: 12px; background: #f0f4fa; border-radius: 5px; padding: 4px 7px; }
 .ranker-context { background: #eef5ff; padding: 10px; border-radius: 7px; }
 .trend-highlights { margin: 18px 0; }
+.trend-highlights-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.trend-legend { display: flex; gap: 12px; font-size: 12px; font-weight: 700; }
+.trend-legend span:first-child { color: #c42e3a; }
+.trend-legend span:last-child { color: #2563eb; }
 .trend-highlights > div { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; margin-top: 10px; }
 .trend-change-card { text-align: left; min-width: 0; padding: 13px; border: 1px solid #d4dfec; border-radius: 10px; background: #f8fbff; cursor: pointer; display: flex; flex-direction: column; gap: 6px; }
 .trend-change-card span { color: #1b3451; font-size: 13px; font-weight: 700; }
 .trend-change-card strong { font-size: 21px; }
+.trend-direction-label { margin-right: 6px; font-weight: 700; }
+.trend-baseline-control { display: flex; align-items: center; gap: 12px; margin: 12px 0 6px; font-size: 14px; font-weight: 700; }
+.trend-baseline-control select { flex: 1; min-width: 0; min-height: 44px; max-width: 480px; }
+.trend-baseline-scope { display: block; color: #425b76; font-size: 12px; }
+.trend-period-comparison { margin-top: 24px; }
+.trend-period-comparison > header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.trend-period-comparison h3 { margin: 0; font-size: 18px; }
+.trend-period-comparison > header span { font-size: 13px; color: #425b76; }
+.trend-period-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+.trend-period-grid article { min-width: 0; padding: 14px; border: 1px solid #d4dfec; border-radius: 10px; }
+.trend-period-grid article > header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; }
+.trend-period-grid h4 { margin: 0; font-size: 14px; }
+.trend-period-grid b { font-size: 14px; }
+.trend-period-values { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+.trend-period-values > div { display: flex; flex-direction: column; gap: 5px; }
+.trend-period-values span, .trend-period-values small { color: #425b76; font-size: 12px; }
+.trend-period-values strong { font-size: 22px; }
+@media (max-width: 640px) { .trend-baseline-control { flex-direction: column; align-items: stretch; } .trend-period-grid { grid-template-columns: 1fr; } }
+.trend-change-card .trend-window-scope { color: #425b76; }
 .trend-change-card svg { width: 100%; height: 38px; }
 .trend-change-card small { font-size: 12px; }
 .shot-type-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0; font-size: 13px; font-weight: 700; }

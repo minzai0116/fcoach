@@ -2,22 +2,24 @@
 import { useEffect, useRef, useState } from "react";
 import type { AnalysisPayload } from "../../types/analysis";
 import type { MatchTrends } from "../../types/comparison";
-import { differenceTone, notableTrends } from "../../lib/comparisonInsights";
+import { notableTrends, trendChangePresentation } from "../../lib/comparisonInsights";
+import { TrendBaselineComparison } from "./TrendBaselineComparison";
 import { comparisonGap, comparisonValue } from "./MetricComparisonCards";
 
 function ChangeHighlights({ data, onSelect }: { data: MatchTrends; onSelect: (group: string, metric: string) => void }) {
   const changes = notableTrends(data);
   if (!changes.length) return null;
-  return <section className="trend-highlights" aria-label="변화가 큰 지표"><h3>변화가 큰 지표</h3><div>{changes.map(item => {
+  return <section className="trend-highlights" aria-label="변화가 큰 지표"><header className="trend-highlights-heading"><h3>변화가 큰 지표</h3><span className="trend-legend"><span>개선</span><span>악화</span></span></header><div>{changes.map(item => {
+    const change = trendChangePresentation(item.latest, item.first, item.unit, item.direction);
     const min = Math.min(...item.values), range = Math.max(...item.values) - min || 1;
     const points = item.values.map((value, i) => `${4 + i / Math.max(1, item.values.length - 1) * 120},${34 - (value - min) / range * 28}`).join(" ");
-    return <button key={item.id} type="button" className={`trend-change-card tone-${item.tone}`} onClick={() => onSelect(item.group, item.id)}><span>{item.label}</span><strong>{comparisonGap(item.latest, item.first, item.unit)}</strong><svg viewBox="0 0 128 40" aria-hidden="true"><polyline points={points} fill="none" stroke="currentColor" strokeWidth="2.5" /></svg><small>{comparisonValue(item.first, item.unit)} → {comparisonValue(item.latest, item.unit)}</small><small className="trend-window-scope">{item.firstWindow === item.lastWindow ? `각 ${item.lastWindow}경기 집계` : `집계 ${item.firstWindow} → ${item.lastWindow}경기`}</small></button>;
+    return <button key={item.id} type="button" className="trend-change-card" data-direction={change.direction} style={{ color: change.color }} onClick={() => onSelect(item.group, item.id)}><span>{item.label}</span><strong><small className="trend-direction-label">{change.label}</small>{comparisonGap(item.latest, item.first, item.unit)}</strong><svg viewBox="0 0 128 40" aria-hidden="true"><polyline points={points} fill="none" stroke="currentColor" strokeWidth="2.5" /></svg><small>{comparisonValue(item.first, item.unit)} → {comparisonValue(item.latest, item.unit)}</small><small className="trend-window-scope">{item.firstWindow === item.lastWindow ? `각 ${item.lastWindow}경기 집계` : `집계 ${item.firstWindow} → ${item.lastWindow}경기`}</small></button>;
   })}</div></section>;
 }
 
 type TrendMetric = MatchTrends["groups"][number]["metrics"][number];
 const pointResult = (point: MatchTrends["points"][number]) => point.match_end_type === 1 ? "몰수승" : point.match_end_type === 2 ? "몰수패" : point.result ?? "";
-function TrendChart({ metric, points }: { metric: TrendMetric; points: MatchTrends["points"] }) {
+function TrendChart({ metric, points, baseline }: { metric: TrendMetric; points: MatchTrends["points"]; baseline: number | null }) {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(640), [selected, setSelected] = useState<number | null>(null);
   useEffect(() => {
@@ -42,15 +44,16 @@ function TrendChart({ metric, points }: { metric: TrendMetric; points: MatchTren
   return <div className="match-trend-chart" ref={ref}>
     <svg viewBox={`0 0 ${width} ${height}`} role="group" aria-label={`${metric.label}의 경기 진행에 따른 최근 30경기 집계 변화`}>
       {Array.from({ length: 5 }, (_, tick) => { const value = lower + (upper - lower) * tick / 4, py = y(value); return <g key={tick}><line x1={left} x2={right} y1={py} y2={py} stroke="#d6e1ef" strokeDasharray="4 4" /><text x={left - 8} y={py + 4} textAnchor="end" fill="#425b76" fontSize="11">{comparisonValue(value, metric.unit)}</text></g>; })}
+      {baseline !== null && <g aria-label="기준 경기"><line x1={x(baseline)} x2={x(baseline)} y1={top} y2={bottom} stroke="#173e87" strokeWidth="2" strokeDasharray="6 4" /><text x={Math.max(left + 36, Math.min(right - 36, x(baseline)))} y={top + 12} textAnchor="middle" fill="#173e87" fontSize="12">기준 경기</text></g>}
       <path d={path} fill="none" stroke="#a8b8cd" strokeWidth="2" />
       {metric.history.slice(1).map((point, i) => {
         const previous = metric.history[i].value;
         if (point.value === null || previous === null) return null;
-        const tone = differenceTone(point.value, previous, metric.direction, metric.unit);
-        return <line key={i} x1={x(i)} x2={x(i + 1)} y1={y(previous)} y2={y(point.value)} stroke={tone === "worse" ? "#c42e3a" : tone === "better" ? "#2563eb" : "#74869b"} strokeWidth="3" />;
+        const change = trendChangePresentation(point.value, previous, metric.unit, metric.direction);
+        return <line key={i} x1={x(i)} x2={x(i + 1)} y1={y(previous)} y2={y(point.value)} stroke={change.color} strokeWidth="3" />;
       })}
       {metric.history.map((value, i) => value.value === null ? null : <g key={i} role="button" tabIndex={0} aria-label={`${i + 1}번째 경기 시점 ${comparisonValue(value.value, metric.unit)}`} aria-pressed={i === index} onClick={() => setSelected(i)} onFocus={() => setSelected(i)} onKeyDown={event => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); setSelected(i); } }}>
-        <circle cx={x(i)} cy={y(value.value)} r="12" fill="transparent" /><circle cx={x(i)} cy={y(value.value)} r={i === index ? 5.5 : 3} fill={i === index ? "#173e87" : "#2563eb"} pointerEvents="none" />
+        <circle cx={x(i)} cy={y(value.value)} r="12" fill="transparent" /><circle cx={x(i)} cy={y(value.value)} r={i === index ? 5.5 : 3} fill={trendChangePresentation(value.value, metric.history[i - 1]?.value ?? value.value, metric.unit, metric.direction).color} stroke={i === index ? "#173e87" : "none"} strokeWidth="1.5" pointerEvents="none" />
       </g>)}
       {[0, Math.floor((metric.history.length - 1) / 2), metric.history.length - 1].filter((n, i, all) => all.indexOf(n) === i).map(i => <text key={i} x={x(i)} y={height - 14} textAnchor={i === 0 ? "start" : i === metric.history.length - 1 ? "end" : "middle"} fontSize="12" fill="#425b76">{i === metric.history.length - 1 ? "최근 경기" : `${i + 1}번째 경기`}</text>)}
     </svg>
@@ -62,15 +65,24 @@ function TrendChart({ metric, points }: { metric: TrendMetric; points: MatchTren
 export function MatchTrendPanel({ analysis, loading, onRefresh, onSearch }: { analysis: AnalysisPayload | null; loading: boolean; onRefresh: () => void; onSearch: () => void }) {
   const data = analysis?.match_trends;
   const [category, setCategory] = useState("overview"), [selection, setSelection] = useState("");
+  const [baselineKey, setBaselineKey] = useState("");
+  const baselineIndex = data?.points.findIndex(point => `${point.date}:${point.match_type}` === baselineKey) ?? -1;
+  const baseline = baselineIndex > 0 ? baselineIndex : null;
+  const canCompare = Boolean(data?.groups.some(group => group.metrics.some(metric => metric.history.some(point => point.match !== undefined))));
   const group = data?.groups.find(group => group.id === category && group.metrics.length) ?? data?.groups.find(group => group.metrics.length);
   const metric = group?.metrics.find(metric => metric.id === selection) ?? group?.metrics[0];
   const first = metric?.history.find(point => point.value !== null)?.value ?? null;
   const latest = metric?.history.at(-1)?.value ?? null;
   const gap = metric ? comparisonGap(latest, first, metric.unit) : null;
+  const change = metric ? trendChangePresentation(latest, first, metric.unit, metric.direction) : null;
   return <section className="panel match-trend-panel"><div className="coaching-section-heading"><div><h2 className="section-title">최근 경기 추이</h2><p>최근 30경기의 기록 변화를 시간순으로 확인하세요.</p></div><button type="button" className="btn" onClick={analysis ? onRefresh : onSearch} disabled={loading}>{loading ? "최근 경기 불러오는 중…" : analysis ? "최근 경기로 갱신" : "경기 분석 시작하기"}</button></div>
-    {data && <><ChangeHighlights data={data} onSelect={(group, metric) => { setCategory(group); setSelection(metric); }} /><nav className="comparison-domain-nav" aria-label="최근 경기 추이 지표">{data.groups.filter(group => group.metrics.length).map(group => <button key={group.id} aria-pressed={category === group.id} onClick={() => { setCategory(group.id); setSelection(""); }}>{group.label}</button>)}</nav>
+    {data && <><label className="trend-baseline-control">기준 경기<select aria-label="기준 경기" value={baseline === null ? "" : baselineKey} disabled={!canCompare} onChange={event => setBaselineKey(event.target.value)}><option value="">기준 경기 선택 안 함</option>{data.points.slice(1).map((point, i) => <option key={`${point.date}:${point.match_type}`} value={`${point.date}:${point.match_type}`}>{i + 2}번째 · {new Date(point.date).toLocaleString("ko-KR", {month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"})} · {pointResult(point)}</option>)}</select></label>
+      {!canCompare && <p>‘최근 경기로 갱신’을 누르면 기준 경기를 선택할 수 있습니다.</p>}
+      {baseline !== null && <small className="trend-baseline-scope">선택한 경기부터 변경 후 · 그래프는 최근 30경기 집계, 전후 비교는 표시된 경기의 실제 기록</small>}
+      <ChangeHighlights data={data} onSelect={(group, metric) => { setCategory(group); setSelection(metric); }} /><nav className="comparison-domain-nav" aria-label="최근 경기 추이 지표">{data.groups.filter(group => group.metrics.length).map(group => <button key={group.id} aria-pressed={category === group.id} onClick={() => { setCategory(group.id); setSelection(""); }}>{group.label}</button>)}</nav>
       {group && <label className="trend-metric-select">분석 지표<select aria-label="최근 경기 추이 분석 지표" value={metric?.id ?? ""} onChange={event => setSelection(event.target.value)}>{group.metrics.map(metric => <option key={metric.id} value={metric.id}>{metric.label}</option>)}</select></label>}
-      {metric && <article className="trend-metric-card"><header><div><span>{metric.label}</span><strong>{comparisonValue(latest, metric.unit)}</strong></div>{gap && <div><span>첫 표시 시점 대비</span><b className={`tone-${differenceTone(latest, first, metric?.direction ?? "neutral", metric?.unit)}`}>{gap}</b></div>}</header><TrendChart metric={metric} points={data.points} /></article>}
+      {metric && <article className="trend-metric-card"><header><div><span>{metric.label}</span><strong>{comparisonValue(latest, metric.unit)}</strong></div>{gap && <div><span>첫 표시 시점 대비</span><b style={{ color: change?.color }}>{change?.label} {gap}</b></div>}</header><TrendChart metric={metric} points={data.points} baseline={baseline} /></article>}
+      {baseline !== null && <TrendBaselineComparison data={data} baseline={baseline} category={group?.id} />}
     </>}
     {!data && !loading && analysis && <p>‘최근 경기로 갱신’을 누르면 최근 30경기의 흐름을 볼 수 있습니다.</p>}
   </section>;

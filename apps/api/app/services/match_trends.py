@@ -38,7 +38,9 @@ def build_match_trends(rows, points=30, window=30):
             value = success / trials if trials else None
             if template['unit'] != 'rate':
                 value = total / observed if observed else None
-            series[key].append({'observed_matches': int(observed), 'success': success, 'trials': trials,
+            raw = current.get(key)
+            series[key].append({'match': {'success': raw[0], 'trials': raw[1], 'total': raw[2], 'observed': raw[3]} if raw else None,
+                'observed_matches': int(observed), 'success': success, 'trials': trials,
                 'value': round(value, 6) if value is not None else None})
     result = []
     for group in group_meta.values():

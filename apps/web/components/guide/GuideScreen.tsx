@@ -19,7 +19,7 @@ const FEATURES = [
   { title: "선수 비교", body: "두 선수를 골라 출전 수·경기당 기록·성공률을 비교하세요. 시즌·강화·포지션으로 기록을 구분합니다." },
   { title: "슈팅 위치", body: "선수와 슈팅 유형을 골라 보세요. PC에서는 점에 마우스를 올리고, 모바일에서는 점을 누르면 슈팅 정보가 나옵니다." },
   { title: "랭커 비교", body: "최근 30경기와 랭커 평균을 비교합니다. 영역마다 강점 지표와 보완 지표를 먼저 보여줍니다." },
-  { title: "최근 경기 추이", body: "득점·패스·슈팅·수비 기록이 경기마다 어떻게 변했는지 확인하세요. 변화가 큰 지표를 누르면 해당 그래프가 열립니다." },
+  { title: "최근 경기 추이", body: "득점·패스·슈팅·수비 기록이 경기마다 어떻게 변했는지 확인하세요. 변화가 큰 지표를 누르면 해당 그래프가 열립니다. 개선은 빨강, 악화는 파랑으로 표시합니다. 기준 경기를 선택하면 그래프의 기준선과 변경 전후 기록을 비교할 수 있습니다." },
 ];
 export function GuideScreen({ hasAnalysis, onStartSearch, onOpenPlayers, onOpenActions, onOpenTracking }: GuideScreenProps) {
   return <section className="grid guide-current">
