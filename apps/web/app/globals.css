@@ -2871,7 +2871,7 @@ code {
 
 /* 분석은 화면 높이를 사용하고 긴 세부 내용만 패널 안에서 펼친다. */
 .analysis-focus { height: 100dvh; max-width: 1920px; padding: 10px 16px; display: flex; flex-direction: column; gap: 7px; overflow: hidden; }
-.player-analysis-section.analysis-focus { height:var(--player-panel-height, max(420px,calc(100dvh - 310px))); max-width:none; margin:0; padding:0; }
+.player-analysis-section.analysis-focus { height:var(--player-panel-height, max(420px,calc(100dvh - 310px))); min-height:600px; max-width:none; margin:0; padding:0; }
 .analysis-focus > header { flex: 0 0 26px; }
 .analysis-focus .brand-mark { width: 26px; height: 26px; }
 .analysis-focus .title { font-size: 22px; }
