@@ -2974,6 +2974,12 @@ code {
 .player-settings-features .feature-icon img { width: 30px; height: 30px; }
 .mobile-detail-back, .mobile-player-selection { display: none; }
 @media (max-width: 900px) {
+  /* 상단 메뉴가 길어져도 포메이션을 남은 화면 높이로 압축하지 않는다. */
+  .player-analysis-section.analysis-focus { height: auto; min-height: 420px; overflow: visible; }
+  .player-analysis-section.analysis-focus .position-coaching-panel[data-view="players"] .analysis-view-body { flex: none; }
+  .player-analysis-section .compact-player-workspace { height: auto; }
+  .player-analysis-section .compact-player-workspace .pitch-fit-area { flex: none; height: clamp(440px, 115vw, 640px); }
+  .player-analysis-section .compact-player-workspace[data-mobile-view="detail"] { height: clamp(480px, 80dvh, 720px); }
   .analysis-focus { padding: 6px; padding-bottom: max(6px, env(safe-area-inset-bottom)); gap: 4px; }
   .analysis-focus > header { display: none; }
   .analysis-focus .app-navigation { padding: 2px 4px; border-radius: 8px; }
