@@ -48,6 +48,15 @@ def link(feed=None, rows=None, mode=60):
 
 
 class FeedNormalizationTest(unittest.TestCase):
+    def test_share_preserves_team_color_counts_and_high_portrait(self):
+        feed = snapshot(players=[raw_player(thumb_custom='/playersHigh/p12345.png')], totalTeamColor={
+            'feature': {'1': {'name': '레알 특성', 'lv': 1, 'playercnt': 8, 'skill': [{'type': '속력', 'value': 3}]}},
+            'enhance': {'2': {'name': '금빛 물결', 'lv': 2, 'playercnt': 11, 'skill': [{'type': '전체 능력치', 'value': 4}]}}})
+        self.assertTrue(feed['players'][0]['portrait_img'].endswith('/playersHigh/p12345.png'))
+        self.assertEqual([(c['category'], c['players']) for c in feed['team_colors']], [('feature', 8), ('enhance', 11)])
+        self.assertEqual(feed['team_colors'][0]['effects'], [{'type': '속력', 'value': 3}])
+        self.assertEqual(snapshot(totalTeamColor={'feature': {'1': {'name': '미확인'}}})['team_colors'], [])
+
     def test_selected_portrait_and_saved_overall_are_preserved(self):
         player = snapshot(players=[raw_player(spid=863231747, thumb_custom='/playersActionHigh/p854231747.png?rd=202610280410',
                                               thumb='/players/p231747.png', ovr=150, pay=31)])['players'][0]

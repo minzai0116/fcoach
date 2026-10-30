@@ -9,6 +9,7 @@ MatchType = Literal[50, 60, 52]
 
 
 class AnalysisRunRequest(BaseModel):
+    progress_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{32}$')
     ouid: str = Field(min_length=8)
     match_type: Literal[0, 50, 60, 52]
     window: Literal[5, 10, 30] | None = 30

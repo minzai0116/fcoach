@@ -2,10 +2,12 @@
 from math import isclose, isfinite
 from statistics import mean, pstdev, quantiles
 
-from app.services.score_specs import BASE_AREAS as AREAS, supported, section, assign_weights
+from app.services.score_specs import BASE_AREAS as AREAS, OVERALL_AREAS, supported, section, assign_weights
 from app.services.score_recommendations import coaching_for_metrics
+from app.services.score_sampling import PROFILE_VERSION
 
 MIN_RECORDS = 5
+SCORE_METHOD = 'ranker_usage_weighted_p90_v6'
 
 
 def eligible(metric):
@@ -74,12 +76,15 @@ def _detail(metric, profiles, reference):
             'usage': metric.get('usage_share'), 'reference_usage': _context_mean(context_peers, key + '@usage'),
             'attempts_per_match': metric.get('attempts_per_match'), 'reference_attempts': _context_mean(context_peers, key + '@attempts'),
             'success': metric.get('success'), 'trials': metric.get('trials'),
-            'matches': metric['matches'], 'ranker_count': len(peers) if population else (reference or {}).get('ranker_count', 0),
+            'matches': metric['matches'], 'record_scope': metric.get('record_scope', 'all_recorded'),
+            'ranker_count': len(peers) if population else (reference or {}).get('ranker_count', 0),
             'status': status, 'weight': 0, 'point_impact': 0}
 
 
-def build_domain_scores(groups, benchmark):
+def build_domain_scores(groups, benchmark, scope=None):
     profiles = benchmark.get('score_profiles', [])
+    if scope and benchmark.get('score_profile_version') != PROFILE_VERSION:
+        profiles = []
     refs = {m['id']: m for g in benchmark.get('groups', []) for m in g['metrics']}
     areas = []
     for area, label, _ in AREAS:
@@ -97,19 +102,21 @@ def build_domain_scores(groups, benchmark):
                       'reference': round(ranker_score, 1) if ranker_score is not None else None,
                       'metric_count': len(active), 'ranker_count': min((m['ranker_count'] for m in active), default=0),
                       'metrics': metrics, 'summaries': summaries, 'advice': coaching_for_metrics(metrics)})
-    complete = all(area['mine'] is not None for area in areas)
+    components = [area for area in areas if area['id'] in OVERALL_AREAS]
+    complete = all(area['mine'] is not None for area in components)
     overall = {'id': 'overview', 'label': '경기 종합',
-               'mine': round(mean(a['mine'] for a in areas), 1) if complete else None,
-               'reference': round(mean(a['reference'] for a in areas), 1) if complete else None,
-               'metric_count': sum(a['metric_count'] for a in areas) if complete else 0,
-               'ranker_count': min(a['ranker_count'] for a in areas) if complete else 0,
+               'mine': round(mean(a['mine'] for a in components), 1) if complete else None,
+               'reference': round(mean(a['reference'] for a in components), 1) if complete else None,
+               'metric_count': sum(a['metric_count'] for a in components) if complete else 0,
+               'ranker_count': min(a['ranker_count'] for a in components) if complete else 0,
+               'component_ids': [area['id'] for area in components],
                'metrics': [], 'summaries': [], 'advice': []}
     seen = set()
-    for area in sorted(areas, key=lambda item: (item['mine'] or 0) - (item['reference'] or 0)):
+    for area in sorted(components, key=lambda item: (item['mine'] or 0) - (item['reference'] or 0)):
         for advice in area['advice']:
             if advice['kind'] == 'improve' and advice['title'] not in seen:
                 overall['advice'].append(advice)
                 seen.add(advice['title'])
     overall['advice'] = overall['advice'][:3]
-    return {'areas': [overall, *areas], 'scale': [1, 100], 'method': 'ranker_usage_weighted_p90_v4',
-            'note': '100점은 실제 비교 랭커의 상위 10% 기록입니다. 패스는 유형별 성공률 점수에 사용 비중을 반영합니다. 슈팅은 정확도·지역·유형을 나눠 집계합니다. 사용 비중 자체에는 점수를 주지 않고 양쪽에 같은 가중치를 적용합니다. 거리·수비 관여 횟수는 참고 기록입니다.'}
+    return {'areas': [overall, *areas], 'scale': [1, 100], 'method': SCORE_METHOD, 'scope': scope,
+            'note': '종합은 패스·슈팅·수비·드리블·경합 점수로 계산하고, 파울·오프사이드는 경기 운영에서 별도로 보여줍니다. 슈팅에는 실제 경기당 득점도 반영합니다. 100점은 비교 랭커의 상위 10% 기록입니다. 성공률에는 몰수 경기의 중단 전 기록도 포함하고, 경기당 득점·실점·상대 슈팅·파울·오프사이드 점수는 양쪽 모두 정상 종료 경기만 사용합니다. 상대 티어·수비 압박·시도 난이도는 보정하지 않습니다.'}

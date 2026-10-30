@@ -74,7 +74,7 @@ def build_match_review(payload: dict, ouid: str, names: dict[int, str]) -> dict:
 
     def side(participant: dict, shots: list[dict]) -> dict:
         shoot = participant.get('shoot') or {}
-        return {'ouid': participant.get('ouid'), 'nickname': participant.get('nickname') or '닉네임 미제공',
+        return {'ouid': participant.get('ouid'), 'nickname': participant.get('nickname') or '감독명 미제공',
                 'score': number(shoot, 'goalTotalDisplay'), 'record_goals': number(shoot, 'goalTotal'),
                 'shots': [{**shot, 'player_name': player_name(names, int(shot.get('sp_id') or 0), None), 'is_goal': shot['result'] == 3,
                            'date': payload.get('matchDate', '') + 'Z', 'match_id': payload.get('matchId')} for shot in shots if shot.get('x') is not None and shot.get('y') is not None]}

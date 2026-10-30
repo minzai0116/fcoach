@@ -17,6 +17,7 @@ export type SquadFeedSummary = {
   feed_id: string; title: string; author: string; created_at: string | null; formation: string; mode: number | null;
 };
 export type SquadFeedSnapshot = SquadFeedSummary & {
+  team_colors?: Array<{ category: "affiliation" | "feature" | "enhance"; name: string; level: number; players: number; effects: Array<{type: string; value: number}> }>;
   fetched_at: string; last_modified_at: null; source: string; source_url: string; label_version: string;
   team_tactics: Array<FeedSetting<number | string> & { key: string; label: string }>;
   players: FeedPlayer[];

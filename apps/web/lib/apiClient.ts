@@ -28,7 +28,7 @@ export async function requestApi<T>(path: string, init?: RequestInit, options?: 
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       const detail = body.detail;
-      const message = typeof detail === "string" ? detail : typeof detail?.message === "string" ? detail.message : res.status === 422 ? "입력한 내용을 확인해주세요. 닉네임과 경기 선택을 다시 확인해주세요." : "요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.";
+      const message = typeof detail === "string" ? detail : typeof detail?.message === "string" ? detail.message : res.status === 422 ? "입력한 내용을 확인해주세요. 감독명과 경기 선택을 다시 확인해주세요." : "요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.";
       throw new ApiRequestError(message, "http", res.status,
         typeof detail?.code === "string" ? detail.code : undefined,
         typeof detail?.action === "string" ? detail.action : undefined);

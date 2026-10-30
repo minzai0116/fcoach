@@ -21,12 +21,12 @@ class SearchFeedbackTest(unittest.TestCase):
         client = object.__new__(NexonOpenApiClient)
         for code in ('OPENAPI00003', 'OPENAPI00004'):
             with self.subTest(code=code), patch.object(client, '_get', side_effect=upstream_error(code)):
-                with self.assertRaisesRegex(UserNotFoundError, '닉네임.*찾을 수 없습니다'):
-                    client.find_user_by_nickname('없는닉네임')
+                with self.assertRaisesRegex(UserNotFoundError, '감독명.*찾을 수 없습니다'):
+                    client.find_user_by_nickname('없는감독명')
         for code in ('OPENAPI00005', 'OPENAPI00009', 'OPENAPI00010'):
             with self.subTest(code=code), patch.object(client, '_get', side_effect=upstream_error(code)):
                 with self.assertRaises(requests.HTTPError):
-                    client.find_user_by_nickname('정상닉네임')
+                    client.find_user_by_nickname('정상감독명')
 
     def test_search_route_returns_korean_not_found_without_raw_upstream_url(self):
         from app.main import users_search
@@ -37,11 +37,11 @@ class SearchFeedbackTest(unittest.TestCase):
         with patch('app.main.cache', cache), patch('app.main.get_user_lookup', return_value=None), \
              patch('app.main._enforce_rate_limit'), patch('app.main.NexonOpenApiClient') as factory:
             factory.cooldown_remaining_sec.return_value = 0
-            factory.return_value.find_user_by_nickname.side_effect = UserNotFoundError('해당 닉네임의 구단주를 찾을 수 없습니다. 닉네임을 다시 확인해주세요.')
+            factory.return_value.find_user_by_nickname.side_effect = UserNotFoundError('해당 감독명의 구단주를 찾을 수 없습니다. 감독명을 다시 확인해주세요.')
             with self.assertRaises(HTTPException) as raised:
-                users_search(request, '없는닉네임')
+                users_search(request, '없는감독명')
             self.assertEqual(raised.exception.status_code, 404)
-            self.assertIn('닉네임을 다시 확인', raised.exception.detail)
+            self.assertIn('감독명을 다시 확인', raised.exception.detail)
             self.assertNotIn('http', raised.exception.detail)
             cache.release_lock.assert_called_once()
 

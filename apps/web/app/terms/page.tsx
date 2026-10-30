@@ -14,7 +14,7 @@ export default function TermsPage() {
       <section className="panel">
         <h2 className="section-title">2. 계정 및 데이터 이용</h2>
         <ul className="list">
-          <li>사용자는 본인이 조회할 권한이 있는 닉네임/데이터만 이용해야 합니다.</li>
+          <li>사용자는 본인이 조회할 권한이 있는 감독명/데이터만 이용해야 합니다.</li>
           <li>외부 API 정책 변경 또는 호출 제한에 따라 일부 기능이 제한될 수 있습니다.</li>
           <li>서비스는 제공 범위 내에서 합리적으로 유지·보수됩니다.</li>
         </ul>

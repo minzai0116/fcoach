@@ -80,7 +80,33 @@ class DomainScoreTest(unittest.TestCase):
             self.assertEqual(area['mine'], round(sum(m['score'] * m['weight'] for m in active), 1))
             self.assertEqual(area['reference'], round(sum(m['reference_score'] * m['weight'] for m in active), 1))
             self.assertAlmostEqual(sum(m['point_impact'] for m in area['metrics']), area['mine'] - area['reference'], delta=.11)
-        self.assertEqual(result['areas'][0]['mine'], round(mean(a['mine'] for a in result['areas'][1:]), 1))
+        self.assertEqual(result['areas'][0]['mine'], round(mean(a['mine'] for a in result['areas'][1:5]), 1))
+
+    def test_fewer_fouls_alone_cannot_raise_overall_performance(self):
+        data = groups()
+        peers = benchmark(data)
+        before = build_domain_scores(data, peers)
+        for metric in data[-1]['metrics']:
+            metric['value'] = 0
+        after = build_domain_scores(data, peers)
+        self.assertGreater(after['areas'][-1]['mine'], before['areas'][-1]['mine'])
+        self.assertEqual(after['areas'][0]['mine'], before['areas'][0]['mine'])
+        self.assertNotIn('discipline', after['areas'][0]['component_ids'])
+
+    def test_actual_goal_production_changes_shooting_even_with_equal_conversion(self):
+        data = groups()
+        production = next(m for m in data[1]['metrics'] if m['id'] == 'shooting:display_goals')
+        production.update(value=2, unit='goals', trials=None)
+        peers = benchmark(data)
+        production.update(value=1, unit='goals', trials=None)
+        lower = build_domain_scores(data, peers)
+        production['value'] = 3
+        higher = build_domain_scores(data, peers)
+        self.assertGreater(higher['areas'][2]['mine'], lower['areas'][2]['mine'])
+        self.assertGreater(higher['areas'][0]['mine'], lower['areas'][0]['mine'])
+        detail = next(m for m in higher['areas'][2]['metrics'] if m['id'] == 'shooting:display_goals')
+        self.assertGreater(detail['weight'], 0)
+        self.assertEqual(detail['section'], '득점 생산')
 
     def test_only_actual_out_of_range_records_get_improvement_advice(self):
         data = groups()

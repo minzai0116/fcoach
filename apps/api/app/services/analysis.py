@@ -53,6 +53,7 @@ from app.services.comparison_evidence import previous_matches
 from app.services.metric_catalog import metric_catalog
 from app.services.match_trends import build_match_trends
 from app.services.recent_analysis import load_recent_modes, mode_history, opponent_comparison
+from app.services.analysis_progress import update_progress
 from app.services.team_history_coaching import VERSION as COACHING_VERSION, build_team_history_coaching
 from app.services.player_names import name_index, player_name, player_name_catalog
 
@@ -2069,6 +2070,7 @@ def run_analysis(
     start_match_id: str | None = None,
     end_match_id: str | None = None,
 ) -> dict[str, Any]:
+    update_progress('matches')
     if match_type == 0:
         window_size, start_match_id, end_match_id = 30, None, None
         include_forfeit_wins = include_forfeit_losses = True
@@ -2113,10 +2115,12 @@ def run_analysis(
     window_size = window_size if window_size is not None else len(selected)
     snapshot, feed_error = None, None
     if squad_feed_id:
+        update_progress('feed')
         try:
             snapshot = get_public_feed(squad_feed_id, refresh=True)
         except SquadFeedError as error:
             feed_error = str(error)
+    update_progress('metrics')
     names = {**(name_index(snapshot['players'], 'sp_id') if snapshot else {}), **_spid_name_map()}
     metrics = _compute_metrics(selected)
     visuals = _build_visual_summary(selected, names)
@@ -2143,13 +2147,18 @@ def run_analysis(
     from app.services.ranker_benchmark import get_ranker_benchmark
     from app.services.ranker_coaching import build_ranker_coaching
     from app.services.domain_scores import build_domain_scores
+    from app.services.score_sampling import score_metric_groups
+    update_progress('rankers')
     benchmark_snapshot = get_ranker_benchmark()
     current_comparison = metric_catalog(selected, include_forfeits=include_forfeits)
     ranker_coaching = build_ranker_coaching(current_comparison, benchmark_snapshot, coaching)
     result = {
         "ranker_benchmark": benchmark_snapshot,
         "ranker_coaching": ranker_coaching,
-        "domain_scores": build_domain_scores(current_comparison, benchmark_snapshot),
+        "domain_scores": build_domain_scores(score_metric_groups(selected, current_comparison), benchmark_snapshot,
+            scope={'matches': len(selected), 'completed_matches': sum(row.match_end_type == 0 for row in selected),
+                   'official_matches': sum(row.match_type == 50 for row in selected), 'friendly_matches': sum(row.match_type == 60 for row in selected),
+                   'count_basis': 'completed_only'}),
         "coaching_version": COACHING_VERSION,
         "comparisons": empirical["comparisons"],
         "opponent_comparison": opponent_comparison(selected),
@@ -2183,6 +2192,7 @@ def run_analysis(
         "actions": actions,
     }
 
+    update_progress('saving')
     conn = connect()
     try:
         cur = conn.cursor()

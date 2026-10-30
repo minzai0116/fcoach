@@ -5,6 +5,8 @@ import type { MatchTrends } from "../../types/comparison";
 import { notableTrends, trendChangePresentation } from "../../lib/comparisonInsights";
 import { TrendBaselineComparison } from "./TrendBaselineComparison";
 import { comparisonGap, comparisonValue } from "./MetricComparisonCards";
+import { ShareImageButton } from "../share/ShareImageButton";
+import { sharePeriod } from "../../lib/shareImage";
 
 function ChangeHighlights({ data, onSelect }: { data: MatchTrends; onSelect: (group: string, metric: string) => void }) {
   const changes = notableTrends(data);
@@ -62,7 +64,7 @@ function TrendChart({ metric, points, baseline }: { metric: TrendMetric; points:
   </div>;
 }
 
-export function MatchTrendPanel({ analysis, loading, onRefresh, onSearch }: { analysis: AnalysisPayload | null; loading: boolean; onRefresh: () => void; onSearch: () => void }) {
+export function MatchTrendPanel({ analysis, loading, onRefresh, onSearch, nickname = "" }: { analysis: AnalysisPayload | null; loading: boolean; onRefresh: () => void; onSearch: () => void; nickname?: string }) {
   const data = analysis?.match_trends;
   const [category, setCategory] = useState("overview"), [selection, setSelection] = useState("");
   const [baselineKey, setBaselineKey] = useState("");
@@ -75,14 +77,14 @@ export function MatchTrendPanel({ analysis, loading, onRefresh, onSearch }: { an
   const latest = metric?.history.at(-1)?.value ?? null;
   const gap = metric ? comparisonGap(latest, first, metric.unit) : null;
   const change = metric ? trendChangePresentation(latest, first, metric.unit, metric.direction) : null;
-  return <section className="panel match-trend-panel"><div className="coaching-section-heading"><div><h2 className="section-title">최근 경기 추이</h2><p>최근 30경기의 기록 변화를 시간순으로 확인하세요.</p></div><button type="button" className="btn" onClick={analysis ? onRefresh : onSearch} disabled={loading}>{loading ? "최근 경기 불러오는 중…" : analysis ? "최근 경기로 갱신" : "경기 분석 시작하기"}</button></div>
+  return <section className="panel match-trend-panel"><div className="coaching-section-heading"><div><h2 className="section-title">최근 경기 추이</h2><p>최근 30경기의 기록 변화를 시간순으로 확인하세요.</p></div><div className="button-row">{data && <ShareImageButton input={{kind: "comparison", nickname, period: sharePeriod(data.points.map(p => p.date)), matches: data.points.length, trends: data, baseline}} label={baseline === null ? "변화 이미지 저장" : "전후 비교 저장"} />}<button type="button" className="btn" onClick={analysis ? onRefresh : onSearch} disabled={loading}>{loading ? "최근 경기 불러오는 중…" : analysis ? "최근 경기로 갱신" : "경기 분석 시작하기"}</button></div></div>
     {data && <><label className="trend-baseline-control">기준 경기<select aria-label="기준 경기" value={baseline === null ? "" : baselineKey} disabled={!canCompare} onChange={event => setBaselineKey(event.target.value)}><option value="">기준 경기 선택 안 함</option>{data.points.slice(1).map((point, i) => <option key={`${point.date}:${point.match_type}`} value={`${point.date}:${point.match_type}`}>{i + 2}번째 · {new Date(point.date).toLocaleString("ko-KR", {month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"})} · {pointResult(point)}</option>)}</select></label>
       {!canCompare && <p>‘최근 경기로 갱신’을 누르면 기준 경기를 선택할 수 있습니다.</p>}
       {baseline !== null && <small className="trend-baseline-scope">선택한 경기부터 변경 후 · 그래프는 최근 30경기 집계, 전후 비교는 표시된 경기의 실제 기록</small>}
       <ChangeHighlights data={data} onSelect={(group, metric) => { setCategory(group); setSelection(metric); }} /><nav className="comparison-domain-nav" aria-label="최근 경기 추이 지표">{data.groups.filter(group => group.metrics.length).map(group => <button key={group.id} aria-pressed={category === group.id} onClick={() => { setCategory(group.id); setSelection(""); }}>{group.label}</button>)}</nav>
       {group && <label className="trend-metric-select">분석 지표<select aria-label="최근 경기 추이 분석 지표" value={metric?.id ?? ""} onChange={event => setSelection(event.target.value)}>{group.metrics.map(metric => <option key={metric.id} value={metric.id}>{metric.label}</option>)}</select></label>}
       {metric && <article className="trend-metric-card"><header><div><span>{metric.label}</span><strong>{comparisonValue(latest, metric.unit)}</strong></div>{gap && <div><span>첫 표시 시점 대비</span><b style={{ color: change?.color }}>{change?.label} {gap}</b></div>}</header><TrendChart metric={metric} points={data.points} baseline={baseline} /></article>}
-      {baseline !== null && <TrendBaselineComparison data={data} baseline={baseline} category={group?.id} />}
+      <TrendBaselineComparison data={data} baseline={baseline} category={group?.id} />
     </>}
     {!data && !loading && analysis && <p>‘최근 경기로 갱신’을 누르면 최근 30경기의 흐름을 볼 수 있습니다.</p>}
   </section>;

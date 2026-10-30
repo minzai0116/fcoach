@@ -47,7 +47,7 @@ def _request(payload: dict) -> dict:
 def search_public_feeds(nickname: str, page: int = 1) -> dict:
     nickname = nickname.strip()
     if not 2 <= len(nickname) <= 100 or not 1 <= page <= 20:
-        raise SquadFeedError('닉네임 또는 페이지 범위를 확인해주세요.', 400)
+        raise SquadFeedError('감독명 또는 페이지 범위를 확인해주세요.', 400)
     name = normalize_nickname(nickname)
     cache_key = f'squad_feed:list:v1:{name}:{page}'
     cached = _cache.get_json(cache_key)
@@ -78,7 +78,7 @@ def search_public_feeds(nickname: str, page: int = 1) -> dict:
 
 def get_public_feed(feed_id: str, *, refresh: bool = False) -> dict:
     validate_feed_id(feed_id)
-    key = f'squad_feed:detail:v5:{feed_id}'
+    key = f'squad_feed:detail:v6:{feed_id}'
     if not refresh:
         cached = _cache.get_json(key)
         if cached is not None:

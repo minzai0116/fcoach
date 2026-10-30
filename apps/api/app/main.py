@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import hashlib
 import json
+import re
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -348,7 +349,7 @@ def users_search(request: Request, nickname: str = Query(..., min_length=2)) -> 
     target_nickname = nickname.strip()
     normalized_nickname = normalize_nickname(target_nickname)
     if not normalized_nickname:
-        raise HTTPException(status_code=400, detail="닉네임을 입력해주세요.")
+        raise HTTPException(status_code=400, detail="감독명을 입력해주세요.")
     cache_key = f"user_search:{normalized_nickname}"
     cache_ttl = _user_lookup_cache_ttl_sec()
 
@@ -386,7 +387,7 @@ def users_search(request: Request, nickname: str = Query(..., min_length=2)) -> 
         if cooldown > 0:
             raise HTTPException(
                 status_code=429,
-                detail=f"닉네임 조회 호출이 많아 잠시 제한되었습니다. 약 {int(round(cooldown))}초 후 다시 시도해주세요.",
+                detail=f"감독명 조회 호출이 많아 잠시 제한되었습니다. 약 {int(round(cooldown))}초 후 다시 시도해주세요.",
             )
 
         distributed_lock_key = f"lock:user_search:{normalized_nickname}"
@@ -405,7 +406,7 @@ def users_search(request: Request, nickname: str = Query(..., min_length=2)) -> 
                 }
                 cache.set_json(cache_key, payload, ttl_sec=cache_ttl)
                 return UserSearchResponse(**payload)
-            raise HTTPException(status_code=429, detail="같은 닉네임 조회가 처리 중입니다. 잠시 후 다시 시도해주세요.")
+            raise HTTPException(status_code=429, detail="같은 감독명 조회가 처리 중입니다. 잠시 후 다시 시도해주세요.")
 
         try:
             client = NexonOpenApiClient()
@@ -425,9 +426,9 @@ def users_search(request: Request, nickname: str = Query(..., min_length=2)) -> 
             if wait_seconds > 0:
                 raise HTTPException(
                     status_code=429,
-                    detail=f"닉네임 조회 호출이 많아 잠시 제한되었습니다. 약 {wait_seconds}초 후 다시 시도해주세요.",
+                    detail=f"감독명 조회 호출이 많아 잠시 제한되었습니다. 약 {wait_seconds}초 후 다시 시도해주세요.",
                 ) from exc
-            raise HTTPException(status_code=429, detail="닉네임 조회 호출이 많아 잠시 제한되었습니다. 1~2분 후 다시 시도해주세요.") from exc
+            raise HTTPException(status_code=429, detail="감독명 조회 호출이 많아 잠시 제한되었습니다. 1~2분 후 다시 시도해주세요.") from exc
         except requests.HTTPError as exc:
             status_code = exc.response.status_code if exc.response is not None else 502
             if status_code == 429:
@@ -439,12 +440,12 @@ def users_search(request: Request, nickname: str = Query(..., min_length=2)) -> 
                     }
                     cache.set_json(cache_key, payload, ttl_sec=cache_ttl)
                     return UserSearchResponse(**payload)
-                raise HTTPException(status_code=429, detail="닉네임 조회 호출이 많아 잠시 제한되었습니다. 1~2분 후 다시 시도해주세요.") from exc
-            raise HTTPException(status_code=502, detail="넥슨의 닉네임 조회 서비스에 연결하지 못했습니다. 잠시 후 다시 시도해주세요.") from exc
+                raise HTTPException(status_code=429, detail="감독명 조회 호출이 많아 잠시 제한되었습니다. 1~2분 후 다시 시도해주세요.") from exc
+            raise HTTPException(status_code=502, detail="넥슨의 감독명 조회 서비스에 연결하지 못했습니다. 잠시 후 다시 시도해주세요.") from exc
         except requests.Timeout as exc:
-            raise HTTPException(status_code=504, detail="닉네임 조회 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.") from exc
+            raise HTTPException(status_code=504, detail="감독명 조회 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.") from exc
         except Exception as exc:
-            raise HTTPException(status_code=502, detail="닉네임을 조회하지 못했습니다. 잠시 후 다시 시도해주세요.") from exc
+            raise HTTPException(status_code=502, detail="감독명을 조회하지 못했습니다. 잠시 후 다시 시도해주세요.") from exc
 
         finally:
             cache.release_lock(distributed_lock_key, distributed_lock_token)
@@ -452,6 +453,13 @@ def users_search(request: Request, nickname: str = Query(..., min_length=2)) -> 
         save_user_lookup(target_nickname, str(payload.get("ouid", "")).strip(), source="nexon_open_api")
         cache.set_json(cache_key, payload, ttl_sec=cache_ttl)
         return UserSearchResponse(**payload)
+
+
+@app.get('/users/divisions')
+def user_divisions(request: Request, ouid: str = Query(..., min_length=8, max_length=128)):
+    from app.services.user_divisions import get_user_divisions
+    _enforce_rate_limit(request, scope='user_divisions', max_requests=20, window_sec=60)
+    return get_user_divisions(ouid)
 
 
 @app.get('/matches/recent')
@@ -495,10 +503,25 @@ def squad_feed_detail(request: Request, feed_id: str) -> dict:
 
 @app.post("/analysis/run")
 def analysis_run(request: Request, req: AnalysisRunRequest) -> dict[str, Any]:
+    from app.services.analysis_progress import track_analysis_progress
+    with track_analysis_progress(req.progress_id):
+        return _analysis_run(request, req)
+
+
+@app.get('/analysis/progress/{progress_id}')
+def analysis_progress(request: Request, progress_id: str):
+    from app.services.analysis_progress import get_analysis_progress
+    if not re.fullmatch(r'[a-f0-9]{32}', progress_id):
+        raise HTTPException(status_code=404, detail='진행 정보를 찾을 수 없습니다.')
+    _enforce_rate_limit(request, scope='analysis_progress', max_requests=180, window_sec=60)
+    return get_analysis_progress(progress_id)
+
+
+def _analysis_run(request: Request, req: AnalysisRunRequest) -> dict[str, Any]:
     _enforce_rate_limit(request, scope="analysis_run", max_requests=8, window_sec=60)
-    cache_key = f"latest_analysis:empirical_v5:{req.ouid}:{req.match_type}:{req.window}"
+    cache_key = f"latest_analysis:empirical_v7:{req.ouid}:{req.match_type}:{req.window}"
     request_fingerprint = hashlib.sha256(
-        json.dumps(req.model_dump(), sort_keys=True, ensure_ascii=True).encode()
+        json.dumps(req.model_dump(exclude={'progress_id'}), sort_keys=True, ensure_ascii=True).encode()
     ).hexdigest()
     lock_key = f"lock:analysis_run:{req.ouid}:{req.match_type}:{req.window}"
     lock_token = cache.acquire_lock(lock_key, ttl_sec=60)
@@ -555,7 +578,7 @@ def analysis_latest(
     match_type: int = Query(..., ge=1),
     window: int = Query(30, ge=0),
 ) -> dict[str, Any]:
-    cache_key = f"latest_analysis:empirical_v5:{ouid}:{match_type}:{window}"
+    cache_key = f"latest_analysis:empirical_v7:{ouid}:{match_type}:{window}"
     cached = cache.get_json(cache_key)
     if cached:
         return cached

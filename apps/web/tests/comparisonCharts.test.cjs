@@ -7,6 +7,9 @@ const ts = require('typescript');
 const render = (type, props) => typeof type === 'function' ? type(props) : ({ type, props });
 let detailTab = 'record';
 function load(file, parent = `${__dirname}/../components/coaching`) {
+  if (file.endsWith('.css')) return {};
+  if (!file.startsWith('.') && file.includes('/')) return require(file);
+  if (file === 'react-dom') return require(file);
   const base = path.resolve(parent, file);
   const source = [base, base + '.tsx', base + '.ts'].find(p => existsSync(p));
   const output = { exports: {} };
@@ -239,7 +242,7 @@ test('영역 점수는 나와 랭커 점수를 함께 표시하고 미확인을 
   const { DomainScorePanel } = load('DomainScorePanel');
   assert.equal(DomainScorePanel({}), null);
   assert.equal(DomainScorePanel({data:{areas:[{mine:null}]}}), null);
-  const data = {note:'계산 기준', method:'ranker_usage_weighted_p90_v4', areas:[
+  const data = {note:'계산 기준', method:'ranker_usage_weighted_p90_v6', areas:[
     {id:'overview',label:'경기 종합',mine:71.7,reference:86.4,metrics:[],advice:[]},
     {id:'passing',label:'패스',mine:null,reference:null,metrics:[],advice:[]}
   ]};
@@ -267,6 +270,16 @@ test('세부 점수는 성공률·사용 비중·영향과 행동만 간결하�
   assert.ok(!tree.includes('영향'));
   assert.ok(!tree.includes('\"children\":\"나\"'));
   for (const text of ['평균입니다', '개선 제안은 원래', '표준편차', '100점 기준', '원인을 확정']) assert.ok(!tree.includes(text));
+});
+
+test('종합 상세는 실제 종합 계산에 반영한 영역만 보여준다', () => {
+  const { DomainScoreDetails } = load('DomainScoreDetails');
+  const area = {id:'overview',label:'경기 종합',mine:80,reference:87,metrics:[],advice:[],component_ids:['passing','shooting','defending','carrying']};
+  const areas = [area, ...['passing','shooting','defending','carrying','discipline'].map(id => ({id,label:id,mine:80,reference:87,metrics:[],advice:[]}))];
+  const tree = JSON.stringify(DomainScoreDetails({area,areas,onSelect:()=>{},onClose:()=>{}}));
+  assert.ok(tree.includes('passing'));
+  assert.ok(tree.includes('shooting'));
+  assert.ok(!tree.includes('discipline'));
 });
 
 test('선수 비교는 관측 경기별 횟수와 합산 성공률을 사용하고 결측은 채우지 않는다', () => {

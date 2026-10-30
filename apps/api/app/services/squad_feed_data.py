@@ -11,7 +11,7 @@ def player_image(value: Any, sp_id: int) -> str:
     if not isinstance(value, str):
         return ''
     path = value.removeprefix('https://fco.dn.nexoncdn.co.kr/live/externalAssets/common')
-    match = re.fullmatch(r'/players(?:Action(?:High)?)?/p(\d+)(?:_[A-Za-z0-9]+)?\.png(?:\?rd=\d{1,20})?', path)
+    match = re.fullmatch(r'/players(?:High|Action(?:High)?)?/p(\d+)(?:_[A-Za-z0-9]+)?\.png(?:\?rd=\d{1,20})?', path)
     if not match or int(match[1]) % 1_000_000 != sp_id % 1_000_000:
         return ''
     return f'https://fco.dn.nexoncdn.co.kr/live/externalAssets/common{path}'
@@ -125,6 +125,33 @@ TEAM_FIELDS = (
 )
 
 
+def normalize_team_colors(raw: Any) -> list[dict]:
+    if not isinstance(raw, dict):
+        return []
+    colors = []
+    for category in ('affiliation', 'feature', 'enhance'):
+        entries = raw.get(category)
+        if not isinstance(entries, dict):
+            continue
+        for item in list(entries.values())[:16]:
+            if not isinstance(item, dict):
+                continue
+            name = item.get('name')
+            level, players = integer(item.get('lv'), 1, 20), integer(item.get('playercnt'), 1, 50)
+            if not isinstance(name, str) or not name.strip() or level is None or players is None:
+                continue
+            effects = []
+            for effect in item.get('skill', []) if isinstance(item.get('skill'), list) else []:
+                if not isinstance(effect, dict) or not isinstance(effect.get('type'), str):
+                    continue
+                value = integer(effect.get('value'), 0, 100)
+                if value is not None:
+                    effects.append({'type': effect['type'][:40], 'value': value})
+            colors.append({'category': category, 'name': name.strip()[:100], 'level': level,
+                           'players': players, 'effects': effects[:10]})
+    return colors
+
+
 def normalize_snapshot(data: dict, feed_id: str, fetched_at: str, summary: dict | None = None) -> dict:
     squad = data['SquadInfo']
     raw_team = squad.get('teamSt')
@@ -136,6 +163,6 @@ def normalize_snapshot(data: dict, feed_id: str, fetched_at: str, summary: dict 
             'created_at': summary.get('created_at'), 'fetched_at': fetched_at, 'last_modified_at': None,
             'formation': str(squad.get('formation') or '미제공')[:30], 'mode': integer(squad.get('mode'), 1, 2),
             'source': 'nexon_public_squad_feed', 'source_url': f'https://fconline.nexon.com/SquadMaker/feed/all?feedId={feed_id}',
-            'label_version': labels()['checked_at'],
+            'label_version': labels()['checked_at'], 'team_colors': normalize_team_colors(squad.get('totalTeamColor')),
             'team_tactics': [{'key': key, 'label': label, **(field('invalid') if raw_team is not None and not isinstance(raw_team, dict) else numeric(team, key, maximum, minimum, names))}
                              for key, label, maximum, minimum, names in TEAM_FIELDS], 'players': players}

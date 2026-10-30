@@ -101,6 +101,7 @@ def extract_coaching_data(user: dict, opponent: dict) -> dict:
     if 'offsideCount' not in detail and 'OffsideCount' in detail:
         detail['offsideCount'] = detail['OffsideCount']
     return {
+        'division': number(user, 'division'),
         'shoot': _numbers(user.get('shoot')), 'defence': _numbers(user.get('defence')),
         'pass': _numbers(user.get('pass')), 'opponent_pass': _numbers(opponent.get('pass')),
         'opponent_defence': _numbers(opponent.get('defence')),

@@ -17,7 +17,7 @@ function MetricRow({ metric }: { metric: DomainScoreMetric }) {
   return <article className="score-breakdown-row">
     <header><h5>{shortLabel(metric.label)}</h5>{metric.status === "weakness" && <span className="score-row-warning">보완</span>}<div><strong className={`tone-${tone}`}>{context ? comparisonValue(metric.mine, metric.unit) : metric.score == null ? "—" : `${scorePoint(metric.score)}점`}</strong><span>랭커 {context ? comparisonValue(metric.reference, metric.unit) : metric.reference_score == null ? "—" : `${scorePoint(metric.reference_score)}점`}</span></div></header>
     {!context && <div className="score-row-record"><span>{rateLabel}{comparisonValue(metric.mine, metric.unit)} <small>랭커 {comparisonValue(metric.reference, metric.unit)}</small></span>{metric.score != null && <b className={`tone-${differenceTone(metric.mine, metric.reference, metric.direction, metric.unit)}`}>{comparisonGap(metric.mine, metric.reference, metric.unit)}</b>}</div>}
-    {hasMeta && <footer>{metric.usage != null ? <span>사용 {share(metric.usage)} <small>랭커 {share(metric.reference_usage)}</small></span> : metric.attempts_per_match != null ? <span>시도 {metric.attempts_per_match.toFixed(1)}회/경기 <small>랭커 {metric.reference_attempts == null ? "—" : metric.reference_attempts.toFixed(1)}회</small></span> : <span />}</footer>}
+    {(hasMeta || metric.record_scope === "completed_only") && <footer>{metric.record_scope === "completed_only" ? <span>정상 종료 {metric.matches}경기</span> : metric.usage != null ? <span>사용 {share(metric.usage)} <small>랭커 {share(metric.reference_usage)}</small></span> : metric.attempts_per_match != null ? <span>시도 {metric.attempts_per_match.toFixed(1)}회/경기 <small>랭커 {metric.reference_attempts == null ? "—" : metric.reference_attempts.toFixed(1)}회</small></span> : <span />}</footer>}
   </article>;
 }
 
@@ -42,7 +42,7 @@ export function DomainScoreDetails({ area, areas, onSelect, onClose }: { area: A
     <div className="score-detail-content"><div className="score-detail-total"><strong>{scorePoint(area.mine, 1)}<small>점</small></strong><span>랭커 평균 <b>{scorePoint(area.reference, 1)}점</b></span></div>
       {!!area.summaries?.length && <div className="score-detail-summaries">{area.summaries.map(metric => <span key={metric.id}>{shortLabel(metric.label)} <b>{comparisonValue(metric.mine, metric.unit)}</b></span>)}</div>}
       <div className={`score-detail-layout${showAdvice ? "" : " no-coaching"}`}><section aria-label="점수 구성 지표">
-        {area.id === "overview" ? <><h4>영역별 점수</h4>{areas.filter(item => item.id !== "overview").map(item => <button key={item.id} type="button" className="score-component-link" onClick={() => onSelect(item.id)}><strong>{item.label} ›</strong><span>{scorePoint(item.mine, 1)}점 · 랭커 {scorePoint(item.reference, 1)}점</span></button>)}</> : <>
+        {area.id === "overview" ? <><h4>종합에 반영한 영역</h4>{areas.filter(item => area.component_ids ? area.component_ids.includes(item.id) : item.id !== "overview").map(item => <button key={item.id} type="button" className="score-component-link" onClick={() => onSelect(item.id)}><strong>{item.label} ›</strong><span>{scorePoint(item.mine, 1)}점 · 랭커 {scorePoint(item.reference, 1)}점</span></button>)}</> : <>
           <div className="score-breakdown-heading"><h4>세부 지표</h4>{groups.length > 1 && <nav aria-label="세부 지표 분류">{groups.map(group => <button type="button" key={group.id} aria-pressed={tab === group.id} onClick={() => setTab(group.id)}>{group.label}</button>)}</nav>}</div>
           {visible.map(metric => <MetricRow key={metric.id} metric={metric} />)}
         </>}

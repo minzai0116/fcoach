@@ -47,7 +47,7 @@ def get_competitive_profile(ouid: str) -> dict:
     except RuntimeError:
         return result
     try:
-        # 과거 경기의 닉네임이 바뀌었을 수 있어 ouid의 현재 닉네임으로 검색한다.
+        # 과거 경기의 감독명이 바뀌었을 수 있어 ouid의 현재 감독명으로 검색한다.
         basic = client._get('/fconline/v1/user/basic', {'ouid': ouid})
         nickname = basic.get('nickname') if isinstance(basic, dict) else None
         if nickname:

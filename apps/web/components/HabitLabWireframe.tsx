@@ -9,6 +9,8 @@ import {
   type CurrentTactic,
 } from "../lib/actionPlan";
 import { requestApi, trackEvent } from "../lib/apiClient";
+import { requestAnalysis, type AnalysisProgress } from "../lib/analysisRequest";
+import { AnalysisProgressPanel } from "./coaching/AnalysisProgressPanel";
 import { analyticsError, trackFeedConnection } from "../lib/analytics";
 import {
   BENCHMARK_SOURCE_LABEL,
@@ -58,7 +60,9 @@ import { PrescriptionPanel } from "./coaching/PrescriptionPanel";
 import { MatchReviewPanel } from "./coaching/MatchReviewPanel";
 import { PositionCoachingPanel } from "./coaching/PositionCoachingPanel";
 import { MatchTrendPanel } from "./coaching/MatchTrendPanel";
+import { PlayerAnalysisLayout } from "./coaching/PlayerAnalysisLayout";
 import { RankerComparisonPanel } from "./coaching/RankerComparisonPanel";
+import { sharePeriod } from "../lib/shareImage";
 import {
   enhanceLevelClass,
   formatImpactRaw,
@@ -600,6 +604,8 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
   const [resolvedUser, setResolvedUser] = useState<UserSearchResponse | null>(null);
   const [ouidInput, setOuidInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress | null>(null);
+  const [analysisStartedAt, setAnalysisStartedAt] = useState(0);
   const [analysisLoadingMode, setAnalysisLoadingMode] = useState<"quick" | null>(null);
   const [notice, setNotice] = useState<string>("");
   const [error, setError] = useState<string>("");
@@ -752,7 +758,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
   async function resolveOuidFromNickname(mode: "quick" | "advanced"): Promise<string> {
     const targetNickname = nicknameInput.trim();
     if (targetNickname.length < 2) {
-      throw new Error("닉네임을 2글자 이상 입력해주세요.");
+      throw new Error("감독명을 2글자 이상 입력해주세요.");
     }
     if (/^[a-f0-9]{32}$/i.test(targetNickname)) {
       setResolvedUser({ ouid: targetNickname, nickname: targetNickname, source: "direct_ouid_input" });
@@ -793,10 +799,12 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
   async function onQuickRun(nextScreen: ScreenKey = "diagnosis") {
     const targetNickname = nicknameInput.trim();
     if (targetNickname.length < 2) {
-      setError("닉네임을 2글자 이상 입력해주세요.");
+      setError("감독명을 2글자 이상 입력해주세요.");
       return;
     }
     setAnalysisLoadingMode("quick");
+    setAnalysisStartedAt(Date.now());
+    setAnalysisProgress({stage:"user",status:"running",label:"감독명을 확인하고 있어요"});
     setLoading(true);
     setError("");
     setNotice("");
@@ -807,17 +815,14 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
     let targetOuid = "";
     try {
       targetOuid = await resolveOuidFromNickname("quick");
-      const payload = await requestApi<AnalysisPayload>("/analysis/run", {
-        method: "POST",
-        body: JSON.stringify({
+      const payload = await requestAnalysis({
           ouid: targetOuid,
           match_type: matchType,
           window: 30,
           current_tactic: null,
           squad_feed_id: selectedFeed?.feed_id ?? null,
           ...sampleOptions,
-        }),
-      }, { timeoutMs: 120_000 });
+      }, setAnalysisProgress);
       setAnalysis(payload);
       setActions(payload.actions ? toActionCards(payload.actions) : []);
       setNotice(syncNoticeText(payload, "완료: 경기 분석"));
@@ -857,6 +862,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
     } finally {
       setLoading(false);
       setAnalysisLoadingMode(null);
+      setAnalysisProgress(null);
     }
   }
 
@@ -882,12 +888,12 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
 
 
   return (
-    <div className={`container grid${screen === "players" && analysis?.coaching ? " analysis-focus" : ""}`}>
+    <div className="container grid">
       <header className="app-header">
         <FCoachLogo />
         <button type="button" className="link-like help-link" onClick={() => goToScreen("guide")} aria-current={screen === "guide" ? "page" : undefined}>이용 방법</button>
         {screen === "guide" && <p className="subtitle">
-          FC온라인 닉네임으로 최근 경기의 선수·플레이를 분석하고, 전술 코칭과 최근 경기 추이를 제공합니다.
+          FC온라인 감독명으로 최근 경기의 선수·플레이를 분석하고, 전술 코칭과 최근 경기 추이를 제공합니다.
         </p>}
       </header>
 
@@ -924,14 +930,15 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
 
       </section>
 
+      {loading && analysisProgress && <AnalysisProgressPanel progress={analysisProgress} startedAt={analysisStartedAt} />}
       {screen === "search" && (
         <section className="panel grid">
           <h2 className="section-title">경기 검색</h2>
           <p>공식경기·공식 친선 최근 30경기를 분석합니다. 몰수승·몰수패도 포함합니다.</p>
           <div className="form-row single">
             <input
-              placeholder="닉네임"
-              aria-label="분석할 닉네임"
+              placeholder="감독명"
+              aria-label="분석할 감독명"
               disabled={loading}
               value={nicknameInput}
               onChange={(event) => {
@@ -955,7 +962,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                   분석 중...
                 </span>
               ) : (
-                selectedFeed ? "피드를 연결해 경기 분석 시작" : "경기 분석 시작"
+                selectedFeed ? "연결된 피드를 통해 경기 분석 시작" : "감독명을 통해 경기 분석 시작"
               )}
             </button>
           </div>
@@ -963,10 +970,10 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
         </section>
       )}
 
-      {screen === "diagnosis" && !analysis && <section className="panel"><p>아직 분석한 경기 내역이 없습니다. 경기 검색에서 닉네임으로 경기를 불러와 분석해주세요.</p><button className="btn" onClick={() => goToScreen("search")}>경기 검색으로 이동</button></section>}
+      {screen === "diagnosis" && !analysis && <section className="panel"><p>아직 분석한 경기 내역이 없습니다. 경기 검색에서 감독명으로 경기를 불러와 분석해주세요.</p><button className="btn" onClick={() => goToScreen("search")}>경기 검색으로 이동</button></section>}
       {screen === "diagnosis" && analysis && (
-        <PositionCoachingPanel key="team" section="team" rankerCoaching={analysis.ranker_coaching} comparisonGroups={analysis.comparison_metrics?.all} benchmark={analysis.ranker_benchmark} coaching={analysis.coaching} renderOverview={() => <section className="grid grid-3">
-          <DomainScorePanel data={analysis.domain_scores} />
+        <PositionCoachingPanel key="team" section="team" ouid={analysis.ouid} rankerCoaching={analysis.ranker_coaching} comparisonGroups={analysis.comparison_metrics?.all} benchmark={analysis.ranker_benchmark} coaching={analysis.coaching} renderOverview={() => <section className="grid grid-3">
+          <DomainScorePanel data={analysis.domain_scores} share={{ nickname: resolvedUser?.nickname ?? "", period: sharePeriod((analysis.selected_matches ?? analysis.recent_matches ?? []).map(match => match.match_date)), matches: analysisSampleCount }} />
           <OpponentComparisonPanel comparison={analysis.opponent_comparison} modeCounts={analysis.mode_counts} />
           <FeedConnectionSummary context={analysis?.coaching?.squad_feed} onOpen={() => goToScreen("actions")} />
           {topRecommendedAction && !hasContextualFeed && (
@@ -1076,8 +1083,8 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
       {screen === "matches" && <section className="panel"><h3 className="section-title">경기별 분석</h3>{analysis ? <MatchReviewPanel key={`${analysis.ouid}:${analysis.created_at}`} analysis={analysis} /> : <><p>아직 분석한 경기 내역이 없습니다. 경기 검색에서 먼저 경기를 분석해주세요.</p><button className="btn" onClick={() => goToScreen("search")}>경기 검색으로 이동</button></>}</section>}
 
       {screen === "players" && (
-        <section className="grid player-analysis-section">
-          <PositionCoachingPanel key="players" section="players" coaching={analysis?.coaching} reportPlayers={playerRows} renderReport={() => <>
+        <PlayerAnalysisLayout active={!!analysis?.coaching}>
+          <PositionCoachingPanel key="players" section="players" nickname={resolvedUser?.nickname} coaching={analysis?.coaching} reportPlayers={playerRows} renderReport={() => <>
           {playerRows.length === 0 && (
             <article className="panel">
               <p className="muted">선수 리포트 데이터가 없습니다. 경기 검색에서 먼저 경기 분석을 시작해주세요.</p>
@@ -1330,7 +1337,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
             </>
           )}
           </>} />
-        </section>
+        </PlayerAnalysisLayout>
       )}
 
       {screen === "actions" && (
@@ -1449,7 +1456,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
 
       {screen === "rankers" && <RankerComparisonPanel analysis={analysis} loading={loading} onRefresh={() => void onQuickRun("rankers")} onSearch={() => goToScreen("search")} />}
 
-      {screen === "tracking" && <MatchTrendPanel analysis={analysis} loading={loading} onRefresh={() => void onQuickRun("tracking")} onSearch={() => goToScreen("search")} />}
+      {screen === "tracking" && <MatchTrendPanel analysis={analysis} loading={loading} nickname={resolvedUser?.nickname} onRefresh={() => void onQuickRun("tracking")} onSearch={() => goToScreen("search")} />}
 
       {screen === "guide" && (
         <GuideScreen

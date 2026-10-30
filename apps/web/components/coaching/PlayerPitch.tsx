@@ -9,6 +9,7 @@ import { OfficialPlayerBadges } from "../player/OfficialPlayerBadges";
 import { PlayerDetailPanel } from "./PlayerDetailPanel";
 import { layoutPitchCards, type PitchCardLayout } from "../../lib/pitchCardLayout";
 import { feedTraitResolver, newPlayerTraits } from "../../lib/playerTraits";
+import { ShareImageButton } from "../share/ShareImageButton";
 
 function playerState(player: PitchPlayer) {
   if (!player.record) return { label: "이 자리 기록 없음", tone: "empty" };
@@ -17,7 +18,7 @@ function playerState(player: PitchPlayer) {
   return { label: "기록 확인", tone: "observe" };
 }
 
-export function PlayerPitch({ coaching, reportPlayers = [] }: { coaching: PositionCoaching; reportPlayers?: PlayerReportEntry[] }) {
+export function PlayerPitch({ coaching, reportPlayers = [], nickname = "" }: { coaching: PositionCoaching; reportPlayers?: PlayerReportEntry[]; nickname?: string }) {
   const [replacements, setReplacements] = useState<Record<string, string>>({});
   const [showPlayerOptions, setShowPlayerOptions] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -81,8 +82,11 @@ export function PlayerPitch({ coaching, reportPlayers = [] }: { coaching: Positi
       <div className="pitch-controls">
       <div className="coaching-section-heading"><div><h4>포메이션</h4></div>
         <span className="pitch-registration">최근 경기 등록 포지션</span>
+        <div className="pitch-toolbar">
+        {!!lineup.length && <ShareImageButton input={{kind: "squad", nickname: feed?.snapshot.author || nickname, period: "", matches: 0, players: feed ? buildPitchLineup(coaching, "feed") : lineup, reports: reportPlayers, feed: feed?.snapshot}} label="스쿼드 저장" />}
         {!!positionOptions.length && <button type="button" className="pitch-change-button" aria-expanded={showPlayerOptions} aria-controls={optionsId} onClick={() => setShowPlayerOptions(value => !value)}>선수 변경 · {positionOptions.length}개 자리</button>}
         {!!otherRecords.length && <details className="pitch-other-records"><summary>다른 자리 기록 {otherRecords.length}</summary><div className="pitch-other-popover"><div className="pitch-other-players">{otherRecords.map(player => <button key={player.key} type="button" aria-pressed={selected?.key === player.key} aria-controls={detailId} onClick={event => { selectPlayer(player); event.currentTarget.closest("details")?.removeAttribute("open"); }}>{player.position} · {player.name} +{player.grade}</button>)}</div></div></details>}
+        </div>
       </div>
       {showPlayerOptions && <div className="pitch-lineup-options" id={optionsId}>
         <div className="pitch-position-options">{positionOptions.map(([position, players]) => <label key={position}><span>{position}</span><select aria-label={`${position} 출전 선수`} value={lineup.find(player => player.position === position)?.key} onChange={event => { setReplacements(current => ({ ...current, [position]: event.target.value })); setSelectedKey(event.target.value); setMobileDetails(false); setShowPlayerOptions(false); }}>

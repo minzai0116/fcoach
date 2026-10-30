@@ -51,7 +51,7 @@ export function FeedCoachingPanel({ context, hidePlayerRecords = false }: { cont
     <div className="coaching-section-heading"><div><span className="coaching-eyebrow">공개 피드의 저장 설정</span><h4>{snapshot.title}</h4></div><span className="coaching-scope">{snapshot.formation}</span></div>
     <p className="coaching-scope-note">{snapshot.author} · {snapshot.mode === 1 ? "1vs1" : snapshot.mode === 2 ? "감독 모드" : "모드 미제공"} · 생성 {snapshot.created_at?.slice(0, 10) ?? "날짜 미제공"} · 조회 {new Date(snapshot.fetched_at).toLocaleString("ko-KR")}</p>
     {context.mode_status !== "matched" && <p className="notice error" role="status">{context.mode_status === "mismatch" ? "피드의 활용 모드가 분석 경기 모드와 다릅니다." : "피드의 활용 모드를 확인할 수 없습니다."} 선수별 설정 연결을 보류했습니다.</p>}
-    {context.author_status !== "matched" && <p className="notice error" role="status">{context.author_status === "mismatch" ? "피드 작성자와 경기 기록의 닉네임이 다릅니다." : "경기 기록에서 피드 작성자와 같은 닉네임인지 확인되지 않았습니다."} 선수별 설정 연결을 보류했습니다.</p>}
+    {context.author_status !== "matched" && <p className="notice error" role="status">{context.author_status === "mismatch" ? "피드 작성자와 경기 기록의 감독명이 다릅니다." : "경기 기록에서 피드 작성자와 같은 감독명인지 확인되지 않았습니다."} 선수별 설정 연결을 보류했습니다.</p>}
     {!summary.record_count && <p className="notice">선택한 분석 조건에서 대조할 선수 기록이 없습니다. 피드 설정만 참고할 수 있습니다.</p>}
     <div className="feed-match-stats"><div><small>설정 연결</small><strong>{summary.linked}<em>개</em></strong></div><div><small>차이·정보 부족</small><strong>{summary.different}<em>개</em></strong></div><div><small>피드에 없는 기록</small><strong>{summary.not_in_feed}<em>개</em></strong></div></div>
     {summary.withheld > 0 && <p className="coaching-scope-note">카드·강화·자리는 같지만 모드·작성자 확인 때문에 보류한 기록 {summary.withheld}개</p>}

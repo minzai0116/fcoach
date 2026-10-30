@@ -50,6 +50,7 @@ export type RankerCoaching = {
 };
 
 export type DomainScoreMetric = {
+  record_scope?: "all_recorded" | "completed_only";
   id: string; label: string; section: string; unit: MetricUnit; direction: ComparableMetric["direction"];
   mine: number; reference: number | null; spread: number | null; target: number | null; score: number | null; reference_score: number | null;
   usage: number | null; reference_usage: number | null; attempts_per_match: number | null; reference_attempts: number | null;
@@ -58,8 +59,9 @@ export type DomainScoreMetric = {
 };
 export type DomainScoreAdvice = {title: string; play: string; tactic: string | null; metric_id: string; evidence: string; kind: string};
 export type DomainScores = {
+  scope?: {matches: number; completed_matches: number; official_matches: number; friendly_matches: number; count_basis: "completed_only"} | null;
   scale: number[]; method: string; note: string;
   areas: Array<{id: string; label: string; mine: number | null; reference: number | null; metric_count: number; ranker_count: number;
-    metrics: DomainScoreMetric[]; summaries?: DomainScoreMetric[]; advice: DomainScoreAdvice[];
+    metrics: DomainScoreMetric[]; summaries?: DomainScoreMetric[]; advice: DomainScoreAdvice[]; component_ids?: string[];
   }>;
 };

@@ -1,12 +1,13 @@
 """점수에 반영하는 항목과 참고 기록을 구분한다."""
 BASE_AREAS = (
     ('passing', '패스', ('passing:overall',)),
-    ('shooting', '슈팅', ('shooting:on_target', 'shooting:conversion', 'shooting:box_inside', 'shooting:box_outside')),
+    ('shooting', '슈팅', ('shooting:on_target', 'shooting:conversion', 'shooting:box_inside', 'shooting:box_outside', 'shooting:display_goals')),
     ('defending', '수비', ('defending:team_tackle', 'defending:team_block', 'defending:goals_against', 'defending:shots_against', 'defending:late_conceded', 'defending:intercept', 'defending:defending_actions')),
     ('carrying', '드리블·경합', ('carrying:dribble', 'carrying:ball_possession', 'carrying:aerial', 'carrying:dribble_distance', 'carrying:team_distance')),
     ('discipline', '경기 운영', ('discipline:foul', 'discipline:offside')),
 )
 CORE_KEYS = {key for _, _, keys in BASE_AREAS for key in keys}
+OVERALL_AREAS = {'passing', 'shooting', 'defending', 'carrying'}
 
 
 def supported(key):
@@ -20,6 +21,7 @@ def section(key):
     if key in ('shooting:box_inside', 'shooting:box_outside'): return '지역별'
     if key == 'shooting:conversion': return '전체'
     if key == 'shooting:on_target': return '정확도'
+    if key == 'shooting:display_goals': return '득점 생산'
     if key in ('defending:team_tackle', 'defending:team_block'): return '수비 성공'
     if key in ('defending:intercept', 'defending:defending_actions', 'defending:late_conceded'): return '참고 기록'
     if key.startswith('defending:'): return '실점 억제'

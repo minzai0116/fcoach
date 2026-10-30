@@ -14,7 +14,7 @@ const metricText = (value: MatchMetricValue, unit: string) => value.value === nu
 function RankCard({ side, label }: { side: MatchReviewSide; label: string }) {
   const { current_rank: rank, highest_division: highest } = side.profile;
   return <article className="match-rank-card">{label && <span>{label}</span>}<h5>{side.nickname}</h5>
-    {side.profile.current_nickname && side.profile.current_nickname !== side.nickname && <p>현재 닉네임 · {side.profile.current_nickname}</p>}
+    {side.profile.current_nickname && side.profile.current_nickname !== side.nickname && <p>현재 감독명 · {side.profile.current_nickname}</p>}
     <dl><div><dt>현재 시즌 1대1 순위</dt><dd>{rank.status === "available" ? `${rank.rank?.toLocaleString()}위` : rank.status === "outside_public_range" ? "공개 순위에 없음" : "조회 불가"}</dd></div>
     {rank.status === "available" && rank.elo && <div><dt>랭킹 점수</dt><dd>{rank.elo}</dd></div>}
     <div><dt>역대 최고 1대1 등급</dt><dd>{highest?.name ?? "정보 없음"}</dd></div></dl>

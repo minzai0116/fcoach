@@ -115,11 +115,11 @@ class NexonOpenApiClient:
             except (ValueError, AttributeError):
                 code = None
             if response is not None and response.status_code == 400 and code in {'OPENAPI00003', 'OPENAPI00004'}:
-                raise UserNotFoundError('해당 닉네임의 구단주를 찾을 수 없습니다. 닉네임을 다시 확인해주세요.') from error
+                raise UserNotFoundError('해당 감독명의 구단주를 찾을 수 없습니다. 감독명을 다시 확인해주세요.') from error
             raise
         if isinstance(data, dict) and data.get("ouid"):
             return {"ouid": str(data["ouid"]), "nickname": nickname}
-        raise RuntimeError("닉네임 조회 응답을 확인할 수 없습니다. 잠시 후 다시 시도해주세요.")
+        raise RuntimeError("감독명 조회 응답을 확인할 수 없습니다. 잠시 후 다시 시도해주세요.")
 
     def fetch_match_ids(self, ouid: str, match_type: int, limit: int = 100) -> list[str]:
         payload = self._get(

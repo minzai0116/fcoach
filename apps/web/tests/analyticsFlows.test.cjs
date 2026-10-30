@@ -56,7 +56,7 @@ test("공개 피드 목록·선택 완료는 각각 한 번 기록하고 분석 
   const ui = component("SquadFeedSelector", "SquadFeedSelector", {
     nickname: "tester", selected: null, disabled: false, onChange: value => selected.push(value), onLoadingChange() {},
   }, async path => path.includes("?") ? { items: [fixture], page: 1, has_more: false } : fixture);
-  ui.find(n => n.type === "button" && n.props.children === "닉네임의 공개 피드 불러오기").props.onClick();
+  ui.find(n => n.type === "button" && n.props.children === "감독명의 공개 피드 불러오기").props.onClick();
   await tick(); ui.render();
   ui.find(n => n.type === "input" && n.props.type === "radio").props.onChange();
   await tick();
@@ -69,7 +69,7 @@ test("작성자 불일치와 실패한 조회는 선택 성공으로 기록하�
   const ui = component("SquadFeedSelector", "SquadFeedSelector", {
     nickname: "tester", selected: null, disabled: false, onChange() {}, onLoadingChange() {},
   }, async path => path.includes("?") ? { items: [fixture], page: 1, has_more: false } : fixture);
-  ui.find(n => n.type === "button" && n.props.children === "닉네임의 공개 피드 불러오기").props.onClick();
+  ui.find(n => n.type === "button" && n.props.children === "감독명의 공개 피드 불러오기").props.onClick();
   await tick(); ui.render();
   ui.find(n => n.type === "input" && n.props.type === "radio").props.onChange();
   await tick();
@@ -98,7 +98,7 @@ test("다른 피드 조회가 실패해도 이전 선택을 지우지 않는다"
     if (path.includes("?")) return { items: [previous, fixture], page: 1, has_more: false };
     throw Object.assign(new Error("unavailable"), { code: "network" });
   });
-  ui.find(n => n.type === "button" && n.props.children === "닉네임의 공개 피드 불러오기").props.onClick();
+  ui.find(n => n.type === "button" && n.props.children === "감독명의 공개 피드 불러오기").props.onClick();
   await tick(); ui.render();
   ui.find(n => n.type === "button" && n.props.children === "이 피드 선택").props.onClick();
   await tick(); ui.render();

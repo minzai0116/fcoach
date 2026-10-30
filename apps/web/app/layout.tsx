@@ -4,7 +4,7 @@ import "./globals.css";
 
 const siteUrl = "https://fcoach.fun";
 const siteDescription =
-  "FC온라인 닉네임만 입력하면 최근 경기 로그를 분석해 핵심 지표, 선수 리포트, 전술 코칭, 최근 경기 추이를 제공하는 비공식 개인 코치 서비스입니다.";
+  "FC온라인 감독명만 입력하면 최근 경기 로그를 분석해 핵심 지표, 선수 리포트, 전술 코칭, 최근 경기 추이를 제공하는 비공식 개인 코치 서비스입니다.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),

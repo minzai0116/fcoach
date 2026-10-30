@@ -2621,6 +2621,35 @@ code {
 }
 
 /* Analysis workspace */
+.analysis-progress-panel { background: #edf4ff; border: 1px solid #c8d9f6; border-radius: 14px; padding: 18px 20px; min-width: 0; }
+.analysis-progress-panel > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #204d91; }
+.analysis-progress-panel strong { font-size: 16px; line-height: 1.5; }
+.analysis-progress-panel span { white-space: nowrap; font-size: 13px; font-variant-numeric: tabular-nums; }
+.analysis-progress-activity { height: 5px; overflow: hidden; background: #d6e3fa; border-radius: 8px; margin-top: 12px; }
+.analysis-progress-activity i { display: block; height: 100%; width: 30%; background: #2563eb; border-radius: inherit; animation: analysis-working 1.7s ease-in-out infinite alternate; }
+@keyframes analysis-working { from { transform: translateX(-100%); } to { transform: translateX(333%); } }
+@media (prefers-reduced-motion: reduce) { .analysis-progress-activity i { animation: none; width: 100%; opacity: .55; } }
+.team-analysis-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: start; }
+.team-analysis-header > div { min-width: 0; }
+.team-tier-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; width: 310px; margin-bottom: 16px; }
+.team-tier-card { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 16px 14px; background: #f4f8ff; border: 1px solid #d5e0f0; border-radius: 14px; }
+.team-tier-card-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 52px; }
+.team-tier-card-top > span { font-size: 12px; font-weight: 700; color: #46618b; }
+.team-tier-card-top > img { flex: 0 0 auto; width: 52px; height: 52px; object-fit: contain; }
+.team-tier-card > strong { color: #173f80; font-size: 18px; line-height: 1.35; overflow-wrap: anywhere; }
+.team-tier-card > small { font-size: 11px; line-height: 1.5; color: #596e8d; }
+.team-tier-card.tier-highest { background: #fffbef; border-color: #ece0ba; }
+.tier-highest > strong { color: #87611a; }
+@media (max-width: 700px) {
+  .team-analysis-header { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .team-tier-summary { width: 100%; margin: 0 0 16px; }
+  .team-tier-card { gap: 5px; padding: 12px; }
+  .team-tier-card-top { min-height: 44px; }
+  .team-tier-card-top > img { width: 44px; height: 44px; }
+  .team-tier-card > strong { font-size: 17px; }
+  .analysis-progress-panel { padding: 14px; }
+  .analysis-progress-panel strong { font-size: 14px; }
+}
 .analysis-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .analysis-info { position: relative; font-size: 13px; }
 .analysis-info > summary { cursor: pointer; color: #274e82; min-height: 44px; display: flex; align-items: center; white-space: nowrap; }
@@ -2842,6 +2871,7 @@ code {
 
 /* 분석은 화면 높이를 사용하고 긴 세부 내용만 패널 안에서 펼친다. */
 .analysis-focus { height: 100dvh; max-width: 1920px; padding: 10px 16px; display: flex; flex-direction: column; gap: 7px; overflow: hidden; }
+.player-analysis-section.analysis-focus { height:var(--player-panel-height, max(420px,calc(100dvh - 310px))); max-width:none; margin:0; padding:0; }
 .analysis-focus > header { flex: 0 0 26px; }
 .analysis-focus .brand-mark { width: 26px; height: 26px; }
 .analysis-focus .title { font-size: 22px; }
@@ -3308,6 +3338,14 @@ code {
 .compact-player-workspace .pitch-controls > .coaching-section-heading { flex-wrap:wrap; }
 .pitch-change-button, .pitch-reset-button { min-height:44px; padding:6px 9px; border:1px solid #bfcee3; border-radius:8px; background:#fff; color:#174eaa; cursor:pointer; font-size:12px; }
 .pitch-change-button[aria-expanded="true"] { background:#eaf1ff; border-color:#2563eb; }
+.pitch-toolbar { display:grid; grid-auto-flow:column; grid-auto-columns:minmax(0,1fr); gap:6px; flex:1 1 360px; max-width:520px; min-width:0; }
+.pitch-toolbar > .share-image-trigger, .pitch-toolbar > .pitch-change-button, .pitch-toolbar > .pitch-other-records > summary { display:flex; align-items:center; justify-content:center; width:100%; height:44px; min-height:44px; box-sizing:border-box; padding:6px 8px; border:1px solid #bfcee3; border-radius:8px; background:#fff; color:#174eaa; font-family:inherit; font-size:12px; font-weight:700; line-height:1.3; text-align:center; white-space:normal; }
+.pitch-toolbar > .pitch-other-records { min-width:0; width:100%; margin:0; }
+.pitch-toolbar > .pitch-other-records > summary { list-style:none; }
+.pitch-toolbar > .pitch-other-records > summary::-webkit-details-marker { display:none; }
+.pitch-toolbar > .pitch-other-records > summary::before { content:"▸"; margin-right:4px; }
+.pitch-toolbar > .pitch-other-records[open] > summary::before { content:"▾"; }
+@media(max-width:900px) { .pitch-toolbar { flex-basis:100%; max-width:none; } .pitch-toolbar > .share-image-trigger, .pitch-toolbar > .pitch-change-button, .pitch-toolbar > .pitch-other-records > summary { font-size:11px; } }
 .pitch-lineup-options { position:absolute; top:100%; left:0; right:0; z-index:8; margin:4px 0 0; padding:10px; border:1px solid #cad8e9; border-radius:10px; background:#f1f5fc; box-shadow:0 8px 18px #173d7326; }
 .pitch-position-options { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px 10px; }
 .pitch-position-options label { display:flex; align-items:center; gap:6px; min-width:0; font-size:12px; font-weight:700; }
@@ -3333,6 +3371,7 @@ code {
 .domain-score-panel > header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
 .domain-score-panel h3 { margin:0; font-size:18px; }
 .domain-score-panel > header > span { font-size:12px; color:#49617d; }
+.score-scope { display:flex; flex-wrap:wrap; gap:5px 12px; margin:-5px 0 12px; color:#49617d; font-size:11px; }
 .domain-score-grid { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:10px; }
 .domain-score-grid > button { min-width:0; padding:12px; background:#fff; border:1px solid #dde6f0; border-radius:9px; }
 .domain-score-grid h4 { font-size:13px; margin:0 0 12px; white-space:nowrap; }

@@ -9,6 +9,7 @@ PLAYS = {
     'passing': ('패스 연결', '받기 전에 가까운 지원 선수를 확인하고, 막힌 전진 패스는 옆으로 돌리세요.', '중앙 한 명은 지원, 다른 한 명은 전진 연결을 맡겨보세요.'),
     'finishing': ('슈팅 선택', '각도가 좁으면 중앙 동료에게 연결해 슈팅 각도를 만드세요.', '공격수의 침투와 지원 역할을 나눠보세요.'),
     'accuracy': ('슈팅 공간 확보', '수비수가 경로를 막으면 옆으로 연결한 뒤 슈팅하세요.', '중앙 연결 역할과 침투 역할을 나눠보세요.'),
+    'production': ('득점 기회 만들기', '공격수가 고립되면 가까운 동료와 연결하고, 박스 안 침투와 컷백으로 마무리 기회를 만드세요.', '공격수의 침투와 미드필더의 지원 역할을 나눠보세요.'),
     'heading': ('헤딩 준비', '크로스 전에 공격수의 위치와 주변 수비수를 확인하세요.', '크로스와 컷백을 모두 받을 위치를 확보해보세요.'),
     'outside': ('중거리 슈팅 선택', '경로가 막혔다면 박스 안으로 연결해 더 열린 기회를 만드세요.', '박스 앞 패스 지원을 한 명 남겨보세요.'),
     'defense': ('수비 간격', '센터백을 먼저 끌어내지 말고 미드필더로 중앙 경로를 막으세요.', '풀백 한쪽의 후방 대기와 중앙 커버를 확인해보세요.'),
@@ -27,6 +28,7 @@ def play_key(key):
     if key.startswith('passing:'):
         return key.split(':')[1] if key.count(':') == 2 and key.split(':')[1] in PLAYS else 'passing'
     if key == 'shooting:on_target': return 'accuracy'
+    if key == 'shooting:display_goals': return 'production'
     if key in ('shooting:shot_type_3', 'shooting:heading'): return 'heading'
     if key == 'shooting:box_outside': return 'outside'
     if key.startswith('shooting:'): return 'finishing'

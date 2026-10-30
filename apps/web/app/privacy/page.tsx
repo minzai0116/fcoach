@@ -9,7 +9,7 @@ export default function PrivacyPage() {
       <section className="panel">
         <h2 className="section-title">1. 수집 항목 및 방식</h2>
         <ul className="list">
-          <li>사용자 입력: FC Online 닉네임</li>
+          <li>사용자 입력: FC Online 감독명</li>
           <li>외부 조회값: OUID, 경기/선수 관련 통계(Open API 응답 기반)</li>
           <li>서비스 로그: 오류/성능 추적을 위한 최소한의 운영 로그</li>
         </ul>

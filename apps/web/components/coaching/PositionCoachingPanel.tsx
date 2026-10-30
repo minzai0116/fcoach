@@ -10,8 +10,11 @@ import { AllMetricsCoachingPanel } from "./AllMetricsCoachingPanel";
 import { PlayerPitch } from "./PlayerPitch";
 import { SquadFeedSettings } from "./SquadFeedSettings";
 import { FeedPlanCard } from "./FeedPlanCard";
+import { TeamTierSummary } from "./TeamTierSummary";
 
 type PositionCoachingPanelProps = {
+  nickname?: string;
+  ouid?: string;
   section: "team" | "players";
   rankerCoaching?: RankerCoaching;
   comparisonGroups?: MetricGroup[];
@@ -22,20 +25,23 @@ type PositionCoachingPanelProps = {
   renderOverview?: () => ReactNode;
 };
 
-export function PositionCoachingPanel({ section, coaching, reportPlayers, renderReport, renderOverview, rankerCoaching, comparisonGroups, benchmark }: PositionCoachingPanelProps) {
+export function PositionCoachingPanel({ section, coaching, reportPlayers, renderReport, renderOverview, rankerCoaching, comparisonGroups, benchmark, nickname, ouid }: PositionCoachingPanelProps) {
   const [view, setView] = useState(section === "team" ? "overview" : "players");
   if (!coaching) return <article className="panel"><p>경기 검색에서 먼저 경기 분석을 시작하세요.</p></article>;
   const views = section === "team"
     ? [["overview", "요약"], ["team", "세부 지표"], ["tactics", "저장된 전술"]]
     : [["players", "포메이션"], ["compare", "선수 비교"], ...(renderReport ? [["report", "선수 성과"]] : [])];
   const feed = coaching.squad_feed?.status === "available" ? coaching.squad_feed : undefined;
-  return <article className="panel position-coaching-panel" data-view={view}>
+  const heading = <>
     <div className="analysis-heading"><h3 className="section-title">{section === "team" ? "팀 분석" : "선수 분석"}</h3></div>
     {coaching.comparison_scope && <p className="comparison-scope">분석 {coaching.comparison_scope.current.matches}경기{coaching.includes_forfeits ? " · 몰수 경기 중단 전 기록 포함" : ""}{coaching.comparison_scope.previous.matches > 0 ? ` · 이전 ${coaching.comparison_scope.previous.matches}경기와 비교` : ""}</p>}
     <nav className="analysis-section-nav" aria-label={section === "team" ? "팀 분석 보기" : "선수 분석 보기"}>{views.map(([key, label]) => <button key={key} type="button" aria-pressed={view === key} onClick={() => setView(key)}><strong>{label}</strong></button>)}</nav>
+  </>;
+  return <article className="panel position-coaching-panel" data-view={view}>
+    {section === "team" ? <header className="team-analysis-header"><div>{heading}</div>{ouid && <TeamTierSummary ouid={ouid} />}</header> : heading}
     <div className="analysis-view-body">
     {view === "overview" && renderOverview?.()}
-    {view === "players" && <PlayerPitch coaching={coaching} reportPlayers={reportPlayers} />}
+    {view === "players" && <PlayerPitch coaching={coaching} reportPlayers={reportPlayers} nickname={nickname} />}
     {view === "compare" && <PlayerComparisonPanel players={coaching.players} reports={reportPlayers} feed={feed} />}
     {view === "team" && <AllMetricsCoachingPanel coaching={coaching} comparisonGroups={comparisonGroups} benchmark={benchmark} rankerCoaching={rankerCoaching} />}
     {view === "report" && renderReport?.()}

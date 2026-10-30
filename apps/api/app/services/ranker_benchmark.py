@@ -10,8 +10,9 @@ from app.services.metric_catalog import metric_catalog
 from app.services.domain_scores import score_inputs
 from app.services.ranker_source import list_official_rankers
 from app.services.match_selection import eligible_match_rows
+from app.services.score_sampling import PROFILE_VERSION, score_metric_groups
 
-CACHE_KEY = 'rankers:benchmark:v6'
+CACHE_KEY = 'rankers:benchmark:v8'
 LAST_VALID_KEY = f'{CACHE_KEY}:last_valid'
 _CACHE = CacheClient()
 _BUNDLED_SNAPSHOT = Path(__file__).resolve().parents[1] / 'data' / 'ranker-benchmark.json'
@@ -74,7 +75,7 @@ def aggregate_rankers(profiles, listed_count, fetched_at=None):
         dates.extend(row.match_date for row in rows)
         match_ids.update(row.match_id for row in rows)
         personal_groups = metric_catalog(rows)
-        score_profiles.append(score_inputs(personal_groups))
+        score_profiles.append(score_inputs(score_metric_groups(rows, personal_groups)))
         for group in personal_groups:
             templates.setdefault(group['id'], {'id': group['id'], 'label': group['label'], 'metrics': {}})
             for metric in group['metrics']:
@@ -100,7 +101,7 @@ def aggregate_rankers(profiles, listed_count, fetched_at=None):
         groups.append({'id': group['id'], 'label': group['label'], 'metrics': metrics})
     return {'status': 'available' if members else 'unavailable', 'listed_count': listed_count,
         'ranker_count': len(members), 'record_count': sum(member['matches'] for member in members),
-        'unique_match_count': len(match_ids), 'members': members, 'groups': groups, 'score_profiles': score_profiles,
+        'unique_match_count': len(match_ids), 'members': members, 'groups': groups, 'score_profiles': score_profiles, 'score_profile_version': PROFILE_VERSION,
         'ranking_fetched_at': fetched_at, 'computed_at': utc_now_iso(),
         'match_from': min(dates) if dates else None, 'match_until': max(dates) if dates else None,
         'method': 'equal_ranker_mean_latest_30_recorded_official',
