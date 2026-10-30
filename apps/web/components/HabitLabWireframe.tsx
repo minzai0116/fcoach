@@ -890,7 +890,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
   return (
     <div className="container grid">
       <header className="app-header">
-        <FCoachLogo />
+        <FCoachLogo onNavigate={() => { goToScreen("search"); window.scrollTo({ top: 0, behavior: "auto" }); }} />
         <button type="button" className="link-like help-link" onClick={() => goToScreen("guide")} aria-current={screen === "guide" ? "page" : undefined}>이용 방법</button>
         {screen === "guide" && <p className="subtitle">
           FC온라인 감독명으로 최근 경기의 선수·플레이를 분석하고, 전술 코칭과 최근 경기 추이를 제공합니다.
@@ -930,7 +930,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
 
       </section>
 
-      {loading && analysisProgress && <AnalysisProgressPanel progress={analysisProgress} startedAt={analysisStartedAt} />}
+      {screen !== "search" && loading && analysisProgress && <AnalysisProgressPanel progress={analysisProgress} startedAt={analysisStartedAt} />}
       {screen === "search" && (
         <section className="panel grid">
           <h2 className="section-title">경기 검색</h2>
@@ -959,13 +959,14 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
               {loading && analysisLoadingMode === "quick" ? (
                 <span className="btn-loading">
                   <span className="spinner" />
-                  분석 중...
+                  {analysisProgress?.label ?? "분석을 준비하고 있어요"}
                 </span>
               ) : (
                 selectedFeed ? "연결된 피드를 통해 경기 분석 시작" : "감독명을 통해 경기 분석 시작"
               )}
             </button>
           </div>
+          {loading && analysisProgress && <AnalysisProgressPanel progress={analysisProgress} startedAt={analysisStartedAt} />}
 
         </section>
       )}

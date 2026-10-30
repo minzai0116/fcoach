@@ -1,6 +1,6 @@
-export function FCoachLogo() {
+export function FCoachLogo({ onNavigate }: { onNavigate: () => void }) {
   return (
-    <div className="brand-logo" aria-label="FCOACH">
+    <a className="brand-logo" href="/search" aria-label="FCOACH · 경기 검색으로 이동" onClick={event => { event.preventDefault(); onNavigate(); }}>
       <span className="brand-mark" aria-hidden="true">
         <svg viewBox="0 0 40 40" role="img" focusable="false">
           <defs>
@@ -14,6 +14,6 @@ export function FCoachLogo() {
         </svg>
       </span>
       <h1 className="title brand-text">FCOACH</h1>
-    </div>
+    </a>
   );
 }
