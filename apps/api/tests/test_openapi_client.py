@@ -30,6 +30,15 @@ class StubOpenApiClient(NexonOpenApiClient):
 
 class OpenApiClientTest(unittest.TestCase):
     @patch("app.services.openapi_client.time.sleep", return_value=None)
+    def test_total_target_counts_forfeits_and_reuses_known_matches(self, _sleep):
+        ids = ["known", "forfeit-win", "forfeit-loss", "unused"]
+        client = StubOpenApiClient(ids, {key: _match_payload("user", 1) for key in ids})
+        rows = client.collect_match_rows("user", 60, known_match_ids={"known"},
+                                        total_match_target=3, existing_match_count=1)
+        self.assertEqual(client.fetched_details, ["forfeit-win", "forfeit-loss"])
+        self.assertEqual(len(rows), 2)
+
+    @patch("app.services.openapi_client.time.sleep", return_value=None)
     def test_collect_match_rows_keeps_fetching_until_completed_target(self, _sleep) -> None:
         ouid = "user-ouid"
         match_ids = ["forfeit-win", "completed-1", "forfeit-loss", "completed-2", "unused"]

@@ -15,6 +15,19 @@ def row(index, mode=60, mine=9, opponent=3):
 
 
 class RecentModesTest(unittest.TestCase):
+    def test_59_per_mode_keeps_same_latest_thirty_and_rolling_history(self):
+        from datetime import datetime, timedelta, timezone
+        from app.services.match_trends import build_match_trends
+        base = datetime(2026, 10, 31, tzinfo=timezone.utc)
+        records = {mode: [replace(row(1, mode), match_id=f'{mode}-{i}',
+                                  match_date=(base - timedelta(minutes=i * 2 + (mode == 60))).isoformat(),
+                                  match_end_type=1 if i % 3 else 0) for i in range(100)] for mode in (50, 60)}
+        def load(limit):
+            return load_recent_modes('private-user', lambda **kw: (records[kw['match_type']][:limit], 0, None, True))[0]
+        before, after = load(100), load(59)
+        self.assertEqual([r.match_id for r in before[:30]], [r.match_id for r in after[:30]])
+        self.assertEqual(build_match_trends(before), build_match_trends(after))
+
     def test_merge_sorts_both_modes_before_selecting_latest_thirty(self):
         def load(**kw):
             mode = kw['match_type']

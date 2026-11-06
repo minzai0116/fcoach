@@ -9,7 +9,7 @@ _CACHE = CacheClient()
 _CURRENT = ContextVar('analysis_progress', default=None)
 STAGES = {
     'accepted': '분석 요청을 준비하고 있어요',
-    'matches': '공식·친선 경기 기록을 불러오고 있어요',
+    'matches': '경기 기록과 선수·피드 정보를 불러오고 있어요',
     'feed': '선택한 피드의 선수·전술을 확인하고 있어요',
     'metrics': '선수·팀 지표를 계산하고 있어요',
     'rankers': '랭커 평균과 비교하고 있어요',

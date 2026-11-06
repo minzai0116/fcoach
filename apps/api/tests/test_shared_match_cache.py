@@ -7,6 +7,30 @@ from test_position_coaching import sample
 
 
 class SharedMatchCacheTest(unittest.TestCase):
+    def test_combined_history_fetches_59_records_without_filling_completed_matches(self):
+        from app.services.analysis import _refresh_match_rows
+        with patch('app.services.analysis.NexonOpenApiClient') as api, \
+             patch('app.services.analysis._cached_match_ids', return_value=set()), \
+             patch('app.services.analysis._available_match_stats', return_value=[]):
+            api.return_value.collect_match_rows.return_value = []
+            _refresh_match_rows('test-ouid', 60, 59, [], include_forfeits=True)
+        options = api.return_value.collect_match_rows.call_args.kwargs
+        self.assertEqual(options['limit'], 59)
+        self.assertEqual(options['total_match_target'], 59)
+        self.assertIsNone(options['completed_match_target'])
+
+    def test_forfeit_heavy_cache_uses_incremental_sync_instead_of_backfilling(self):
+        from app.services.analysis import _refresh_match_rows
+        existing = [replace(sample(), match_id=f'game{i}', match_end_type=1) for i in range(59)]
+        with patch('app.services.analysis.NexonOpenApiClient') as api, \
+             patch('app.services.analysis._latest_known_match_ids', return_value=[r.match_id for r in existing]), \
+             patch('app.services.analysis._cached_match_ids', return_value=set()), \
+             patch('app.services.analysis._available_match_stats', return_value=[]):
+            api.return_value.collect_incremental_match_rows.return_value = []
+            _refresh_match_rows('test-ouid', 60, 59, existing, include_forfeits=True)
+        api.return_value.collect_match_rows.assert_not_called()
+        self.assertEqual(api.return_value.collect_incremental_match_rows.call_args.kwargs['limit'], 59)
+
     def test_equal_times_have_same_order_across_instances(self):
         first = replace(sample(), match_id='first')
         second = replace(sample(), match_id='second', match_date=first.match_date)

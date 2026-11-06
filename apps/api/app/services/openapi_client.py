@@ -4,6 +4,7 @@ import hashlib
 import os
 import threading
 import time
+from concurrent.futures import wait
 from datetime import datetime, timezone
 from typing import Any
 
@@ -11,6 +12,7 @@ import requests
 
 from app.env import load_local_env
 from app.services.cache import CacheClient
+from app.services.nexon_requests import DETAIL_POOL, REQUEST_PACER, REQUEST_SLOTS
 
 
 BASE_URL = "https://open.api.nexon.com"
@@ -42,8 +44,45 @@ class NexonOpenApiClient:
             raise RuntimeError("Missing NEXON_OPEN_API_KEY")
         self._session = requests.Session()
         self._session.headers.update({"x-nxopen-api-key": api_key})
+        self._session_owner = threading.get_ident()
+        self._worker_local = threading.local()
+        self._worker_sessions: list[requests.Session] = []
+        self._sessions_lock = threading.Lock()
         self._timeout = timeout_sec
         self._retries = retries
+
+    def _request_session(self):
+        if threading.get_ident() == self._session_owner:
+            return self._session
+        if not hasattr(self._worker_local, 'session'):
+            session = requests.Session()
+            session.headers.update(self._session.headers)
+            self._worker_local.session = session
+            with self._sessions_lock:
+                self._worker_sessions.append(session)
+        return self._worker_local.session
+
+    def _fetch_match_details(self, match_ids):
+        if not match_ids:
+            return []
+        self._worker_local = threading.local()
+        futures = []
+        try:
+            payloads = []
+            for offset in range(0, len(match_ids), 4):
+                futures = [DETAIL_POOL.submit(self.fetch_match_detail, key) for key in match_ids[offset:offset + 4]]
+                try:
+                    payloads.extend(future.result() for future in futures)
+                except Exception:
+                    for future in futures:
+                        future.cancel()
+                    raise
+            return payloads
+        finally:
+            wait(futures)
+            for session in getattr(self, '_worker_sessions', []):
+                session.close()
+            self._worker_sessions = []
 
     @classmethod
     def _set_rate_limit_window(cls, wait_seconds: float) -> None:
@@ -70,16 +109,15 @@ class NexonOpenApiClient:
         return max(0.0, remaining)
 
     def _get(self, path: str, params: dict[str, Any]) -> Any:
-        cooldown = self.cooldown_remaining_sec()
-        if cooldown > 0:
-            raise OpenApiRateLimitError(
-                f"Nexon Open API 호출 제한 대기 중입니다. {int(cooldown)}초 후 재시도해주세요.",
-                wait_seconds=cooldown,
-            )
         url = f"{BASE_URL}{path}"
         response: requests.Response | None = None
         for idx in range(self._retries):
-            response = self._session.get(url, params=params, timeout=self._timeout)
+            with REQUEST_SLOTS:
+                REQUEST_PACER.acquire()
+                cooldown = self.cooldown_remaining_sec()
+                if cooldown > 0:
+                    raise OpenApiRateLimitError('Nexon Open API 호출 제한 대기 중입니다.', wait_seconds=cooldown)
+                response = self._request_session().get(url, params=params, timeout=self._timeout)
             if response.status_code == 200:
                 return response.json()
             if response.status_code == 429:
@@ -98,7 +136,8 @@ class NexonOpenApiClient:
                 time.sleep(wait_seconds)
                 continue
             if response.status_code in (500, 502, 503, 504):
-                time.sleep((idx + 1) * 1.5)
+                if idx + 1 < self._retries:
+                    time.sleep((idx + 1) * 1.5)
                 continue
             response.raise_for_status()
         if response is not None:
@@ -192,11 +231,17 @@ class NexonOpenApiClient:
         known_match_ids: set[str] | None = None,
         completed_match_target: int | None = None,
         existing_completed_count: int = 0,
+        total_match_target: int | None = None,
+        existing_match_count: int = 0,
     ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         known_ids = known_match_ids or set()
         completed_count = max(0, existing_completed_count)
         match_ids = self.fetch_match_ids(ouid, match_type, limit=limit)
+        if total_match_target is not None:
+            pending = [key for key in match_ids if key not in known_ids][:max(0, total_match_target - existing_match_count)]
+            return [self._build_match_row(key, ouid, match_type, payload)
+                    for key, payload in zip(pending, self._fetch_match_details(pending))]
         for idx, match_id in enumerate(match_ids):
             if match_id in known_ids:
                 continue
@@ -217,13 +262,11 @@ class NexonOpenApiClient:
         known_match_ids: set[str],
         limit: int = 30,
     ) -> list[dict[str, Any]]:
-        rows: list[dict[str, Any]] = []
         match_ids = self.fetch_match_ids(ouid, match_type, limit=limit)
-        for idx, match_id in enumerate(match_ids):
+        pending = []
+        for match_id in match_ids:
             if match_id in known_match_ids:
                 break
-            payload = self.fetch_match_detail(match_id)
-            rows.append(self._build_match_row(match_id=match_id, ouid=ouid, match_type=match_type, payload=payload))
-            if idx + 1 < len(match_ids):
-                time.sleep(0.08)
-        return rows
+            pending.append(match_id)
+        return [self._build_match_row(key, ouid, match_type, payload)
+                for key, payload in zip(pending, self._fetch_match_details(pending))]

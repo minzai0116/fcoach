@@ -59,9 +59,10 @@ class AnalysisProgressTest(unittest.TestCase):
         request = Request({'type': 'http', 'method': 'POST', 'path': '/analysis/run', 'headers': [], 'client': ('127.0.0.1', 3000)})
         body = {'ouid': 'test-user-123', 'match_type': 0, 'window': 30, 'progress_id': 'e' * 32}
         with patch.object(main, 'cache', cache), patch.object(main, '_enforce_rate_limit'), \
-             patch.object(main, '_trigger_match_sync_async'), \
+             patch.object(main.threading, 'Thread') as background, \
              patch.object(main, 'run_analysis', return_value={'actions': []}) as run:
             self.assertEqual(main.analysis_run(request, AnalysisRunRequest(**body))['actions'], [])
+            background.assert_not_called()
             self.assertEqual(main.analysis_progress(request, body['progress_id'])['status'], 'completed')
             with patch.object(cache, 'acquire_lock', return_value=None):
                 response = main.analysis_run(request, AnalysisRunRequest(**{**body, 'progress_id': 'f' * 32}))

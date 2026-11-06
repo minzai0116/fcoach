@@ -48,9 +48,6 @@ cache = CacheClient()
 _LAST_AUTO_RANKER_SYNC_AT: datetime | None = None
 _LAST_AUTO_RANKER_SYNC_ERROR: str | None = None
 _RANKER_SYNC_LOCK = threading.Lock()
-_MATCH_SYNC_INFLIGHT: set[tuple[str, int]] = set()
-_MATCH_SYNC_LAST_ATTEMPT: dict[tuple[str, int], datetime] = {}
-_MATCH_SYNC_GUARD_LOCK = threading.Lock()
 _RATE_LIMIT_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
 _RATE_LIMIT_LOCK = threading.Lock()
 _USER_SEARCH_LOCKS: dict[str, threading.Lock] = {}
@@ -144,57 +141,6 @@ def _trigger_ranker_sync_async(force: bool = False) -> bool:
             _RANKER_SYNC_LOCK.release()
 
     thread = threading.Thread(target=_worker, name="ranker-sync-worker", daemon=True)
-    thread.start()
-    return True
-
-
-def _match_sync_cooldown_seconds() -> int:
-    raw = os.getenv("HABIT_LAB_MATCH_SYNC_COOLDOWN_SEC", "60").strip()
-    try:
-        return max(30, min(3600, int(raw)))
-    except Exception:
-        return 60
-
-
-def _trigger_match_sync_async(ouid: str, match_type: int, desired_matches: int) -> bool:
-    if not bool(os.getenv("NEXON_OPEN_API_KEY", "").strip()):
-        return False
-    if desired_matches <= 0:
-        return False
-    key = (ouid.strip(), int(match_type))
-    if not key[0]:
-        return False
-    now = datetime.now(timezone.utc)
-    with _MATCH_SYNC_GUARD_LOCK:
-        if key in _MATCH_SYNC_INFLIGHT:
-            return False
-        last_attempt = _MATCH_SYNC_LAST_ATTEMPT.get(key)
-        cooldown = timedelta(seconds=_match_sync_cooldown_seconds())
-        if last_attempt and now - last_attempt < cooldown:
-            return False
-        _MATCH_SYNC_INFLIGHT.add(key)
-        _MATCH_SYNC_LAST_ATTEMPT[key] = now
-
-    def _worker() -> None:
-        try:
-            client = NexonOpenApiClient(timeout_sec=15, retries=2)
-            completed_target = max(1, min(30, int(desired_matches)))
-            safe_limit = min(100, max(12, completed_target * 3))
-            rows = client.collect_match_rows(
-                ouid=key[0],
-                match_type=key[1],
-                limit=safe_limit,
-                completed_match_target=completed_target,
-            )
-            if rows:
-                upsert_matches(ouid=key[0], match_type=key[1], rows=rows)
-        except Exception:
-            pass
-        finally:
-            with _MATCH_SYNC_GUARD_LOCK:
-                _MATCH_SYNC_INFLIGHT.discard(key)
-
-    thread = threading.Thread(target=_worker, name=f"match-sync-{key[1]}", daemon=True)
     thread.start()
     return True
 
@@ -524,7 +470,7 @@ def _analysis_run(request: Request, req: AnalysisRunRequest) -> dict[str, Any]:
         json.dumps(req.model_dump(exclude={'progress_id'}), sort_keys=True, ensure_ascii=True).encode()
     ).hexdigest()
     lock_key = f"lock:analysis_run:{req.ouid}:{req.match_type}:{req.window}"
-    lock_token = cache.acquire_lock(lock_key, ttl_sec=60)
+    lock_token = cache.acquire_lock(lock_key, ttl_sec=150)
     if lock_token is None:
         cached = cache.get_json(cache_key)
         if cached and cached.get("request_fingerprint") == request_fingerprint:
@@ -544,8 +490,6 @@ def _analysis_run(request: Request, req: AnalysisRunRequest) -> dict[str, Any]:
             start_match_id=req.start_match_id,
             end_match_id=req.end_match_id,
         )
-        for mode in ((50, 60) if req.match_type == 0 else (int(req.match_type),)):
-            _trigger_match_sync_async(ouid=req.ouid, match_type=mode, desired_matches=max(req.window or 30, 12))
         result["request_fingerprint"] = request_fingerprint
         cache.set_json(
             cache_key,

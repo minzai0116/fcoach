@@ -45,7 +45,7 @@ from app.services.tactic_recommendation import get_issue_tactic_mapping
 from app.services.position_coaching import build_position_coaching
 from app.services.passing_coaching import extract_pass_breakdown
 from app.services.coaching_data import extract_coaching_data, extract_player_coaching, is_shootout, shot_minute
-from app.services.squad_feed import SquadFeedError, get_public_feed
+from app.services.squad_feed import get_public_feed
 from app.services.feed_coaching import build_feed_coaching
 from app.services.match_selection import select_match_sample
 from app.services.analysis_errors import AnalysisRequestError, MatchSyncWarning
@@ -54,6 +54,7 @@ from app.services.metric_catalog import metric_catalog
 from app.services.match_trends import build_match_trends
 from app.services.recent_analysis import load_recent_modes, mode_history, opponent_comparison
 from app.services.analysis_progress import update_progress
+from app.services.analysis_inputs import load_analysis_inputs
 from app.services.team_history_coaching import VERSION as COACHING_VERSION, build_team_history_coaching
 from app.services.player_names import name_index, player_name, player_name_catalog
 
@@ -1898,14 +1899,15 @@ def _refresh_match_rows(
     match_type: int,
     window_size: int,
     existing_rows: list[MatchStats],
+    include_forfeits: bool = False,
 ) -> tuple[list[MatchStats], int]:
     api = NexonOpenApiClient(timeout_sec=15, retries=2)
     existing_completed_count = len(_completed_match_rows(existing_rows))
-    has_enough_rows = existing_completed_count >= window_size
-    base_candidate_limit = _sync_fetch_limit(window_size)
+    has_enough_rows = (len(existing_rows) if include_forfeits else existing_completed_count) >= window_size
+    base_candidate_limit = min(100, window_size) if include_forfeits else _sync_fetch_limit(window_size)
     candidate_limit = (
         base_candidate_limit
-        if has_enough_rows
+        if has_enough_rows or include_forfeits
         else min(100, max(base_candidate_limit, len(existing_rows) + window_size * 3))
     )
     known_match_ids = set(_latest_known_match_ids(ouid, match_type, limit=candidate_limit)) if existing_rows else set()
@@ -1927,8 +1929,10 @@ def _refresh_match_rows(
                     match_type=match_type,
                     limit=fetch_limit,
                     known_match_ids=known_match_ids,
-                    completed_match_target=window_size,
+                    completed_match_target=None if include_forfeits else window_size,
                     existing_completed_count=existing_completed_count,
+                    total_match_target=window_size if include_forfeits else None,
+                    existing_match_count=len(existing_rows),
                 )
             if match_rows:
                 refreshed_match_rows = upsert_matches(ouid=ouid, match_type=match_type, rows=match_rows)
@@ -1953,6 +1957,7 @@ def _load_rows_for_analysis(
     window_size: int,
     live_sync_enabled: bool,
     manual_refresh_probe: bool = False,
+    include_forfeits: bool = False,
 ) -> tuple[list[MatchStats], int, str | None, bool]:
     db_rows = list_match_stats(ouid, match_type)
     cache_rows = _list_match_stats_from_cache(ouid, match_type)
@@ -1968,7 +1973,7 @@ def _load_rows_for_analysis(
         should_refresh = should_refresh or (datetime.now(timezone.utc) - latest_before_dt >= MATCH_REFRESH_THRESHOLD)
     if rows and latest_before_dt is None:
         should_refresh = True
-    if len(_completed_match_rows(rows)) < window_size:
+    if (len(rows) if include_forfeits else len(_completed_match_rows(rows))) < window_size:
         should_refresh = True
     if manual_refresh_probe and rows and live_sync_enabled and not should_refresh:
         try:
@@ -1993,6 +1998,7 @@ def _load_rows_for_analysis(
                 match_type=match_type,
                 window_size=window_size,
                 existing_rows=rows,
+                include_forfeits=include_forfeits,
             )
         except OpenApiRateLimitError as exc:
             sync_unavailable = True
@@ -2081,16 +2087,17 @@ def run_analysis(
         or manual_refresh_probe
         or _is_truthy(os.getenv("HABIT_LAB_ENABLE_LIVE_MATCH_SYNC", "0"))
     )
-    rows, refreshed_match_rows, refresh_warning, should_refresh = (
-        load_recent_modes(ouid=ouid, loader=_load_rows_for_analysis,
-                          window_size=59, live_sync_enabled=live_sync_enabled, manual_refresh_probe=manual_refresh_probe)
-        if match_type == 0 else _load_rows_for_analysis(
-        ouid=ouid,
-        match_type=match_type,
-        window_size=window_size or 30,
-        live_sync_enabled=live_sync_enabled,
-        manual_refresh_probe=manual_refresh_probe,
-    ))
+    def load_rows():
+        if match_type == 0:
+            return load_recent_modes(ouid=ouid, loader=_load_rows_for_analysis, window_size=59,
+                                     live_sync_enabled=live_sync_enabled, manual_refresh_probe=manual_refresh_probe,
+                                     include_forfeits=True)
+        return _load_rows_for_analysis(ouid=ouid, match_type=match_type, window_size=window_size or 30,
+                                       live_sync_enabled=live_sync_enabled, manual_refresh_probe=manual_refresh_probe)
+    loaded, metadata, (snapshot, feed_error) = load_analysis_inputs(
+        load_rows, {'names': _spid_name_map, 'positions': _position_name_map, 'seasons': _season_meta_map},
+        (lambda: get_public_feed(squad_feed_id, refresh=True)) if squad_feed_id else None)
+    rows, refreshed_match_rows, refresh_warning, should_refresh = loaded
     if not rows:
         unavailable = isinstance(refresh_warning, MatchSyncWarning)
         raise AnalysisRequestError(refresh_warning or '이 경기 모드에서 조회할 수 있는 경기 내역이 없습니다.',
@@ -2113,15 +2120,8 @@ def run_analysis(
         selection['end_match_date'] = selected[0].match_date
         selection['direction'] = 'latest_30'
     window_size = window_size if window_size is not None else len(selected)
-    snapshot, feed_error = None, None
-    if squad_feed_id:
-        update_progress('feed')
-        try:
-            snapshot = get_public_feed(squad_feed_id, refresh=True)
-        except SquadFeedError as error:
-            feed_error = str(error)
     update_progress('metrics')
-    names = {**(name_index(snapshot['players'], 'sp_id') if snapshot else {}), **_spid_name_map()}
+    names = {**(name_index(snapshot['players'], 'sp_id') if snapshot else {}), **metadata['names']}
     metrics = _compute_metrics(selected)
     visuals = _build_visual_summary(selected, names)
     include_forfeits = include_forfeit_wins or include_forfeit_losses
