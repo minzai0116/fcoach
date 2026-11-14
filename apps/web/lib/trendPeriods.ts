@@ -27,6 +27,25 @@ export function trendEndpointIndices(data: MatchTrends) {
   return { first: sameWindow >= 0 ? sameWindow : Math.max(0, observed), last };
 }
 
+export function trendEndpointLabels(data: MatchTrends) {
+  const { first, last } = trendEndpointIndices(data);
+  if (last <= first) return [];
+  const dayFormat = new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", month: "long", day: "numeric" });
+  const format = (date?: string) => {
+    const timestamp = Date.parse(date ?? "");
+    return Number.isFinite(timestamp) ? dayFormat.format(timestamp) : "";
+  };
+  return [first, last].map((index, position) => {
+    const label = position === 0 ? "이전 집계" : "최근 집계";
+    const point = data.points[index];
+    if (!point) return { label, scope: "" };
+    const start = format(point.window_start_date ?? data.points[index - point.window_matches + 1]?.date);
+    const end = format(point.date);
+    const dates = start && end ? `${start === end ? end : `${start}~${end}`} ` : end ? `${end}까지 ` : "";
+    return { label, scope: `${dates}${point.window_matches}경기` };
+  });
+}
+
 export function compareTrendEndpoints(data: MatchTrends, category?: string) {
   const { first, last } = trendEndpointIndices(data);
   if (last <= first) return [];

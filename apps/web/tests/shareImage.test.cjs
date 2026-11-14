@@ -14,7 +14,7 @@ function load(name) {
 const { shareComparisonMetrics } = load('shareComparison');
 const { allowedShareAsset } = load('shareAssetPolicy');
 const { shareSquadLayout } = load('shareSquadLayout');
-const { compareTrendEndpoints, trendEndpointIndices } = load('trendPeriods');
+const { compareTrendEndpoints, trendEndpointIndices, trendEndpointLabels } = load('trendPeriods');
 const metric = (id, unit, before, after, factor = 1) => ({ id, label: id, unit, direction: 'higher', history: [...before, ...after].map(value => ({
   value: null, observed_matches: 1, match: unit === 'rate' ? { success: value, trials: 10, observed: 1, total: 0 } : { success: 0, trials: 0, observed: 1, total: value * factor },
 })) });
@@ -65,6 +65,28 @@ test('기준 경기 전후 변화가 없는 기록도 저장하며 결측을 0�
   unchanged.history.slice(0, 11).forEach(p => p.match = null);
   assert.equal(shareComparisonMetrics(trends([unchanged]), 11).length, 0);
 });
+test('변화 이미지에서 고른 영역의 지표만 최대 6개 담는다', () => {
+  const passing = Array.from({length: 7}, (_, i) => metric(`passing:${i}`, 'rate', [4, 5, 4, 5, 4, 5], [5, 6, 5, 6, 5, 6]));
+  const shots = metric('shooting:goals', 'goals', [1, 1, 1, 1, 1, 1], [3, 3, 3, 3, 3, 3]);
+  const data = {...trends([]), groups: [{id: 'passing', metrics: passing}, {id: 'shooting', metrics: [shots]}]};
+  const selected = shareComparisonMetrics(data, 6, 'passing');
+  assert.equal(selected.length, 6);
+  assert.ok(selected.every(item => item.id.startsWith('passing:')));
+  assert.equal(shareComparisonMetrics(data, 6, 'shooting')[0].after.value, 3);
+  assert.equal(shareComparisonMetrics(data, 6, 'defending').length, 0);
+});
+test('영역을 직접 고르면 변화가 0인 지표도 포함하고 부족한 표본은 제외한다', () => {
+  const unchanged = {
+    id: 'passing:overall', label: '전체 패스 성공률', unit: 'rate', direction: 'higher',
+    history: Array.from({length: 12}, () => ({value: .8, observed_matches: 30, success: 80, trials: 100})),
+  };
+  const points = Array.from({length: 12}, () => ({window_matches: 30}));
+  const data = {points, groups: [{id: 'passing', metrics: [unchanged]}]};
+  assert.equal(shareComparisonMetrics(data, null).length, 0);
+  assert.equal(shareComparisonMetrics(data, null, 'passing')[0].before.value, .8);
+  unchanged.history[0].observed_matches = 4;
+  assert.equal(shareComparisonMetrics(data, null, 'passing').length, 0);
+});
 test('공유 이미지 프록시는 공식 CDN 이미지만 허용하고 외부 주소·자격증명·리다이렉트 입력을 막는다', () => {
   for (const url of ['https://fco.dn.nexoncdn.co.kr/live/externalAssets/common/playersHigh/p123.png', 'https://ssl.nexon.com/s2/game/fc/online/season/PTG.png']) assert.ok(allowedShareAsset(url));
   for (const url of ['http://127.0.0.1/a.png', 'https://fco.dn.nexoncdn.co.kr.evil.test/live/externalAssets/common/a.png', 'https://ssl.nexon.com/private/a.png', 'https://u:p@ssl.nexon.com/s2/game/fc/a.png', 'https://ssl.nexon.com/s2/game/fc/a.svg', 'https://ssl.nexon.com/s2/game/fc/../../private.png']) assert.equal(allowedShareAsset(url), null);
@@ -101,4 +123,24 @@ test('집계 크기가 다를 때는 확보된 초반 시점을 명시하며 한
   assert.equal(trendEndpointIndices(data).last, 5);
   assert.equal(compareTrendEndpoints({points: [{window_matches: 30}], groups: []}).length, 0);
   assert.equal(shareComparisonMetrics({points: [], groups: []}, null).length, 0);
+  assert.equal(trendEndpointLabels({points: []}).length, 0);
+  assert.equal(trendEndpointLabels({points: [{window_matches: 1}]}).length, 0);
+});
+test('이전과 최근 집계는 실제 날짜 범위와 경기 수를 표시한다', () => {
+  const points = [
+    {date: '2026-10-28T15:30:00Z', window_start_date: '2026-10-24T16:00:00Z', window_matches: 5},
+    {date: '2026-11-13T16:00:00Z', window_start_date: '2026-10-28T15:30:00Z', window_matches: 6},
+  ];
+  const labels = trendEndpointLabels({points});
+  assert.deepEqual(Array.from(labels, point => [point.label, point.scope]), [
+    ['이전 집계', '10월 25일~10월 29일 5경기'],
+    ['최근 집계', '10월 29일~11월 14일 6경기'],
+  ]);
+  delete points[0].window_start_date;
+  delete points[1].window_start_date;
+  points[1].window_matches = 2;
+  assert.deepEqual(Array.from(trendEndpointLabels({points}), point => point.scope), [
+    '10월 29일까지 5경기',
+    '10월 29일~11월 14일 2경기',
+  ]);
 });

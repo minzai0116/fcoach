@@ -1,13 +1,15 @@
 import type { MatchTrends } from "../types/comparison";
 import { compareTrendEndpoints, compareTrendPeriods } from "./trendPeriods";
 
-export function shareComparisonMetrics(data: MatchTrends, baseline: number | null, limit = 6) {
-  const periods = baseline === null ? compareTrendEndpoints(data) : compareTrendPeriods(data, baseline);
+export function shareComparisonMetrics(data: MatchTrends, baseline: number | null, category?: string, limit = 6) {
+  const automatic = baseline === null && !category;
+  const periods = baseline === null ? compareTrendEndpoints(data, category) : compareTrendPeriods(data, baseline, category);
   const candidates = periods.flatMap(metric => {
-    if (baseline === null && metric.direction === "neutral") return [];
+    if (automatic && metric.direction === "neutral") return [];
     const { before, after } = metric;
     const delta = Math.abs(after.value! - before.value!);
-    if (baseline === null && (Math.min(before.matches, after.matches) < 5 || delta < (["rate", "percent"].includes(metric.unit) ? .0005 : .05))) return [];
+    if (baseline === null && Math.min(before.matches, after.matches) < 5) return [];
+    if (automatic && delta < (["rate", "percent"].includes(metric.unit) ? .0005 : .05)) return [];
     if (baseline === null && metric.unit === "rate" && metric.id !== "overview:win_rate" && Math.min(before.trials, after.trials) < 20) return [];
     let weight = 0, mean = 0, variance = 0;
     for (const point of metric.history) {
@@ -25,7 +27,7 @@ export function shareComparisonMetrics(data: MatchTrends, baseline: number | nul
     }
     const spread = Math.sqrt(variance / weight);
     const changeSize = spread > 0 && Number.isFinite(spread) ? delta / spread : 0;
-    return baseline !== null || changeSize > 0 ? [{ ...metric, changeSize }] : [];
+    return !automatic || changeSize > 0 ? [{ ...metric, changeSize }] : [];
   }).sort((a, b) => b.changeSize - a.changeSize || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const aliases: Record<string, string> = { "defending:goals_against": "overview:goals_against", "shooting:goals": "overview:goals_for", "shooting:display_goals": "overview:goals_for" };
   const seen = new Set<string>();

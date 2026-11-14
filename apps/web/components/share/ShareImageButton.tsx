@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { createShareImage, shareImageTitle, type ShareImageInput } from "../../lib/shareImage";
+import { createShareImage, ShareComparisonUnavailableError, shareImageTitle, type ShareImageInput } from "../../lib/shareImage";
 import "./share-image.css";
 
 export function ShareImageButton({ input, label = "이미지 저장" }: { input: ShareImageInput; label?: string }) {
@@ -15,9 +15,10 @@ export function ShareImageButton({ input, label = "이미지 저장" }: { input:
 
 function ShareImageDialog({ input, onClose }: { input: ShareImageInput; onClose: () => void }) {
   const [showNickname, setShowNickname] = useState(true);
+  const [category, setCategory] = useState("");
   const [attempt, setAttempt] = useState(0);
   const [prepared, setPrepared] = useState<{ filename: string; url: string } | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<{ message: string; retryable: boolean } | null>(null);
   const [message, setMessage] = useState("");
   const dialog = useRef<HTMLDivElement>(null);
   const close = useRef<HTMLButtonElement>(null);
@@ -39,19 +40,25 @@ function ShareImageDialog({ input, onClose }: { input: ShareImageInput; onClose:
   }, [onClose]);
   useEffect(() => {
     let active = true, url: string | null = null;
-    setPrepared(null); setError(""); setMessage("");
-    createShareImage(input, showNickname).then(blob => {
+    setPrepared(null); setError(null); setMessage("");
+    createShareImage(input, showNickname, category || undefined).then(blob => {
       if (!active) return;
       url = URL.createObjectURL(blob);
-      setPrepared({ filename: `fcoach-${input.kind}.png`, url });
-    }).catch(error => { if (active) setError(error instanceof Error ? error.message : "이미지를 만들지 못했습니다."); });
+      setPrepared({ filename: `fcoach-${input.kind}${category ? `-${category}` : ""}.png`, url });
+    }).catch(error => {
+      if (active) setError({ message: error instanceof Error ? error.message : "이미지를 만들지 못했습니다.", retryable: !(error instanceof ShareComparisonUnavailableError) });
+    });
     return () => { active = false; if (url) URL.revokeObjectURL(url); };
-  }, [input, showNickname, attempt]);
+  }, [input, showNickname, category, attempt]);
   return <div className="share-image-backdrop" onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
     <div className="share-image-dialog" role="dialog" aria-modal="true" aria-labelledby="share-image-title" ref={dialog}>
       <header><div><h2 id="share-image-title">{title}</h2><p>저장 이미지 미리보기</p></div><button type="button" ref={close} className="share-image-close" aria-label="저장 미리보기 닫기" onClick={onClose}>×</button></header>
+      {input.kind === "comparison" && <div className="share-image-categories" role="group" aria-label="이미지에 담을 지표">
+        <button type="button" aria-pressed={!category} onClick={() => setCategory("")}>변화가 큰 지표</button>
+        {input.trends.groups.map(group => <button key={group.id} type="button" aria-pressed={category === group.id} onClick={() => setCategory(group.id)}>{group.label}</button>)}
+      </div>}
       <div className="share-image-preview" aria-busy={!prepared && !error}>
-        {prepared ? <img src={prepared.url} alt={`${title} 저장 이미지`} /> : error ? <div role="alert"><p>{error}</p><button type="button" className="share-image-trigger" onClick={() => setAttempt(v => v + 1)}>다시 시도</button></div> : <p role="status">저장 이미지를 만들고 있습니다…</p>}
+        {prepared ? <img src={prepared.url} alt={`${title} 저장 이미지`} /> : error ? <div role="alert"><p>{error.message}</p>{error.retryable && <button type="button" className="share-image-trigger" onClick={() => setAttempt(v => v + 1)}>다시 시도</button>}</div> : <p role="status">저장 이미지를 만들고 있습니다…</p>}
       </div>
       <footer><label className="share-image-name"><input type="checkbox" checked={showNickname} onChange={event => setShowNickname(event.target.checked)} />감독명 표시</label>
         <div className="share-image-actions">

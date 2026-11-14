@@ -6,7 +6,7 @@ import { shareSquadLayout } from "./shareSquadLayout";
 import { shareComparisonMetrics } from "./shareComparison";
 import { trendChangePresentation } from "./comparisonInsights";
 import { allowedShareAsset } from "./shareAssetPolicy";
-import { trendEndpointIndices } from "./trendPeriods";
+import { trendEndpointLabels } from "./trendPeriods";
 
 type Context = { nickname: string; period: string; matches: number };
 export type ShareImageInput = Context & (
@@ -15,8 +15,9 @@ export type ShareImageInput = Context & (
   | { kind: "squad"; players: PitchPlayer[]; reports: PlayerReportEntry[]; feed?: SquadFeedSnapshot }
 );
 export function shareImageTitle(input: ShareImageInput) {
-  return input.kind === "comparison" ? input.baseline === null ? "초반·최근 기록 비교" : "기준 경기 전후 비교" : input.kind === "score" ? "플레이 성적표" : "스쿼드";
+  return input.kind === "comparison" ? input.baseline === null ? "이전·최근 기록 비교" : "기준 경기 전후 비교" : input.kind === "score" ? "플레이 성적표" : "스쿼드";
 }
+export class ShareComparisonUnavailableError extends Error {}
 const C = { ink: "#16304e", secondary: "#536881", blue: "#245be0", reference: "#8394ad", red: "#d23c47", pale: "#f1f5fc", line: "#dce5f1", green: "#174c42" };
 const escape = (value: unknown) => String(value).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[c]!));
 const text = (x: number, y: number, value: unknown, size = 32, color = C.ink, weight = 500, anchor = "start") => `<text x="${x}" y="${y}" font-size="${size}" font-weight="${weight}" fill="${color}" text-anchor="${anchor}">${escape(value)}</text>`;
@@ -57,19 +58,20 @@ function score(input: Extract<ShareImageInput, { kind: "score" }>) {
   }
   return body;
 }
-function comparison(input: Extract<ShareImageInput, { kind: "comparison" }>, context: CanvasRenderingContext2D) {
-  const selected = shareComparisonMetrics(input.trends, input.baseline);
-  if (!selected.length) throw new Error(input.baseline === null ? "초반·최근 시점에 저장할 비교 지표가 없습니다." : "기준 경기 이전과 이후에 유효한 기록이 있는 지표가 없습니다.");
-  const { first, last } = trendEndpointIndices(input.trends), { baseline } = input;
-  const dates = baseline === null ? `${date(input.trends.points[first].date)} → ${date(input.trends.points[last].date)}` : date(input.trends.points[baseline].date);
-  let body = box(72, 280, 936, 102, C.ink) + text(108, 321, baseline === null ? "초반 → 최근 시점" : "기준 경기", 28, "#cbd7e8") + text(108, 360, dates, fit(context, dates, 864, 36), "#fff", 700);
-  const beforeLabel = baseline === null ? `초반 ${input.trends.points[first].window_matches}경기 집계` : `이전 ${baseline}경기`;
-  const afterLabel = baseline === null ? `최근 ${input.trends.points[last].window_matches}경기 집계` : `이후 ${input.trends.points.length - baseline}경기`;
-  body += text(72, 439, beforeLabel, 36, C.secondary, 600) + text(1008, 439, afterLabel, 36, C.ink, 700, "end");
+function comparison(input: Extract<ShareImageInput, { kind: "comparison" }>, context: CanvasRenderingContext2D, category?: string) {
+  const selected = shareComparisonMetrics(input.trends, input.baseline, category);
+  if (!selected.length) throw new ShareComparisonUnavailableError(category ? "이 영역에 저장할 비교 지표가 없습니다. 다른 영역을 선택해주세요." : input.baseline === null ? "이전과 최근에 비교할 수 있는 기록이 없습니다. 위에서 다른 영역을 선택해보세요." : "기준 경기 이전과 이후에 유효한 기록이 있는 지표가 없습니다. 기준 경기를 바꿔보세요.");
+  const { baseline } = input;
+  const [before, after] = baseline === null ? trendEndpointLabels(input.trends) : [
+    { label: "기준 경기 이전", scope: `${baseline}경기` },
+    { label: "기준 경기부터", scope: `${input.trends.points.length - baseline}경기` },
+  ];
+  let body = text(72, 301, before.label, 35, C.secondary, 700) + text(1008, 301, after.label, 35, C.ink, 700, "end");
+  body += text(72, 345, before.scope, fit(context, before.scope, 456, 29), C.secondary) + text(1008, 345, after.scope, fit(context, after.scope, 456, 29), C.secondary, 500, "end");
   const columns = selected.length <= 2 ? 1 : 2, rows = Math.ceil(selected.length / columns), width = columns === 1 ? 936 : 456;
   const height = ((rows === 3 ? 756 : 708) - (rows - 1) * 24) / rows;
   selected.forEach((metric, i) => {
-    const x = 72 + i % columns * 480, y = 476 + Math.floor(i / columns) * (height + 24), roomy = height > 300;
+    const x = 72 + i % columns * 480, y = 382 + Math.floor(i / columns) * (height + 24), roomy = height > 300;
     const change = trendChangePresentation(metric.after.value, metric.before.value, metric.unit, metric.direction);
     const fill = change.direction === "improved" ? "#fff2f2" : change.direction === "declined" ? "#eff4ff" : "#f3f4f6";
     const delta = Number(((metric.after.value! - metric.before.value!) * scale(metric.unit)).toFixed(1));
@@ -136,14 +138,22 @@ async function squad(input: Extract<ShareImageInput, { kind: "squad" }>, context
   });
   return body;
 }
-export async function createShareImage(input: ShareImageInput, showNickname: boolean): Promise<Blob> {
+export async function createShareImage(input: ShareImageInput, showNickname: boolean, category?: string): Promise<Blob> {
   await document.fonts.ready;
   const canvas = document.createElement("canvas"); canvas.width = 1080;
-  canvas.height = input.kind === "squad" ? Math.max(1620, 1395 + (input.feed?.team_colors?.length ?? 0) * 75) : 1350;
+  canvas.height = input.kind === "squad" ? Math.max(1620, 1395 + (input.feed?.team_colors?.length ?? 0) * 75) : input.kind === "comparison" ? 1256 : 1350;
   const context = canvas.getContext("2d");
   if (!context) throw new Error("이 브라우저에서는 이미지 저장을 지원하지 않습니다.");
-  const body = input.kind === "score" ? score(input) : input.kind === "comparison" ? comparison(input, context) : await squad(input, context);
-  const subtitle = input.kind === "squad" ? input.feed ? `공개 피드 저장 구성 · ${input.feed.formation}` : "최근 경기 등록 선수" : `${input.period} · 최근 ${input.matches}경기${input.kind === "score" ? ` · 랭커 ${Math.max(...input.scores.areas.map(a => a.ranker_count), 0)}명 비교` : ""}`;
+  const body = input.kind === "score" ? score(input) : input.kind === "comparison" ? comparison(input, context, category) : await squad(input, context);
+  let subtitle: string;
+  if (input.kind === "comparison") {
+    const label = input.trends.groups.find(group => group.id === category)?.label ?? "변화가 큰 지표";
+    subtitle = input.baseline === null ? label : `${label} · 기준 경기 ${date(input.trends.points[input.baseline].date)}`;
+  } else if (input.kind === "score") {
+    subtitle = `${input.period} · 최근 ${input.matches}경기 · 랭커 ${Math.max(...input.scores.areas.map(a => a.ranker_count), 0)}명 비교`;
+  } else {
+    subtitle = input.feed ? `공개 피드 저장 구성 · ${input.feed.formation}` : "최근 경기 등록 선수";
+  }
   const url = URL.createObjectURL(new Blob([frame(input, shareImageTitle(input), subtitle, body, canvas.height, showNickname)], { type: "image/svg+xml;charset=utf-8" }));
   try {
     const img = new Image(); img.src = url; await img.decode(); context.drawImage(img, 0, 0);

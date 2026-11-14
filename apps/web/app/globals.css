@@ -3173,6 +3173,8 @@ code {
 .trend-period-values > div { display: flex; flex-direction: column; gap: 5px; }
 .trend-period-values span, .trend-period-values small { color: #425b76; font-size: 12px; }
 .trend-period-values strong { font-size: 22px; }
+.trend-period-scopes > div { padding: 10px 12px; border-radius: 8px; background: #eef3fb; }
+.trend-period-scopes b { font-size: 13px; }
 @media (max-width: 640px) { .trend-baseline-control { flex-direction: column; align-items: stretch; } .trend-period-grid { grid-template-columns: 1fr; } }
 .trend-change-card .trend-window-scope { color: #425b76; }
 .trend-change-card svg { width: 100%; height: 38px; }

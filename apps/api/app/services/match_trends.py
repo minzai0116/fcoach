@@ -31,7 +31,8 @@ def build_match_trends(rows, points=30, window=30):
                 sums[key] = [a - b for a, b in zip(sums[key], values)]
         if index < max(0, len(ordered) - points):
             continue
-        point_meta.append({'date': row.match_date, 'match_type': row.match_type, 'match_end_type': row.match_end_type,
+        point_meta.append({'date': row.match_date, 'window_start_date': ordered[index - len(queue) + 1].match_date,
+                           'match_type': row.match_type, 'match_end_type': row.match_end_type,
                            'result': row.result, 'window_matches': len(queue)})
         for key, template in templates.items():
             success, trials, total, observed = sums[key]
