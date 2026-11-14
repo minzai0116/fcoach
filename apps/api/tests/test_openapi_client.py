@@ -29,6 +29,50 @@ class StubOpenApiClient(NexonOpenApiClient):
 
 
 class OpenApiClientTest(unittest.TestCase):
+    @patch.object(NexonOpenApiClient, "_rate_limited_until", 0.0)
+    @patch.object(NexonOpenApiClient, "_shared_cooldown_refresh_at", 0.0)
+    @patch("app.services.openapi_client.time")
+    @patch("app.services.openapi_client._COOLDOWN_CACHE")
+    def test_shared_cooldown_refresh_detects_remote_limit_and_reuses_empty_result(self, cache, clock):
+        clock.time.return_value = 100.0
+        clock.monotonic.return_value = 10.0
+        cache.get_json.side_effect = [None, {"limited_until": 103.0}, None]
+
+        self.assertEqual(NexonOpenApiClient.cooldown_remaining_sec(), 0)
+        self.assertEqual(NexonOpenApiClient.cooldown_remaining_sec(), 0)
+        self.assertEqual(cache.get_json.call_count, 1)
+
+        clock.time.return_value = 100.5
+        clock.monotonic.return_value = 10.5
+        self.assertEqual(NexonOpenApiClient.cooldown_remaining_sec(), 2.5)
+        clock.time.return_value = 101.0
+        clock.monotonic.return_value = 11.0
+        self.assertEqual(NexonOpenApiClient.cooldown_remaining_sec(), 2.0)
+        self.assertEqual(cache.get_json.call_count, 2)
+
+        clock.time.return_value = 103.0
+        clock.monotonic.return_value = 13.0
+        self.assertEqual(NexonOpenApiClient.cooldown_remaining_sec(), 0)
+        self.assertEqual(cache.get_json.call_count, 3)
+
+    @patch.object(NexonOpenApiClient, "_rate_limited_until", 0.0)
+    @patch.object(NexonOpenApiClient, "_shared_cooldown_refresh_at", 0.0)
+    @patch("app.services.openapi_client.time")
+    @patch("app.services.openapi_client._COOLDOWN_CACHE")
+    def test_local_rate_limit_takes_effect_before_shared_refresh(self, cache, clock):
+        clock.time.return_value = 100.0
+        clock.monotonic.return_value = 10.0
+        cache.get_json.return_value = None
+        self.assertEqual(NexonOpenApiClient.cooldown_remaining_sec(), 0)
+
+        NexonOpenApiClient._set_rate_limit_window(2.0)
+
+        self.assertEqual(NexonOpenApiClient.cooldown_remaining_sec(), 2.0)
+        self.assertEqual(cache.get_json.call_count, 1)
+        cache.set_json.assert_called_once_with(
+            "nexon_open_api:cooldown_until", {"limited_until": 102.0}, ttl_sec=7,
+        )
+
     @patch("app.services.openapi_client.time.sleep", return_value=None)
     def test_total_target_counts_forfeits_and_reuses_known_matches(self, _sleep):
         ids = ["known", "forfeit-win", "forfeit-loss", "unused"]

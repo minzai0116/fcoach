@@ -4,6 +4,7 @@ import math
 from typing import Any, Iterator
 
 from app.services.analysis_models import MatchStats
+from app.services.player_names import player_name
 
 
 PLAYER_PAIRS = {
@@ -74,6 +75,18 @@ def is_shootout(raw_value: Any) -> bool:
     return encoded is not None and 4 * 2 ** 24 <= encoded < 5 * 2 ** 24
 
 
+def _coordinate(event: dict, key: str) -> float | None:
+    value = number(event, key)
+    return value if value is not None and value <= 1 else None
+
+
+def shot_player_labels(shot: dict, names: dict[int, str]) -> dict:
+    labels = {'player_name': player_name(names, int(shot.get('sp_id') or 0), None)}
+    if assist := shot.get('assist'):
+        labels['assist'] = {**assist, 'player_name': player_name(names, int(assist['sp_id']), None)}
+    return labels
+
+
 def _shots(data: Any) -> list[dict]:
     result = []
     for shot in data if isinstance(data, list) else []:
@@ -85,9 +98,16 @@ def _shots(data: Any) -> list[dict]:
         if event['type'] is not None and not event['type'].is_integer():
             event['type'] = None
         for coordinate in ('x', 'y'):
-            value = number(shot, coordinate)
-            event[coordinate] = value if value is not None and value <= 1 else None
+            event[coordinate] = _coordinate(shot, coordinate)
         event['minute'] = shot_minute(shot.get('goalTime'))
+        if shot.get('hitPost') is True:
+            event['hit_post'] = True
+        if shot['result'] == 3 and shot.get('assist') is True:
+            assist_id = number(shot, 'assistSpId', 'assistSpI')
+            x, y = _coordinate(shot, 'assistX'), _coordinate(shot, 'assistY')
+            if (assist_id and assist_id.is_integer() and assist_id != event['sp_id']
+                    and x is not None and y is not None and (x, y) != (0, 0)):
+                event['assist'] = {'sp_id': int(assist_id), 'x': x, 'y': y}
         result.append(event)
     return result
 

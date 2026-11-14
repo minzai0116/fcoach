@@ -6,6 +6,7 @@ import threading
 import time
 from concurrent.futures import wait
 from datetime import datetime, timezone
+from math import isfinite
 from typing import Any
 
 import requests
@@ -18,6 +19,7 @@ from app.services.nexon_requests import DETAIL_POOL, REQUEST_PACER, REQUEST_SLOT
 BASE_URL = "https://open.api.nexon.com"
 _COOLDOWN_CACHE = CacheClient()
 _COOLDOWN_CACHE_KEY = "nexon_open_api:cooldown_until"
+_COOLDOWN_REFRESH_INTERVAL_SEC = 0.5
 
 
 class OpenApiRateLimitError(RuntimeError):
@@ -35,6 +37,7 @@ def _utc_now() -> str:
 
 class NexonOpenApiClient:
     _rate_limited_until: float = 0.0
+    _shared_cooldown_refresh_at: float = 0.0
     _state_lock = threading.Lock()
 
     def __init__(self, timeout_sec: int = 20, retries: int = 3) -> None:
@@ -100,13 +103,21 @@ class NexonOpenApiClient:
     def cooldown_remaining_sec(cls) -> float:
         with cls._state_lock:
             remaining = cls._rate_limited_until - time.time()
-        cached = _COOLDOWN_CACHE.get_json(_COOLDOWN_CACHE_KEY)
-        if isinstance(cached, dict):
+            if remaining > 0 or time.monotonic() < cls._shared_cooldown_refresh_at:
+                return max(0.0, remaining)
+
+            # Parallel requests in this process share even an empty Redis result.
+            cached = _COOLDOWN_CACHE.get_json(_COOLDOWN_CACHE_KEY)
+            cls._shared_cooldown_refresh_at = time.monotonic() + _COOLDOWN_REFRESH_INTERVAL_SEC
+            if not isinstance(cached, dict):
+                return 0.0
             try:
-                remaining = max(remaining, float(cached.get("limited_until", 0)) - time.time())
-            except Exception:
-                pass
-        return max(0.0, remaining)
+                limited_until = float(cached.get("limited_until", 0))
+            except (TypeError, ValueError, OverflowError):
+                return 0.0
+            if isfinite(limited_until):
+                cls._rate_limited_until = max(cls._rate_limited_until, limited_until)
+            return max(0.0, cls._rate_limited_until - time.time())
 
     def _get(self, path: str, params: dict[str, Any]) -> Any:
         url = f"{BASE_URL}{path}"

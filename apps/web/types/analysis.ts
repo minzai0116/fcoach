@@ -84,6 +84,8 @@ export type VisualSummary = {
 
 export type ShotPoint = {
   x: number; y: number; is_goal?: boolean; result?: number;
+  assist?: { x: number; y: number; sp_id: number; player_name?: string | null };
+  hit_post?: boolean;
   sp_id?: number | null; sp_grade?: number | null; player_name?: string | null;
   minute?: number | null; date?: string; match_id?: string; type?: number | null;
 };

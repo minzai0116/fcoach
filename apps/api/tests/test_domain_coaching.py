@@ -83,11 +83,14 @@ class DomainCoachingTest(unittest.TestCase):
         self.assertEqual(result['metrics'][0]['observed_matches'], 0)
 
     def test_shot_identity_survives_extraction_and_both_maps(self):
-        shots = [dict(type=14, result=3, spId=12345, spGrade=8, x=.9, y=.4, goalTime=900),
-                 dict(type=2, result=1, spId=99999, spGrade=10, x=.8, y=.6, goalTime=1000)]
+        shots = [dict(type=14, result=3, spId=12345, spGrade=8, x=.9, y=.4, goalTime=900,
+                      assist=True, assistSpId=99999, assistX=.7, assistY=.2),
+                 dict(type=2, result=1, spId=99999, spGrade=10, x=.8, y=.6, goalTime=1000,
+                      assist=True, assistSpId=12345, assistX=.7, assistY=.2, hitPost=True),
+                 dict(type=1, result=3, spId=12345, x=.9, y=.4, assist=True, assistSpId=99999, assistX=0, assistY=0)]
         payload = {'matchInfo': [{'ouid': 'user', 'shootDetail': shots}, {'ouid': 'other'}]}
         extracted = _extract_user_match(payload, 'user')
-        self.assertEqual([(s['sp_id'], s['sp_grade']) for s in extracted.shots_for_points], [(12345, 8), (99999, 10)])
+        self.assertEqual([(s['sp_id'], s['sp_grade']) for s in extracted.shots_for_points], [(12345, 8), (99999, 10), (12345, None)])
         with patch('app.services.analysis._spid_name_map', return_value={12345: '선수 A'}), \
              patch('app.services.analysis._player_report_summary', return_value={'players': []}):
             visual = _build_visual_summary([extracted])['shot_map']
@@ -97,6 +100,11 @@ class DomainCoachingTest(unittest.TestCase):
         self.assertEqual(detailed[0]['player_name'], '선수 A')
         self.assertEqual(detailed[0]['type'], 14)
         self.assertIsNone(detailed[1]['player_name'])
+        for points in (visual, detailed):
+            self.assertEqual(points[0]['assist'], {'x': .7, 'y': .2, 'sp_id': 99999, 'player_name': None})
+            self.assertTrue(points[1]['hit_post'])
+            self.assertNotIn('assist', points[1])
+            self.assertNotIn('assist', points[2])
 
     def test_seconds_half_encoding_extra_time_and_shootouts(self):
         self.assertEqual(shot_minute(786), 13.1)

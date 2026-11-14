@@ -664,13 +664,6 @@ code {
   overflow-x: auto;
 }
 
-.impact-explain-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
 .player-spotlight-grid {
   align-items: stretch;
 }
@@ -793,125 +786,6 @@ code {
   height: 100%;
   border-radius: inherit;
   background: linear-gradient(90deg, #14b8a6 0%, #2563eb 100%);
-}
-
-.impact-card {
-  border: 1px solid #d8e2f1;
-  border-radius: 12px;
-  background: #f9fbff;
-  padding: 12px;
-  display: grid;
-  gap: 10px;
-}
-
-.impact-card-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.impact-card-title {
-  display: grid;
-  gap: 2px;
-}
-
-.impact-card-title strong {
-  color: #1f3d66;
-  font-size: 15px;
-}
-
-.impact-card-title span {
-  color: #5c7191;
-  font-size: 13px;
-}
-
-.impact-card-meta {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 6px;
-}
-
-.impact-chip {
-  border-radius: 999px;
-  border: 1px solid #cad8ef;
-  background: #eef4ff;
-  color: #2c4977;
-  padding: 2px 8px;
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.impact-chip.score {
-  background: #e8f9ed;
-  border-color: #b8e2c1;
-  color: #23623b;
-}
-
-.impact-chip.high {
-  background: #e8f9ed;
-  border-color: #b8e2c1;
-  color: #23623b;
-}
-
-.impact-chip.mid {
-  background: #fff6e6;
-  border-color: #f0d5a0;
-  color: #8a5a05;
-}
-
-.impact-chip.low {
-  background: #ffecec;
-  border-color: #f2b3b3;
-  color: #8a2222;
-}
-
-.impact-component-list {
-  display: grid;
-  gap: 8px;
-}
-
-.impact-component-row {
-  display: grid;
-  gap: 4px;
-}
-
-.impact-component-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 13px;
-}
-
-.impact-component-top strong {
-  color: #294971;
-}
-
-.impact-component-top span {
-  color: #1f3d66;
-  font-weight: 600;
-}
-
-.impact-component-sub {
-  color: #667b98;
-  font-size: 12px;
-}
-
-.impact-component-bar {
-  width: 100%;
-  height: 6px;
-  border-radius: 999px;
-  background: #dbe6f8;
-  overflow: hidden;
-}
-
-.impact-component-fill {
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, #38bdf8 0%, #2563eb 100%);
 }
 
 .player-mobile-list {
@@ -2189,18 +2063,6 @@ code {
     display: none;
   }
 
-  .impact-explain-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .impact-card-head {
-    flex-direction: column;
-  }
-
-  .impact-card-meta {
-    justify-content: flex-start;
-  }
-
   .chemistry-player-row {
     grid-template-columns: 1fr;
   }
@@ -2746,7 +2608,15 @@ code {
 .comparison-explainer { padding: 12px; border-radius: 10px; background: #eef5ff; color: #27496e; font-size: .82rem; line-height: 1.7; }
 .chart-axis-label { fill: #365778; font-size: 11px; font-variant-numeric: tabular-nums; }
 .shot-map-canvas { position: relative; }
-.interactive-shot-dot { cursor: pointer; outline: none; }
+.shot-field-player { --shot-accent: #a8d9ff; --shot-tint: #294763; box-sizing: border-box; height: 22px; margin: 1px; display: flex; align-items: center; gap: 4px; padding: 2px 4px 2px 3px; border: .7px solid #ffffffb8; border-radius: 5px; background: #142a31; color: #fff; box-shadow: 0 1px 1px #0f282c40; }
+.shot-field-player.goal { --shot-accent: #a6efcc; --shot-tint: #214a3e; }
+.shot-field-player.assist { --shot-accent: #dfcaff; --shot-tint: #453565; }
+.shot-field-icon { display: grid; place-items: center; width: 13px; height: 13px; flex: 0 0 13px; border-radius: 4px; background: var(--shot-tint); color: var(--shot-accent); font-size: 11px; font-weight: 800; line-height: 1; }
+.shot-field-player:not(.assist) .shot-field-icon::before { content: ""; width: 6px; height: 6px; border: 1px solid currentColor; border-radius: 50%; background: radial-gradient(circle, currentColor 0 24%, transparent 30%); }
+.shot-field-identity { min-width: 0; white-space: nowrap; }
+.shot-field-identity > span { display: block; color: var(--shot-accent); font-size: 6px; font-weight: 750; line-height: 7px; }
+.shot-field-identity > strong { display: block; overflow: hidden; text-overflow: ellipsis; font-size: 9px; line-height: 10px; }
+.interactive-shot-zone { cursor: pointer; outline: none; }
 .shot-event-tooltip { position: absolute; z-index: 5; transform: translate(-50%, calc(-100% - 12px)); width: max-content; max-width: 210px; pointer-events: none; background: #142b49; color: #fff; padding: 9px 12px; border-radius: 9px; box-shadow: 0 5px 18px #142b4933; }
 .shot-event-tooltip strong, .shot-event-tooltip span, .shot-event-tooltip small { display: block; }
 .shot-event-tooltip strong { font-size: 13px; }
@@ -3534,6 +3404,23 @@ code {
 .shot-map-filters { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
 .shot-map-filters .shot-type-filter { display:block; margin:8px 0; }
 .shot-map-filters select { display:block; width:100%; margin-top:4px; }
+.shot-zone-summary { margin-top: 14px; border: 1px solid #dce6f2; border-radius: 12px; background: #fff; overflow: hidden; }
+.shot-zone-summary > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px; }
+.shot-zone-summary h6 { margin: 0; font-size: .9rem; }
+.shot-zone-summary small { color: #52677f; font-size: .72rem; }
+.shot-zone-summary table { width: 100%; border-collapse: collapse; font-size: .78rem; font-variant-numeric: tabular-nums; }
+.shot-zone-summary :is(th, td) { padding: 7px 5px; text-align: right; border-top: 1px solid #e5edf6; }
+.shot-zone-summary th:first-child { padding-left: 10px; text-align: left; }
+.shot-zone-summary :is(th, td):last-child { padding-right: 10px; }
+.shot-zone-summary thead { background: #f3f7fc; color: #405b76; }
+.shot-zone-summary td small { display: block; }
+.shot-zone-summary .selected-zone { background: #eee8fa; }
+.interactive-shot-zone:hover > path, .interactive-shot-zone:focus-visible > path { fill: #693cb1; }
+.interactive-shot-zone:focus-visible > path { stroke: #693cb1; stroke-width: 1.5; }
+.shot-group-hint { margin: 6px 0 0; color: #52677f; font-size: .78rem; }
+.shot-group-nav { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.shot-group-nav span { margin: 0; font-variant-numeric: tabular-nums; }
+.shot-group-nav button:disabled { opacity: .4; cursor: default; }
 .recent-match-head strong.result-win { color:#2563eb; }
 .recent-match-head strong.result-loss { color:#c73148; }
 .recent-match-head strong.result-draw { color:#526173; }

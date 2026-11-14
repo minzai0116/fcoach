@@ -55,6 +55,7 @@ import { SquadFeedSelector } from "./coaching/SquadFeedSelector";
 import { FeedConnectionSummary } from "./coaching/FeedCoachingPanel";
 import type { SquadFeedSnapshot } from "../types/squadFeed";
 import { InteractiveShotMap } from "./coaching/InteractiveShotMap";
+import { summarizeAssistOrigins } from "../lib/shotZones";
 import { DomainScorePanel } from "./coaching/DomainScorePanel";
 import { PrescriptionPanel } from "./coaching/PrescriptionPanel";
 import { MatchReviewPanel } from "./coaching/MatchReviewPanel";
@@ -65,11 +66,8 @@ import { RankerComparisonPanel } from "./coaching/RankerComparisonPanel";
 import { sharePeriod } from "../lib/shareImage";
 import {
   enhanceLevelClass,
-  formatImpactRaw,
-  IMPACT_COMPONENT_LABELS,
   normalizedGrade,
   normalizePlayerEntry,
-  roleGroupLabel,
   sortArrow,
   tablePositionGroup,
   tablePositionOrder,
@@ -652,6 +650,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
       }))
       .filter((item) => Number.isFinite(item.x) && Number.isFinite(item.y));
   }, [analysis?.visuals]);
+  const assistOrigins = useMemo(() => summarizeAssistOrigins(shotMap), [shotMap]);
   const goalTimingFor = useMemo(() => (Array.isArray(analysis?.visuals?.goal_timing_for) ? analysis?.visuals?.goal_timing_for : []), [analysis?.visuals]);
   const goalTimingAgainst = useMemo(
     () => (Array.isArray(analysis?.visuals?.goal_timing_against) ? analysis?.visuals?.goal_timing_against : []),
@@ -688,13 +687,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
       .map(normalizePlayerEntry)
       .filter((item) => item.sp_id > 0 && item.appearances > 0);
   }, [playerReport?.players]);
-  const impactExplainPlayers = useMemo(
-    () =>
-      [...playerRows]
-        .sort((left, right) => right.impact_score - left.impact_score)
-        .slice(0, Math.min(4, playerRows.length)),
-    [playerRows],
-  );
   const playerSpotlights = useMemo(() => buildPlayerSpotlights(playerRows), [playerRows]);
   const chemistryPairs = useMemo(() => {
     const raw = playerReport?.chemistry_pairs;
@@ -733,7 +725,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
       }),
     [playerRows, playerSortDirection, playerSortMetric],
   );
-  const shotZone = analysis?.visuals?.shot_zone ?? {};
 
   const currentContextLabel = useMemo(
     () => `${MATCH_LABELS[analysisMatchType]} · ${analysis ? `${analysisSampleCount}경기` : "최근 30경기"}${analysis?.sample_selection?.start_match_date ? ` · ${formatDate(analysis.sample_selection.start_match_date)} ~ ${formatDate(analysis.sample_selection.end_match_date || analysis.latest_match_date || undefined)}` : ""}${analysis?.sample_selection ? ` · 정상 ${analysis.sample_selection.normal_count} / 몰수승 ${analysis.sample_selection.forfeit_win_count} / 몰수패 ${analysis.sample_selection.forfeit_loss_count}` : ""}`,
@@ -1034,15 +1025,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
               </div>
               <div className="pitch-insights">
                 <div className="zone-card">
-                  <p className="action-title">슈팅 구역 비중</p>
-                  <ul className="list compact">
-                    <li>좌측: {formatPercent(Number(shotZone.left_ratio ?? 0))}</li>
-                    <li>중앙: {formatPercent(Number(shotZone.center_ratio ?? 0))}</li>
-                    <li>우측: {formatPercent(Number(shotZone.right_ratio ?? 0))}</li>
-                    <li>박스 안: {formatPercent(Number(shotZone.in_box_ratio ?? 0))}</li>
-                  </ul>
-                </div>
-                <div className="zone-card">
                   <p className="action-title">시간대별 득점/실점</p>
                   <div className="timing-grid">
                     {(goalTimingFor as TimingBucket[]).map((bucket, index) => {
@@ -1074,6 +1056,15 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                       ))}
                     </ul>
                   )}
+                </div>
+                <div className="zone-card">
+                  <p className="action-title">도움 패스 출발 구역 분포</p>
+                  <p className="muted compact">좌표가 기록된 도움 기준</p>
+                  {assistOrigins.length ? <ul className="list compact">
+                    {assistOrigins.map(({ label, count, ratio }) => <li key={label}>
+                      {label}: {count}회 ({formatPercent(ratio)})
+                    </li>)}
+                  </ul> : <p className="muted compact">확인된 도움 좌표가 없습니다.</p>}
                 </div>
               </div>
             </div>
@@ -1173,47 +1164,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
 
               <article className="panel">
                 <h4 className="section-title">선수 상세 성과표</h4>
-                <div className="impact-explain-grid">
-                  {impactExplainPlayers.map((player) => {
-                    const topComponents = (player.impact_components ?? []).slice(0, 3);
-                    return (
-                      <article key={`${player.sp_id}-${player.sp_grade}-impact`} className="impact-card">
-                        <div className="impact-card-head">
-                          <div className="impact-card-title">
-                            <strong>{player.player_name}</strong>
-                            <span>{player.position_name}</span>
-                          </div>
-                          <div className="impact-card-meta">
-                            <span className="impact-chip">{roleGroupLabel(String(player.role_group ?? "MID"))}</span>
-                            <span className="impact-chip score">영향 {formatFixed(player.impact_score, 2)}</span>
-                          </div>
-                        </div>
-                        {topComponents.length > 0 && (
-                          <div className="impact-component-list">
-                            {topComponents.map((component) => {
-                              const metricLabel = IMPACT_COMPONENT_LABELS[component.metric] ?? component.metric;
-                              const normalizedPercent = Math.round(Math.max(0, Math.min(1, component.normalized)) * 100);
-                              return (
-                                <div key={`${player.sp_id}-${component.metric}`} className="impact-component-row">
-                                  <div className="impact-component-top">
-                                    <strong>{metricLabel}</strong>
-                                    <span>{formatImpactRaw(component.metric, component.raw)}</span>
-                                  </div>
-                                  <div className="impact-component-sub">
-                                    정규화 {formatPercent(component.normalized)} · 가중치 {formatPercent(component.weight)}
-                                  </div>
-                                  <div className="impact-component-bar">
-                                    <div className="impact-component-fill" style={{ width: `${normalizedPercent}%` }} />
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </article>
-                    );
-                  })}
-                </div>
                 <div className="player-mobile-list">
                   {playerRowsForTable.map((player) => (
                     <article key={`${player.sp_id}-${player.sp_position}`} className="player-mobile-card">

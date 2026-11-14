@@ -7,8 +7,8 @@ export function shareComparisonMetrics(data: MatchTrends, baseline: number | nul
     if (baseline === null && metric.direction === "neutral") return [];
     const { before, after } = metric;
     const delta = Math.abs(after.value! - before.value!);
-    if (Math.min(before.matches, after.matches) < 5 || delta < (["rate", "percent"].includes(metric.unit) ? .0005 : .05)) return [];
-    if (metric.unit === "rate" && metric.id !== "overview:win_rate" && Math.min(before.trials, after.trials) < 20) return [];
+    if (baseline === null && (Math.min(before.matches, after.matches) < 5 || delta < (["rate", "percent"].includes(metric.unit) ? .0005 : .05))) return [];
+    if (baseline === null && metric.unit === "rate" && metric.id !== "overview:win_rate" && Math.min(before.trials, after.trials) < 20) return [];
     let weight = 0, mean = 0, variance = 0;
     for (const point of metric.history) {
       const record = point.match;
@@ -24,7 +24,8 @@ export function shareComparisonMetrics(data: MatchTrends, baseline: number | nul
       weight = nextWeight;
     }
     const spread = Math.sqrt(variance / weight);
-    return spread > 0 && Number.isFinite(spread) ? [{ ...metric, changeSize: delta / spread }] : [];
+    const changeSize = spread > 0 && Number.isFinite(spread) ? delta / spread : 0;
+    return baseline !== null || changeSize > 0 ? [{ ...metric, changeSize }] : [];
   }).sort((a, b) => b.changeSize - a.changeSize || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const aliases: Record<string, string> = { "defending:goals_against": "overview:goals_against", "shooting:goals": "overview:goals_for", "shooting:display_goals": "overview:goals_for" };
   const seen = new Set<string>();

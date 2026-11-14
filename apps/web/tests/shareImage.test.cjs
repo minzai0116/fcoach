@@ -32,10 +32,38 @@ test('전후 기록·시도가 없으면 순위를 채우지 않고 중복 실�
   const b = { ...a, id: 'defending:goals_against' };
   assert.equal(shareComparisonMetrics(trends([a, b]), 6).length, 1);
   assert.equal(shareComparisonMetrics(trends([a]), 0).length, 0);
-  assert.equal(shareComparisonMetrics(trends([a]), 11).length, 0);
+  assert.equal(shareComparisonMetrics(trends([a]), 12).length, 0);
   const rare = metric('rare', 'rate', [0, 1, 0, 1, 0, 1], [1, 1, 1, 1, 1, 1]);
   rare.history.forEach(p => p.match.trials = 1);
+  rare.history.slice(6).forEach(p => p.match.trials = 0);
   assert.equal(shareComparisonMetrics(trends([rare]), 6).length, 0);
+});
+test('기준 경기 양쪽에 기록이 있으면 한 경기와 적은 시도도 화면과 같은 실제 합계로 저장한다', () => {
+  const a = metric('overview:goals_for', 'goals', [1, 2, 1, 2, 1, 2], [5, 6, 5, 6, 5, 6]);
+  const rare = metric('shooting:conversion', 'rate', [0, 1, 0, 1, 0, 1], [1, 1, 1, 1, 1, 1]);
+  rare.history.forEach(p => p.match.trials = 1);
+  for (const baseline of [1, 11]) {
+    const result = shareComparisonMetrics(trends([a, rare]), baseline);
+    assert.equal(result.length, 2);
+    const goals = result.find(m => m.id === a.id), rate = result.find(m => m.id === rare.id);
+    assert.equal(goals.before.matches, baseline);
+    assert.equal(goals.after.matches, 12 - baseline);
+    assert.equal(rate.before.trials, baseline);
+    assert.equal(rate.after.trials, 12 - baseline);
+    assert.equal(rate.after.value, baseline === 1 ? 9 / 11 : 1);
+  }
+  rare.history.slice(11).forEach(p => p.match = null);
+  assert.equal(shareComparisonMetrics(trends([rare]), 11).length, 0);
+});
+test('기준 경기 전후 변화가 없는 기록도 저장하며 결측을 0으로 채우지 않는다', () => {
+  const unchanged = metric('passing:pass', 'rate', [1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1]);
+  const result = shareComparisonMetrics(trends([unchanged]), 11);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].before.value, .1);
+  assert.equal(result[0].after.value, .1);
+  assert.equal(result[0].changeSize, 0);
+  unchanged.history.slice(0, 11).forEach(p => p.match = null);
+  assert.equal(shareComparisonMetrics(trends([unchanged]), 11).length, 0);
 });
 test('공유 이미지 프록시는 공식 CDN 이미지만 허용하고 외부 주소·자격증명·리다이렉트 입력을 막는다', () => {
   for (const url of ['https://fco.dn.nexoncdn.co.kr/live/externalAssets/common/playersHigh/p123.png', 'https://ssl.nexon.com/s2/game/fc/online/season/PTG.png']) assert.ok(allowedShareAsset(url));

@@ -5,7 +5,7 @@ from typing import Any
 
 from app.services.analysis_models import MatchStats
 from app.services.match_selection import eligible_match_rows
-from app.services.coaching_data import PLAYER_COUNTERS, PLAYER_PAIRS, active_players, number, recorded_team_goals
+from app.services.coaching_data import PLAYER_COUNTERS, PLAYER_PAIRS, active_players, number, recorded_team_goals, shot_player_labels
 
 
 from app.services.shot_types import SHOT_TYPES, shot_type_label
@@ -105,7 +105,7 @@ def build_domain_coaching(rows: list[MatchStats], *, include_forfeits: bool = Fa
                 per_type[key][2] += int(shot['result'] in (1, 3))
                 if shot['x'] is not None and shot['y'] is not None:
                     points.append({**shot, 'date': date, 'match_id': row.match_id,
-                                   'player_name': (player_names or {}).get(shot.get('sp_id'))})
+                                   **shot_player_labels(shot, player_names or {})})
             # 일치하는 유형이 없는 경기의 0회도 유효한 표본으로 보존한다.
             shot_groups.append((date, dict(per_type)))
         for source, field, observed in (('shots', 'goals_for', 'shots_observed'), ('opponent_shots', 'goals_against', 'opponent_shots_observed')):

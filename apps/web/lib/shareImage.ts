@@ -59,7 +59,7 @@ function score(input: Extract<ShareImageInput, { kind: "score" }>) {
 }
 function comparison(input: Extract<ShareImageInput, { kind: "comparison" }>, context: CanvasRenderingContext2D) {
   const selected = shareComparisonMetrics(input.trends, input.baseline);
-  if (!selected.length) throw new Error("저장할 비교 지표가 없습니다. 기준 경기를 선택하거나 바꿔주세요.");
+  if (!selected.length) throw new Error(input.baseline === null ? "초반·최근 시점에 저장할 비교 지표가 없습니다." : "기준 경기 이전과 이후에 유효한 기록이 있는 지표가 없습니다.");
   const { first, last } = trendEndpointIndices(input.trends), { baseline } = input;
   const dates = baseline === null ? `${date(input.trends.points[first].date)} → ${date(input.trends.points[last].date)}` : date(input.trends.points[baseline].date);
   let body = box(72, 280, 936, 102, C.ink) + text(108, 321, baseline === null ? "초반 → 최근 시점" : "기준 경기", 28, "#cbd7e8") + text(108, 360, dates, fit(context, dates, 864, 36), "#fff", 700);

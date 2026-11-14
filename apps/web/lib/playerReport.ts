@@ -100,30 +100,6 @@ const FALLBACK_SLOTS: Record<"DEF" | "MID" | "ATT", Array<{ left: number; top: n
   ],
 };
 
-export const IMPACT_COMPONENT_LABELS: Record<string, string> = {
-  goals_per_match: "경기당 골",
-  assists_per_match: "경기당 도움",
-  effective_shots_per_match: "경기당 유효슛",
-  shot_accuracy: "슈팅 정확도",
-  pass_success_rate: "패스 성공률",
-  tackle_success_rate: "태클 성공률",
-  tackles_per_match: "경기당 태클 성공",
-  intercepts_per_match: "경기당 인터셉트",
-  blocks_per_match: "경기당 블락",
-  dribble_success_rate: "드리블 성공률",
-  save_events_per_match: "경기당 선방",
-  save_rate_proxy: "선방률",
-  avg_rating: "평균 평점",
-};
-
-function formatPercent(value: number): string {
-  return `${(value * 100).toFixed(1)}%`;
-}
-
-function formatFixed(value: number, digits = 2): string {
-  return Number.isFinite(value) ? value.toFixed(digits) : (0).toFixed(digits);
-}
-
 export function normalizedGrade(grade: number): number {
   const numeric = Math.round(Number.isFinite(grade) ? grade : 0);
   if (numeric <= 0) return 1;
@@ -174,34 +150,6 @@ export function tablePositionOrder(positionName: string): number {
 export function sortArrow(metric: PlayerSortMetric, currentMetric: PlayerSortMetric, direction: PlayerSortDirection): string {
   if (metric !== currentMetric) return "↕";
   return direction === "desc" ? "↓" : "↑";
-}
-
-export function roleGroupLabel(roleGroup: string): string {
-  const role = roleGroup.toUpperCase();
-  if (role === "ATT") return "공격";
-  if (role === "MID") return "미드";
-  if (role === "DEF") return "수비";
-  if (role === "GK") return "골키퍼";
-  if (role === "SUB") return "교체";
-  return "미분류";
-}
-
-export function formatImpactRaw(metric: string, value: number): string {
-  if (
-    [
-      "shot_accuracy",
-      "pass_success_rate",
-      "tackle_success_rate",
-      "dribble_success_rate",
-      "save_rate_proxy",
-      "weight",
-      "normalized",
-      "weighted_score",
-    ].includes(metric)
-  ) {
-    return formatPercent(value);
-  }
-  return formatFixed(value, 2);
 }
 
 function normalizeImpactComponents(value: unknown): ImpactComponent[] {

@@ -121,6 +121,29 @@ test('상대보다 앞서거나 낮은 지표가 없으면 고정 다섯 그래�
   assert.equal(result, null);
 });
 
+test('같게 표시되는 경기당 기록과 성공률은 막대 길이와 차이 표시도 같다', () => {
+  const rows = (tree, type) => {
+    if (tree == null || typeof tree !== 'object') return [];
+    if (Array.isArray(tree)) return tree.flatMap(child => rows(child, type));
+    return [...(tree.type === type ? [tree] : []), ...rows(tree.props?.children, type)];
+  };
+  for (const [mine, reference, unit, label] of [[22/23, 20/20, 'goals', '1.0골'],
+      [13/23, 11/20, 'average', '0.6회'], [.8534, .85349, 'rate', '85.3%'],
+      [.5034, .50349, 'percent', '50.3%']]) {
+    const tree = chart.MetricComparisonCards({identityColors:true, referenceLabel:'B', mineLabel:'A', metrics:[{
+      mine:{id:'metric',label:'비교',unit,direction:'higher',value:mine,matches:23},
+      reference:{id:'metric',label:'비교',unit,direction:'higher',value:reference,matches:20},
+    }]});
+    const bars = rows(tree, 'i');
+    assert.equal(bars.length, 2);
+    assert.equal(bars[0].props.style.width, bars[1].props.style.width);
+    assert.deepEqual(rows(tree, 'b').map(node => node.props.children), [label, label]);
+    assert.ok(rows(tree, 'strong').some(node => node.props.children === '같은 수치'));
+  }
+  assert.equal(chart.comparisonGap(.8044, .8046, 'rate'), '−0.1%p');
+  assert.equal(chart.comparisonGap(NaN, 1, 'goals'), null);
+});
+
 test('상대 비교는 실제 차이가 큰 순으로 양쪽 세 개씩만 고르고 결측을 제외한다', () => {
   const {opponentHighlights} = load('../../lib/comparisonInsights');
   const rows = [-1, 3, -4, 5, 2, -6, 7, -8].map((gap,i)=>({metric:String(i),status:gap>0?'higher':'lower',gap_pp:gap,
@@ -316,6 +339,49 @@ test('슈팅 선수와 유형 필터는 교집합이며 시즌이 달라도 같�
   const tree = JSON.stringify(InteractiveShotMap({points:shots.map(p=>({...p,x:.8,y:.5}))}));
   assert.ok(tree.includes('슈팅 선수별 보기'));
   assert.ok(!tree.includes('선수·시간으로 찾기'));
+});
+
+test('슈팅 구역 집계는 유효 비득점과 골문 밖을 구분하고 결과 미제공은 분모에서 제외한다', () => {
+  const {summarizeShotZones} = load('../../lib/shotZones');
+  const points = [
+    ...[3, 1, 2, null].map(result => ({x:.9,y:.5,result})),
+    {x:.7,y:.2,result:2},
+    {x:.4,y:.5,result:1},
+  ];
+  const zones = summarizeShotZones(points);
+  assert.deepEqual(JSON.parse(JSON.stringify(zones)), [
+    {label:'박스 안 · 입구 쪽 · 중앙',attempts:3,goals:1,offTarget:1},
+    {label:'박스 밖 · 좌측',attempts:1,goals:0,offTarget:1},
+    {label:'하프라인 뒤',attempts:1,goals:0,offTarget:0},
+  ]);
+});
+
+test('지도 숫자는 고정 구역에 놓이고 같은 구역의 각 슈팅 위치는 보존한다', () => {
+  const {groupShotsByZone, SHOT_MAP_ZONES, shotZoneLabel} = load('../../lib/shotZones');
+  const shots = [{x:.99,y:.45,result:3}, {x:.94,y:.55,result:2}, {x:.85,y:.5,result:1}, {x:.6,y:.5,result:1}];
+  const groups = groupShotsByZone(shots);
+  assert.equal(groups.size, 3);
+  assert.equal(groups.get('박스 안 · 골문 쪽 · 중앙').length, 2);
+  assert.equal(groups.get('박스 안 · 골문 쪽 · 중앙')[1], shots[1]);
+  assert.equal(groups.get('박스 안 · 입구 쪽 · 중앙')[0], shots[2]);
+  assert.equal(groups.get('박스 밖 · 중앙')[0], shots[3]);
+  assert.equal(new Set(SHOT_MAP_ZONES.map(zone => zone.label)).size, 10);
+  for (const zone of SHOT_MAP_ZONES) {
+    assert.equal(shotZoneLabel({x:1-(zone.y-18)/316,y:(zone.x-18)/204}), zone.label);
+  }
+});
+
+test('도움 분포는 좌표가 있는 득점만 세고 도움의 출발 구역을 사용한다', () => {
+  const {summarizeAssistOrigins} = load('../../lib/shotZones');
+  const assist = {x:.4,y:.5,sp_id:1};
+  const rows = summarizeAssistOrigins([
+    {x:.9,y:.5,result:3,assist}, {x:.9,y:.5,result:3,assist}, {x:.9,y:.5,result:2,assist},
+    {x:.9,y:.5,result:3}, {x:.9,y:.5,result:3,assist:{...assist,x:.7,y:.2}},
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(rows)), [
+    {label:'하프라인 뒤',count:2,ratio:2/3},
+    {label:'박스 밖 · 좌측',count:1,ratio:1/3},
+  ]);
 });
 
 test('팀 지표의 비교값은 m 단위와 실제 랭커 사용 비중을 보존한다', () => {

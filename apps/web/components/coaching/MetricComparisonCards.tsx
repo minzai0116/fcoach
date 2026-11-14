@@ -1,14 +1,21 @@
 import { differenceTone } from "../../lib/comparisonInsights";
 import type { ComparableMetric, MetricUnit } from "../../types/comparison";
 
+function comparisonDisplayValue(value: number | null | undefined, unit: MetricUnit): number | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  const scale = unit === "rate" || unit === "percent" ? 100 : 1;
+  return Number((value * scale).toFixed(1)) / scale;
+}
+
 export function comparisonValue(value: number | null | undefined, unit: MetricUnit): string {
   if (value == null || !Number.isFinite(value)) return "—";
   if (unit === "rate" || unit === "percent") return `${(value * 100).toFixed(1)}%`;
   return `${value.toFixed(1)}${unit === "meters" ? "m" : unit === "goals" ? "골" : unit === "rating" ? "점" : "회"}`;
 }
 export function comparisonGap(mine: number | null, reference: number | null, unit: MetricUnit): string | null {
-  if (mine === null || reference === null) return null;
-  const gap = (mine - reference) * (["rate", "percent"].includes(unit) ? 100 : 1);
+  const mineValue = comparisonDisplayValue(mine, unit), referenceValue = comparisonDisplayValue(reference, unit);
+  if (mineValue === null || referenceValue === null) return null;
+  const gap = (mineValue - referenceValue) * (["rate", "percent"].includes(unit) ? 100 : 1);
   if (Math.abs(gap) < 0.05) return "같은 수치";
   return `${gap > 0 ? "+" : "−"}${Math.abs(gap).toFixed(1)}${["rate", "percent"].includes(unit) ? "%p" : unit === "meters" ? "m" : unit === "goals" ? "골" : unit === "rating" ? "점" : "회"}`;
 }
@@ -20,7 +27,8 @@ export function MetricComparisonCards({ metrics, referenceLabel, mineLabel = "�
   return <div className={`metric-compare-grid reference-${tone}${compact ? " compact-comparison" : ""}${identityColors ? " identity-comparison" : ""}`}>{metrics.map(({ mine, reference }) => {
     const metric = mine ?? reference;
     if (!metric || (mine?.value == null && reference?.value == null)) return null;
-    const mineValue = mine?.value ?? null, referenceValue = reference?.value ?? null;
+    const mineValue = comparisonDisplayValue(mine?.value, metric.unit), referenceValue = comparisonDisplayValue(reference?.value, metric.unit);
+    if (mineValue === null && referenceValue === null) return null;
     const maximum = ["rate", "percent"].includes(metric.unit) ? 1 : Math.max(mineValue ?? 0, referenceValue ?? 0, 1) * 1.08;
     const gap = comparisonGap(mineValue, referenceValue, metric.unit);
     return <article className="metric-compare-card" key={metric.id}>

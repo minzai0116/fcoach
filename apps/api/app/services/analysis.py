@@ -44,7 +44,7 @@ from app.services.ranker_source import fetch_official_rankers, list_official_ran
 from app.services.tactic_recommendation import get_issue_tactic_mapping
 from app.services.position_coaching import build_position_coaching
 from app.services.passing_coaching import extract_pass_breakdown
-from app.services.coaching_data import extract_coaching_data, extract_player_coaching, is_shootout, shot_minute
+from app.services.coaching_data import extract_coaching_data, extract_player_coaching, is_shootout, shot_minute, shot_player_labels
 from app.services.squad_feed import get_public_feed
 from app.services.feed_coaching import build_feed_coaching
 from app.services.match_selection import select_match_sample
@@ -289,7 +289,6 @@ def _extract_user_match(payload: dict[str, Any], ouid: str) -> MatchStats | None
 
     in_box_shots = 0.0
     total_shots_detail = 0.0
-    shots_for_points: list[dict[str, float | bool]] = []
     shot_links: list[dict[str, float | int | bool]] = []
     goals_for_minutes: list[float] = []
     goals_for_types: list[int] = []
@@ -305,10 +304,6 @@ def _extract_user_match(payload: dict[str, Any], ouid: str) -> MatchStats | None
         result_code = _to_float(shot.get("result"))
         is_goal = result_code == 3 or str(shot.get("spResult", "")) in {"goal", "3"}
         shooter_sp_id = _to_int(shot.get("spId"))
-        shots_for_points.append({"x": norm_x, "y": norm_y, "is_goal": bool(is_goal),
-                                 "sp_id": shooter_sp_id, "sp_grade": _to_int(shot.get("spGrade")),
-                                 "minute": shot_minute(shot.get("goalTime")), "type": _to_int(shot.get("type")),
-                                 "result": int(result_code)})
         assist_sp_id = _to_int(shot.get("assistSpId"))
         if (
             _is_truthy(shot.get("assist"))
@@ -391,6 +386,9 @@ def _extract_user_match(payload: dict[str, Any], ouid: str) -> MatchStats | None
 
     # 넥슨의 시간대 없는 matchDate는 명세상 UTC0이다.
     match_date = _parse_iso_datetime(str(payload.get("matchDate") or utc_now_iso()))
+    coaching_data = extract_coaching_data(user, opp)
+    shots_for_points = [{**shot, "is_goal": shot["result"] == 3} for shot in coaching_data["shots"]
+                        if shot["x"] is not None and shot["y"] is not None]
     return MatchStats(
         match_type=int(payload.get("matchType") or 60),
         match_date=match_date.isoformat() if match_date else str(payload.get("matchDate", "")),
@@ -427,7 +425,7 @@ def _extract_user_match(payload: dict[str, Any], ouid: str) -> MatchStats | None
         player_stats=player_stats,
         shot_links=shot_links,
         pass_breakdown=extract_pass_breakdown(user_pass),
-        coaching_data=extract_coaching_data(user, opp),
+        coaching_data=coaching_data,
         user_nickname=str(user.get('nickname') or '').strip(),
         match_end_type=match_end_type if match_end_type is not None else -1,
     )
@@ -1174,13 +1172,11 @@ def _build_visual_summary(rows: list[MatchStats], names: dict[int, str] | None =
     goals_against_minutes: list[float] = []
     goals_for_types: list[int] = []
     for row in rows:
-        shot_points.extend({**point, "player_name": player_name(player_names, int(point.get("sp_id") or 0), None),
+        shot_points.extend({**point, **shot_player_labels(point, player_names),
                             "date": row.match_date, "match_id": row.match_id} for point in row.shots_for_points)
         goals_for_minutes.extend(row.goals_for_minutes)
         goals_against_minutes.extend(row.goals_against_minutes)
         goals_for_types.extend(row.goals_for_types)
-    if len(shot_points) > 180:
-        shot_points = shot_points[:180]
     return {
         "shot_map": shot_points,
         "shot_zone": _shot_zone_summary(shot_points),
