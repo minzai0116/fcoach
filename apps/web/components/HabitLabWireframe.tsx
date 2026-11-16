@@ -51,11 +51,13 @@ import { PlayerPortrait } from "./player/PlayerPortrait";
 import { feedPortraits } from "../lib/pitchLineup";
 import { GuideScreen } from "./guide/GuideScreen";
 import { OpponentComparisonPanel } from "./coaching/OpponentComparisonPanel";
+import { OpponentControllerPanel } from "./coaching/OpponentControllerPanel";
+import { ControllerIcon } from "./coaching/ControllerIcon";
 import { SquadFeedSelector } from "./coaching/SquadFeedSelector";
 import { FeedConnectionSummary } from "./coaching/FeedCoachingPanel";
 import type { SquadFeedSnapshot } from "../types/squadFeed";
 import { InteractiveShotMap } from "./coaching/InteractiveShotMap";
-import { summarizeAssistOrigins } from "../lib/shotZones";
+import { AssistOriginMap } from "./coaching/AssistOriginMap";
 import { DomainScorePanel } from "./coaching/DomainScorePanel";
 import { PrescriptionPanel } from "./coaching/PrescriptionPanel";
 import { MatchReviewPanel } from "./coaching/MatchReviewPanel";
@@ -650,7 +652,6 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
       }))
       .filter((item) => Number.isFinite(item.x) && Number.isFinite(item.y));
   }, [analysis?.visuals]);
-  const assistOrigins = useMemo(() => summarizeAssistOrigins(shotMap), [shotMap]);
   const goalTimingFor = useMemo(() => (Array.isArray(analysis?.visuals?.goal_timing_for) ? analysis?.visuals?.goal_timing_for : []), [analysis?.visuals]);
   const goalTimingAgainst = useMemo(
     () => (Array.isArray(analysis?.visuals?.goal_timing_against) ? analysis?.visuals?.goal_timing_against : []),
@@ -1007,15 +1008,18 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                       <span>{formatDate(match.match_date)}</span>
                     </div>
                     <div className="recent-match-score">
-                      {formatFixed(Number(match.score_for_display ?? match.score_for ?? 0), 0)} : {formatFixed(Number(match.score_against_display ?? match.score_against ?? 0), 0)}
+                      <ControllerIcon value={match.controller} side="내" />
+                      <span>{formatFixed(Number(match.score_for_display ?? match.score_for ?? 0), 0)} : {formatFixed(Number(match.score_against_display ?? match.score_against ?? 0), 0)}</span>
+                      <ControllerIcon value={match.opponent_controller} side="상대" />
                     </div>
                     <div className="muted compact">상대: {match.opponent_nickname || "알 수 없음"}</div>
-                    <div className="muted compact">입력: {String(match.controller ?? "unknown").toLowerCase()}</div>
                   </div>
                 ))}
               </div>
             )}
           </article>
+
+          <OpponentControllerPanel comparisons={analysis.opponent_controller_comparison} />
 
           <article className="panel span-3">
             <h3 className="section-title">경기장 분석</h3>
@@ -1057,15 +1061,7 @@ export function HabitLabWireframe({ initialScreen = "guide" }: HabitLabWireframe
                     </ul>
                   )}
                 </div>
-                <div className="zone-card">
-                  <p className="action-title">도움 패스 출발 구역 분포</p>
-                  <p className="muted compact">좌표가 기록된 도움 기준</p>
-                  {assistOrigins.length ? <ul className="list compact">
-                    {assistOrigins.map(({ label, count, ratio }) => <li key={label}>
-                      {label}: {count}회 ({formatPercent(ratio)})
-                    </li>)}
-                  </ul> : <p className="muted compact">확인된 도움 좌표가 없습니다.</p>}
-                </div>
+                <AssistOriginMap points={shotMap} />
               </div>
             </div>
           </article>

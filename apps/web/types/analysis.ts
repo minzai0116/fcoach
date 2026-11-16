@@ -35,6 +35,7 @@ export type AnalysisPayload = {
   match_trends?: import("./comparison").MatchTrends;
   comparison_metrics?: { official: import("./comparison").MetricGroup[]; all: import("./comparison").MetricGroup[] };
   opponent_comparison?: OpponentComparison;
+  opponent_controller_comparison?: OpponentControllerComparison[];
   mode_counts?: Record<string, number>;
   normal_mode_counts?: Record<string, number>;
   coaching_version?: string;
@@ -112,6 +113,19 @@ export type RecentMatchSummary = {
   score_for_display?: number | null;
   score_against_display?: number | null;
   controller?: string;
+  opponent_controller?: Controller | null;
+};
+
+export type Controller = "keyboard" | "gamepad";
+type ControllerMetric = { value: number | null; matches: number };
+type ControllerRate = ControllerMetric & { success: number; trials: number };
+export type ControllerResults = {
+  matches: number; wins: number; draws: number; losses: number; win_rate: number | null;
+  goals_for: ControllerMetric; goals_against: ControllerMetric;
+  on_target: ControllerRate; pass: ControllerRate; tackle: ControllerRate;
+};
+export type OpponentControllerComparison = Record<Controller, ControllerResults> & {
+  match_type: 50 | 60; unknown_matches: number;
 };
 
 export type PlayerReportEntry = {

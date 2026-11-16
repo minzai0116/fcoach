@@ -45,3 +45,4 @@ class MatchStats:
     user_nickname: str = ''
     match_id: str = ''
     match_type: int = 60
+    opponent_controller: str | None = None

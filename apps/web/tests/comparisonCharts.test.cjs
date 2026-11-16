@@ -356,6 +356,16 @@ test('슈팅 구역 집계는 유효 비득점과 골문 밖을 구분하고 결
   ]);
 });
 
+test('구역별 슈팅은 미득점이 많아도 득점이 많은 구역을 먼저 표시한다', () => {
+  const {summarizeShotZones} = load('../../lib/shotZones');
+  const zones = summarizeShotZones([
+    ...Array.from({length: 8}, () => ({x:.7,y:.2,result:2})),
+    {x:.9,y:.5,result:3}, {x:.9,y:.5,result:3},
+    {x:.7,y:.8,result:3},
+  ]);
+  assert.deepEqual(Array.from(zones, zone => zone.goals), [2, 1, 0]);
+});
+
 test('지도 숫자는 고정 구역에 놓이고 같은 구역의 각 슈팅 위치는 보존한다', () => {
   const {groupShotsByZone, SHOT_MAP_ZONES, shotZoneLabel} = load('../../lib/shotZones');
   const shots = [{x:.99,y:.45,result:3}, {x:.94,y:.55,result:2}, {x:.85,y:.5,result:1}, {x:.6,y:.5,result:1}];

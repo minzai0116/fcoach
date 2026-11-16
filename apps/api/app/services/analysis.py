@@ -53,6 +53,7 @@ from app.services.comparison_evidence import previous_matches
 from app.services.metric_catalog import metric_catalog
 from app.services.match_trends import build_match_trends
 from app.services.recent_analysis import load_recent_modes, mode_history, opponent_comparison
+from app.services.opponent_controllers import opponent_controller_comparison, recorded_controller
 from app.services.analysis_progress import update_progress
 from app.services.analysis_inputs import load_analysis_inputs
 from app.services.team_history_coaching import VERSION as COACHING_VERSION, build_team_history_coaching
@@ -421,7 +422,8 @@ def _extract_user_match(payload: dict[str, Any], ouid: str) -> MatchStats | None
         goals_penaltykick=_to_float(user_shoot.get("goalPenaltyKick")),
         goals_in_penalty=_to_float(user_shoot.get("goalInPenalty")),
         goals_out_penalty=_to_float(user_shoot.get("goalOutPenalty")),
-        controller=str(user_detail.get("controller", "")),
+        controller=recorded_controller(user_detail.get("controller")) or "",
+        opponent_controller=recorded_controller(opp_detail.get("controller")),
         player_stats=player_stats,
         shot_links=shot_links,
         pass_breakdown=extract_pass_breakdown(user_pass),
@@ -1203,6 +1205,7 @@ def _recent_match_summary(rows: list[MatchStats], limit: int = 5) -> list[dict[s
             "score_for_display": row.coaching_data.get("shoot", {}).get("goalTotalDisplay"),
             "score_against_display": row.coaching_data.get("opponent_shoot", {}).get("goalTotalDisplay"),
             "controller": row.controller or "unknown",
+            "opponent_controller": row.opponent_controller,
         }
         for row in rows[:limit]
     ]
@@ -2158,6 +2161,7 @@ def run_analysis(
         "coaching_version": COACHING_VERSION,
         "comparisons": empirical["comparisons"],
         "opponent_comparison": opponent_comparison(selected),
+        "opponent_controller_comparison": opponent_controller_comparison(selected),
         "match_trends": build_match_trends(rows),
         "comparison_metrics": {"all": current_comparison,
                                "official": metric_catalog([row for row in selected if row.match_type == 50], include_forfeits=include_forfeits)},

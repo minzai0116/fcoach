@@ -5,7 +5,8 @@ import type { ShotPoint } from "../../types/analysis";
 import { shotTypeLabel, filterShotsByType, filterShotsByPlayer, shotPlayerKey } from "../../lib/shotTypes";
 import { shotPosition } from "../../lib/footballDisplay";
 import { placeShotMapLabels } from "../../lib/shotMapLabels";
-import { PITCH_BOX, PITCH_BOX_DEPTH_LINE, PITCH_BOX_LANE_LINES, PITCH_LANE_LINES, SHOT_MAP_ZONES, groupShotsByZone, shotZoneLabel, summarizeShotZones } from "../../lib/shotZones";
+import { SHOT_MAP_ZONES, groupShotsByZone, shotZoneLabel, summarizeShotZones } from "../../lib/shotZones";
+import { ShotPitchLines } from "./ShotPitchLines";
 
 const outcome = (point: ShotPoint) => point.is_goal || point.result === 3 ? "득점" : point.result === 1 ? "유효 슈팅" : point.result === 2 ? "골문 밖 슈팅" : "슈팅";
 const shooter = (point: ShotPoint) => `${point.player_name || "선수 정보 미제공"}${point.sp_grade ? ` +${point.sp_grade}` : ""}`;
@@ -14,11 +15,11 @@ const shotColor = (point: ShotPoint) => outcome(point) === "득점" ? "#177452" 
 function ShotZoneSummary({ zones, selectedZone }: { zones: ReturnType<typeof summarizeShotZones>; selectedZone?: string }) {
   if (!zones.length) return null;
   return <div className="shot-zone-summary">
-    <div><h6>구역별 슈팅</h6><small>미득점 많은 순</small></div>
+    <div><h6>구역별 슈팅</h6><small>득점 많은 순</small></div>
     <table aria-label="구역별 슈팅 결과"><thead><tr>
-      <th scope="col">구역</th><th scope="col">시도</th><th scope="col">미득점</th><th scope="col">골문 밖</th><th scope="col">득점 전환율</th>
+      <th scope="col">구역</th><th scope="col" aria-sort="descending">득점</th><th scope="col">시도</th><th scope="col">골문 밖</th><th scope="col">득점 전환율</th>
     </tr></thead><tbody>{zones.map(zone => <tr key={zone.label} className={selectedZone === zone.label ? "selected-zone" : undefined}>
-      <th scope="row">{zone.label}</th><td>{zone.attempts}</td><td>{zone.attempts - zone.goals}</td>
+      <th scope="row">{zone.label}</th><td><strong>{zone.goals}</strong></td><td>{zone.attempts}</td>
       <td>{zone.offTarget}</td><td><strong>{(zone.goals / zone.attempts * 100).toFixed(1)}%</strong><small>{zone.goals}/{zone.attempts}</small></td>
     </tr>)}</tbody></table>
   </div>;
@@ -70,12 +71,7 @@ export function InteractiveShotMap({ points }: { points: ShotPoint[] }) {
     <label className="shot-type-filter">슈팅 유형<select aria-label="슈팅 유형별 보기" value={shotType} onChange={event => { setShotType(event.target.value); setActive(null); }}><option value="all">전체 유형 · {playerPoints.length}회</option>{typeCounts.map(([key, count]) => <option key={key} value={key}>{shotTypeLabel(key === "unknown" ? null : Number(key))} · {count}회</option>)}</select></label></div>
     <div className="shot-map-canvas">
       <svg viewBox={`0 0 240 ${height}`} role="group" aria-label={`${showFullPitch ? "전체 경기장" : "공격 진영"} 슈팅 ${visible.length}회. 구역을 선택하면 슈팅 기록을 볼 수 있습니다.`}>
-        <rect x="18" y="18" width="204" height={showFullPitch ? 316 : 158} rx="3" fill="#e8f4ed" stroke="#92b6a1" />
-        <path d={`M${PITCH_BOX.left} 18 V${PITCH_BOX.bottom} H${PITCH_BOX.right} V18 M92 18 V35 H148 V18 M109 18 V12 H131 V18 M94 68 A29 29 0 0 0 146 68 M18 176 H222`} fill="none" stroke="#92b6a1" />
-        {PITCH_LANE_LINES.map(x => <line key={x} x1={x} x2={x} y1={PITCH_BOX.bottom} y2="176" stroke="#92b6a1" strokeDasharray="3 4" />)}
-        {PITCH_BOX_LANE_LINES.map(x => <line key={x} x1={x} x2={x} y1="18" y2={PITCH_BOX.bottom} stroke="#92b6a1" strokeDasharray="3 3" />)}
-        <line x1={PITCH_BOX.left} x2={PITCH_BOX.right} y1={PITCH_BOX_DEPTH_LINE} y2={PITCH_BOX_DEPTH_LINE} stroke="#92b6a1" strokeDasharray="3 3" />
-        {showFullPitch ? <><circle cx="120" cy="176" r="27" fill="none" stroke="#92b6a1" /><path d="M59 334 V284 H181 V334 M92 334 V317 H148 V334" fill="none" stroke="#92b6a1" /></> : <path d="M93 176 A27 27 0 0 1 147 176" fill="none" stroke="#92b6a1" />}
+        <ShotPitchLines fullPitch={showFullPitch} />
         {SHOT_MAP_ZONES.map(({ label, x, y, shape }) => {
           if (y > 176 && !showFullPitch) return null;
           const count = zoneShots.get(label)?.length ?? 0;

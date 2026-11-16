@@ -86,5 +86,5 @@ export function summarizeShotZones(points: ShotPoint[]) {
     else if (point.result === 2) zone.offTarget++;
     zones.set(label, zone);
   }
-  return [...zones.values()].sort((a, b) => (b.attempts - b.goals) - (a.attempts - a.goals) || b.attempts - a.attempts);
+  return [...zones.values()].sort((a, b) => b.goals - a.goals || b.attempts - a.attempts);
 }

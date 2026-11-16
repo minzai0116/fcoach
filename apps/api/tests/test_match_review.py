@@ -4,11 +4,12 @@ import os
 import tempfile
 import unittest
 from contextlib import closing
+from dataclasses import replace
 from unittest.mock import patch
 
 from app.db import connect, init_db, upsert_matches
 from app.services.match_review import build_match_review, get_match_review
-from app.services.opponent_profile import parse_current_rank, get_competitive_profile
+from app.services.opponent_profile import get_competitive_profile
 
 
 def participant(ouid, nickname, **kwargs):
@@ -29,9 +30,14 @@ class MatchReviewTest(unittest.TestCase):
             init_db()
             with patch('app.services.analysis._MATCH_CACHE.get_json', return_value=[{'match_id': 'match-id', 'payload': payload()}]), \
                  patch('app.services.analysis._spid_name_map', return_value={}), \
-                 patch('app.services.match_review.get_competitive_profile', return_value={}) as profile:
+                 patch('app.services.match_review.get_competitive_profile', side_effect=lambda ouid: {
+                     'current': {'status': 'no_current_season_match'} if ouid == 'my-ouid-123'
+                     else {'status': 'available', 'name': '챌린지1'}, 'highest': {'name': '마스터1'},
+                 }) as profile:
                 result = get_match_review('my-ouid-123', 60, 'match-id')
                 self.assertEqual(result['mine']['nickname'], '나')
+                self.assertEqual(result['mine']['profile']['current']['status'], 'no_current_season_match')
+                self.assertEqual(result['opponent']['profile']['current']['name'], '챌린지1')
                 profile.reset_mock()
                 with self.assertRaises(LookupError):
                     get_match_review('my-ouid-123', 50, 'match-id')
@@ -64,6 +70,38 @@ class MatchReviewTest(unittest.TestCase):
         self.assertIsNone(metrics['tackle']['opponent']['value'])
         self.assertIsNone(metrics['tackle']['gap'])
 
+    def test_opponent_controller_uses_each_participants_record_and_aggregates_by_mode(self):
+        from app.services.analysis import _extract_user_match, _recent_match_summary
+        from app.services.opponent_controllers import opponent_controller_comparison
+
+        source = payload()
+        source['matchInfo'][0]['matchDetail']['controller'] = 'gamepad'
+        source['matchInfo'][1]['matchDetail']['controller'] = 'keyboard'
+        review = build_match_review(source, 'my-ouid-123', {})
+        self.assertEqual((review['mine']['controller'], review['opponent']['controller']), ('keyboard', 'gamepad'))
+        row = _extract_user_match(source, 'my-ouid-123')
+        match = _recent_match_summary([row])[0]
+        self.assertEqual((match['controller'], match['opponent_controller']), ('keyboard', 'gamepad'))
+
+        forfeit_data = {**row.coaching_data, 'pass': {'passSuccess': 2, 'passTry': 2}}
+        comparison = opponent_controller_comparison([
+            row, replace(row, match_end_type=2, coaching_data=forfeit_data),
+            replace(row, opponent_controller='keyboard'), replace(row, opponent_controller=None),
+            replace(row, match_type=50), replace(row, match_type=52),
+        ])
+        self.assertEqual([entry['match_type'] for entry in comparison], [50, 60])
+        self.assertIsNone(comparison[0]['keyboard']['win_rate'])
+        friendly = comparison[1]
+        self.assertEqual(friendly['unknown_matches'], 1)
+        self.assertEqual(friendly['keyboard']['matches'], 1)
+        pad = friendly['gamepad']
+        self.assertEqual((pad['matches'], pad['wins'], pad['losses'], pad['win_rate']), (2, 1, 1, .5))
+        self.assertEqual(pad['goals_for'], {'value': 2.0, 'matches': 1})
+        self.assertEqual(pad['pass'], {'value': 18 / 22, 'success': 18, 'trials': 22, 'matches': 2})
+
+        source['matchInfo'][0]['matchDetail']['controller'] = 'unknown-type'
+        self.assertIsNone(_extract_user_match(source, 'my-ouid-123').opponent_controller)
+
     def test_forfeit_retains_score_but_does_not_judge_performance(self):
         source = payload()
         source['matchInfo'][1]['matchDetail']['matchEndType'] = 1
@@ -79,26 +117,18 @@ class MatchReviewTest(unittest.TestCase):
         self.assertEqual(summary['score_for_display'], result['mine']['score'])
         self.assertEqual(summary['score_for'], result['mine']['record_goals'])
 
-    def test_public_rank_exact_name_and_explicit_unranked_vs_failure(self):
-        html = '<div class="tbody"><div class="tr"><span class="rank_no">1,234</span><div class="rank_coach"><span class="name profile_pointer">나</span></div><span class="rank_r_win_point">2800.15</span></div></div><p>2026-10-20 16:00:00 기준</p>'
-        result = parse_current_rank(html, '나')
-        self.assertEqual(result['rank'], 1234)
-        self.assertEqual(result['as_of'], '2026-10-20T16:00:00+09:00')
-        self.assertEqual(parse_current_rank(html, '다른 이름')['status'], 'unavailable')
-        self.assertEqual(parse_current_rank('순위 내 포함되어 있지 않네요. 1~10,000위까지만 제공됩니다.', '나')['status'], 'outside_public_range')
-        self.assertEqual(parse_current_rank('서버 오류', '나')['status'], 'unavailable')
-
-    def test_missing_credentials_does_not_block_cached_match_metrics(self):
-        with patch('app.services.opponent_profile.NexonOpenApiClient', side_effect=RuntimeError('Missing key')):
-            result = get_competitive_profile('no-key-unique-test')
-        self.assertIsNone(result['highest_division'])
-        self.assertEqual(result['current_rank']['status'], 'unavailable')
+    def test_nickname_lookup_failure_keeps_both_divisions(self):
+        divisions = {'current': {'status': 'no_current_season_match'}, 'highest': {'name': '마스터1'}}
+        with patch('app.services.opponent_profile.get_user_divisions', return_value=divisions) as lookup, \
+             patch('app.services.opponent_profile.NexonOpenApiClient', side_effect=RuntimeError('Missing key')):
+            self.assertEqual(get_competitive_profile('no-key-unique-test'), divisions)
+        lookup.assert_called_once_with('no-key-unique-test')
 
     def test_lookup_checks_owner_mode_and_retention_before_profile_fetch(self):
         with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'HABIT_LAB_DB_PATH': temp + '/test.sqlite3'}):
             init_db()
             upsert_matches('my-ouid-123', 60, [{'match_id': 'match-id', 'match_date': '2026-10-20T05:00:33', 'payload_hash': 'hash', 'payload': payload()}])
-            with patch('app.services.match_review.get_competitive_profile', return_value={'highest_division': None}) as profile, patch('app.services.analysis._spid_name_map', return_value={}):
+            with patch('app.services.match_review.get_competitive_profile', return_value={'current': {}, 'highest': {}}) as profile, patch('app.services.analysis._spid_name_map', return_value={}):
                 with self.assertRaises(LookupError):
                     get_match_review('other-ouid', 60, 'match-id')
                 with self.assertRaises(LookupError):

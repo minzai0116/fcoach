@@ -1,12 +1,8 @@
-import type { ShotPoint } from "./analysis";
+import type { Controller, ShotPoint } from "./analysis";
+import type { UserDivisions } from "../lib/userDivisions";
 
-export type CompetitiveProfile = {
-  current_nickname?: string;
-  current_rank: { status: "available" | "outside_public_range" | "unavailable"; rank: number | null; elo?: string | null; as_of?: string | null };
-  highest_division: { code: number; name: string; achieved_at: string | null } | null;
-  fetched_at: string; source_url: string;
-};
-export type MatchReviewSide = { ouid: string; nickname: string; score: number | null; record_goals: number | null; shots: ShotPoint[]; profile: CompetitiveProfile };
+export type CompetitiveProfile = UserDivisions & { current_nickname?: string };
+export type MatchReviewSide = { ouid: string; nickname: string; score: number | null; record_goals: number | null; controller?: Controller | null; shots: ShotPoint[]; profile: CompetitiveProfile };
 export type MatchReview = {
   match_id: string; match_date: string; match_type: number; result: string; match_end_type: number; normal: boolean;
   mine: MatchReviewSide; opponent: MatchReviewSide; comparison_note: string;
